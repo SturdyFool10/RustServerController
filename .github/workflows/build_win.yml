@@ -1,4 +1,4 @@
-name: Build and Compile Rust Program on Windows
+name: Build Win
 
 on:
   push:
