@@ -1,0 +1,26 @@
+name: Build and Compile Rust Program on Windows
+
+on:
+  push:
+    branches:
+      - main  # Adjust this to your main branch name
+
+jobs:
+  build:
+    runs-on: windows-latest  # Use the latest Windows runner
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2  # This step checks out your repository
+
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1  # Set up the Rust toolchain
+
+    - name: Build and Compile
+      run: cargo build --release  # Run your build command
+
+    - name: Archive Artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: my-program-artifact
+        path: /target/release/server_host.exe  # Replace with the actual path to your compiled binary
