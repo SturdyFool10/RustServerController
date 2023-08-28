@@ -2,7 +2,7 @@
 
 ## Project Status: 
 ### main: [![Build Win](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_win.yml/badge.svg?branch=main)](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_win.yml) [![Build Linux](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_linux.yml/badge.svg)](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_linux.yml) [![Build MacOS](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_MacOS.yml/badge.svg)](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_MacOS.yml)
-### testing: 
+### testing: [![Build Win Testing](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_win_testing.yml/badge.svg)](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_win_testing.yml) [![Build Linux Testing](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_linux_testing.yml/badge.svg)](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_linux_testing.yml) [![Build MacOS Testing](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_MacOS_testing.yml/badge.svg)](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_MacOS_testing.yml)
 This server software is for the easy control of servers deployed on another machine, using as little by way of resources as it can, you should not notice it in all but the most resource limited of scenarios
 ## How to build:
 To get started, you can go two routes:
