@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<style>
+			:root {
+			--pageBG: #0e0e0e;
+			--textCol: #e5e5e5;
+			--menuBG: #1d1d1d;
+			--highlightCol: #a200ff;
+			--altHighlightCol: #00ffee;
+			}
+			body {
+			margin: 0;
+			padding: 0;
+			font-family: Arial, sans-serif;
+			overflow: hidden;
+			background-color: var(--pageBG);
+			}
+			.menu-icon {
+			position: relative;
+			top: 0px;
+			left: 0px;
+			width: 30px;
+			height: 30px;
+			padding: 20px;
+			border-bottom-right-radius: 20px;
+			background-color: var(--menuBG);
+			overflow: hidden;
+			cursor: pointer;
+			z-index: 1000;
+			}
+			.bar {
+			width: 30px;
+			height: 3px;
+			background-color: var(--textCol);
+			margin: 6px 0;
+			box-shadow: 0 0 15px #fff;
+			}
+			.menu {
+			position: absolute;
+			left: 0;
+			width: 25%;
+			height: 100%;
+			background-color: var(--menuBG);
+			color: var(--textCol);
+			}
+			.menu ul {
+			list-style-type: none;
+			padding: 0;
+			margin: 80px 0 0 0;
+			text-align: center;
+			}
+			.active {
+			border-width: 0px;
+			box-shadow: 0 0 10px color-mix(in srgb, rgba(255, 255, 255, 1) 75%, var(--highlightCol)), 0 0 25px var(--highlightCol);
+			border-color: var(--highlightCol);
+			border-style: solid none solid none;
+			text-shadow: #fff 0 0 5px;
+			}
+			.menu li {
+			width: 100%;
+			padding: 10px 0;
+			}
+			.menu a {
+			text-decoration: none;
+			color: var(--textCol);
+			font-size: 18px;
+			}
+			#main-content {
+			position: absolute;
+			top: 0px;
+			width: 100%;
+			height: 100%;
+			overflow: hidden;
+			transition: background-color 0.35s ease;
+			}
+			#main-content.regular {
+			transition: background-color 0.35s ease;
+			background: linear-gradient(90deg, var(--highlightCol) 0%, var(--pageBG) 0%, var(--pageBG) 100%);
+			}
+			.shifted {
+			transition: background-color 0.35s ease;
+			}
+			.page {
+			position: absolute;
+			width: 100%;
+			top: 0px;
+			height: 100%;
+			}
+			h1 {
+			color: var(--textCol);
+			width: 100%;
+			text-align: center;
+			}
+			.overlay {
+			position: absolute;
+			top: 0px;
+			left: 0px;
+			z-index: 100;
+			}
+			.centralContent {
+			position: absolute;
+			width: 75%;
+			height: calc(100% - 2% - calc(70px + 2%));
+			left: 12.5%;
+			background-color: var(--menuBG);
+			border-radius: 15px;
+			top: calc(70px + 2%);
+			}
+			.leftBar {
+			position: absolute;
+			width: 12.5%;
+			top: calc(70px + 2%);
+			padding-top: 80px;
+			left: 0px;
+			height: 100%;
+			}
+			.rightBar {
+			position: absolute;
+			width: 12.5%;
+			top: calc(70px + 2%);
+			left: 87.5%;
+			height: 100%;
+			}
+			.topbar {
+			position: absolute;
+			left: 90px;
+			top: 0px;
+			border-bottom-left-radius: 20px;
+			background-color: var(--menuBG);
+			width: 100%;
+			height: 70px;
+			}
+			.innerTopBar {
+			position: absolute;
+			left: 0px;
+			top: 0px;
+			background-color: var(--menuBG);
+			border-bottom-color: color-mix(in srgb, var(--menuBG) 90%, #fff 10%);
+			border-bottom-width: 3px;
+			border-bottom-style: solid;
+			width: 100%;
+			height: 70px;
+			border-top-right-radius: 15px;
+			border-top-left-radius: 15px;
+			}
+			.bloom {
+			filter: blur(15px);
+			z-index: 50;
+			background-blend-mode: additive;
+			}
+			.addServerIcon {
+			position: absolute;
+			color: var(--highlightCol); /* Set the font color using the custom property */
+			text-decoration: none; /* Remove the default underline style for links */
+			left: 20px;
+			top: 5px;
+			bottom: 5px;
+			aspect-ratio: 1;
+			}
+			.addServerIcon svg {
+			fill: color-mix(in srgb, var(--altHighlightCol) 50%, #fff);
+			width: 100%;
+			height: 100%;
+			}
+			.menuBTN1 {
+			position: absolute;
+			left: 10px;
+			top: 10px;
+			height: calc(70px - 20px);
+			aspect-ratio: 1;
+			}
+			.menuBTN1 svg {
+			fill: color-mix(in srgb, var(--altHighlightCol) 50%, #fff)
+			}
+         .centerMenu {
+            position: absolute;
+            left: 0px;
+            top: 70px;
+            width: 100%;
+            height: calc(100% - 70px);
+            overflow-x: hidden;
+            overflow-y: default;
+         }
+         .CentralMenuDropdown {
+            position: relative;
+            left: 0px;
+            top: 0px;
+            width: 100%;
+            height: 5%;
+            border-bottom-width: 3px;
+            border-bottom-color: color-mix(in srgb, var(--menuBG) 80%, #fff 20%);
+            border-bottom-style: solid;
+         }
+         .CentralMenuDropdown a {
+            position: absolute;
+            right: 2%;
+            top: 2%;
+            height: 96%;
+            aspect-ratio: 1;
+         }
+         .CentralMenuDropdown a svg {
+            position: absolute;
+            left: 0px;
+            top: 0px;
+            width: 100%;
+            height: 100%;
+            fill: var(--altHighlightCol);
+         }
+         .serverName {
+            position: absolute;
+            left: 2%;
+            line-height: 200%;
+            text-align: center;
+            color: var(--textCol);
+         }
+         .innerTopBarDropDown {
+            position: absolute;
+            left: 0px;
+            top: 0px;
+            height: 5vh;
+            width: 100%;
+         }
+		</style>
+	</head>
+	<body>
+		<div class="menu" id="menu">
+			<ul>
+				<li><a href="#">Servers</a></li>
+				<li><a href="#">Configuration</a></li>
+				<li><a href="#">Stats</a></li>
+			</ul>
+		</div>
+		<div id="main-content" class="regular">
+			<div class="menu-icon" id="menu-icon">
+				<div class="bar"></div>
+				<div class="bar"></div>
+				<div class="bar"></div>
+			</div>
+			<div class="page grad">
+			</div>
+			<div class="page servers">
+				<div class="topbar">
+					<a href="#" class="menuBTN1">
+						<svg class="bloom" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"/>
+						</svg>
+					</a>
+					<a href="#" class="menuBTN1">
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"/>
+						</svg>
+					</a>
+				</div>
+				<div class="leftBar">
+				</div>
+				<div class="centralContent">
+					<div class="innerTopBar">
+						<a href="#" class="addServerIcon">
+							<svg class="bloom" clip-rule="evenodd" fill-rule="evenodd" stroke-linejoin="round" stroke-miterlimit="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+								<path d="m21 3.998c0-.478-.379-1-1-1h-16c-.62 0-1 .519-1 1v16c0 .621.52 1 1 1h16c.478 0 1-.379 1-1zm-16.5.5h15v15h-15zm6.75 6.752h-3.5c-.414 0-.75.336-.75.75s.336.75.75.75h3.5v3.5c0 .414.336.75.75.75s.75-.336.75-.75v-3.5h3.5c.414 0 .75-.336.75-.75s-.336-.75-.75-.75h-3.5v-3.5c0-.414-.336-.75-.75-.75s-.75.336-.75.75z" fill-rule="nonzero"/>
+							</svg>
+						</a>
+						<a href="#" class="addServerIcon">
+							<svg clip-rule="evenodd" fill-rule="evenodd" stroke-linejoin="round" stroke-miterlimit="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+								<path d="m21 3.998c0-.478-.379-1-1-1h-16c-.62 0-1 .519-1 1v16c0 .621.52 1 1 1h16c.478 0 1-.379 1-1zm-16.5.5h15v15h-15zm6.75 6.752h-3.5c-.414 0-.75.336-.75.75s.336.75.75.75h3.5v3.5c0 .414.336.75.75.75s.75-.336.75-.75v-3.5h3.5c.414 0 .75-.336.75-.75s-.336-.75-.75-.75h-3.5v-3.5c0-.414-.336-.75-.75-.75s-.75.336-.75.75z" fill-rule="nonzero"/>
+							</svg>
+						</a>
+					</div>
+               <div class="centerMenu servers">
+               </div>
+				</div>
+				<div class="rightBar">
+				</div>
+			</div>
+			<div class="page config">
+				<div class="topbar">
+					<a href="#" class="menuBTN1">
+						<svg class="bloom" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"/>
+						</svg>
+					</a>
+					<a href="#" class="menuBTN1">
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"/>
+						</svg>
+					</a>
+				</div>
+				<div class="leftBar">
+				</div>
+				<div class="centralContent">
+					<div class="innerTopBar"></div>
+					<div class="expandingMenu">
+					</div>
+				</div>
+				<div class="rightBar">
+				</div>
+			</div>
+			<div class="page stat">
+				<div class="topbar">
+					<a href="#" class="menuBTN1">
+						<svg class="bloom" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"/>
+						</svg>
+					</a>
+					<a href="#" class="menuBTN1">
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"/>
+						</svg>
+					</a>
+				</div>
+				<div class="leftBar">
+				</div>
+				<div class="centralContent">
+					<div class="innerTopBar"></div>
+				</div>
+				<div class="rightBar">
+				</div>
+			</div>
+		</div>
+		<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.0/jquery.min.js"></script>
+		<script>
+			function closeMenu() {
+			    $('#menu').animate({
+			        "left": "-25%"
+			    }, 250);
+			    $("#main-content").animate({
+			        "left": "0%"
+			    }, 250).animate({
+			        "background-color": "var(--pageBG)"
+			    }, 350);
+			
+			}
+         function get_ws_addr() {
+            return document.location.href.replace("http", "ws").replace("https", "wss").replace("#", "") + "ws"
+         }
+         function hotReloadWhenReady() {
+            setInterval(function() {
+               try {
+                  var req = new XMLHttpRequest();
+                  req.onreadystatechange = function() {
+                     if (this.status === 200) {
+                        document.location.reload();
+                     }
+                  }
+                  req.open("GET", document.location.href);
+                  req.send()
+               } catch(e) {}
+            }, 1000);
+         }
+
+         function addServerDropdown(serverName) {
+            $("<div class=\"CentralMenuDropdown\">\n\t\t\t\t\t<div class=\"innerTopBarDropDown\"> <p class=\"serverName\">\n\t\t\t\t\t\t"+ serverName +"\n\t\t\t\t\t </p>\n\t\t\t\t\t\t   <a href=\"#\" class=\"button dropdownArrow\">\n\t\t\t\t\t\t<svg clip-rule=\"evenodd\" class=\"bloom\" fill-rule=\"evenodd\" stroke-linejoin=\"round\" stroke-miterlimit=\"2\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\">\n\t\t\t\t\t\t\t\t  <path d=\"m16.843 10.211c.108-.141.157-.3.157-.456 0-.389-.306-.755-.749-.755h-8.501c-.445 0-.75.367-.75.755 0 .157.05.316.159.457 1.203 1.554 3.252 4.199 4.258 5.498.142.184.36.29.592.29.23 0 .449-.107.591-.291zm-7.564.289h5.446l-2.718 3.522z\" fill-rule=\"nonzero\"/>\n\t\t\t\t\t\t\t  </svg>\n\t\t\t\t\t\t<svg clip-rule=\"evenodd\" fill-rule=\"evenodd\" stroke-linejoin=\"round\" stroke-miterlimit=\"2\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\">\n\t\t\t\t\t\t\t\t  <path d=\"m16.843 10.211c.108-.141.157-.3.157-.456 0-.389-.306-.755-.749-.755h-8.501c-.445 0-.75.367-.75.755 0 .157.05.316.159.457 1.203 1.554 3.252 4.199 4.258 5.498.142.184.36.29.592.29.23 0 .449-.107.591-.291zm-7.564.289h5.446l-2.718 3.522z\" fill-rule=\"nonzero\"/>\n\t\t\t\t\t\t\t  </svg>\n\n\t\t\t\t\t </a>\n\t\t\t\t\t   </div></div>\n").appendTo(".centerMenu.servers")
+         }
+         function createEvent(type, arguments) {
+            var obj = {
+               "type": type ?? [],
+               "arguemnts": arguments ?? []
+            }
+            return JSON.stringify(obj);
+
+         }
+			$(document).ready(function () {
+            var socket;
+            socket = new WebSocket(get_ws_addr())
+            socket.onerror = function() {
+               hotReloadWhenReady()
+            }
+            socket.onclose = function() {
+               hotReloadWhenReady()
+            }
+            socket.onopen = function() {
+               socket.send(createEvent("infoRequest"))
+            }
+            socket.onmessage = function(message) {
+               console.log(message.data);
+            }
+            window.socket = socket
+			   $('#menu').animate({
+			        "left": "-25%"
+			   }, 1);
+			   var classMap = {
+			        "Servers": ".servers",
+			        "Configuration": ".config",
+			        "Stats": ".stat"
+			   }
+			   $("#menu ul li a").click(function(e) {
+			        $(".active").toggleClass("active");
+			        $(e.target.parentElement).toggleClass("active");
+			        $(".page").hide();
+			        $(".grad").show();
+			        $(classMap[e.target.innerHTML]).show();
+			   })
+			   $($("#menu ul li")[0]).toggleClass("active");
+			   $(".page").hide();
+			   $(".servers").show();
+			   var menuOpen = false;
+			   $('#menu-icon').click(function () {
+			        if (menuOpen) {
+			            closeMenu();
+			            $(".overlay").fadeTo(350, 0.0, "linear", function() {
+			                $(".grad").hide();
+			            });
+			        } else {
+			            $('#menu').animate({
+			                "left": "0%"
+			            }, 250);
+			            $("#main-content").animate({
+			                "left": "25%",
+			            }, 250)
+			            setTimeout(function() {
+			                $(".grad").show();
+			                $(".overlay").fadeTo(350, 1.0, "linear");
+			            }, 100)
+			        }
+			        setTimeout(function() {
+			            menuOpen = !menuOpen;
+			        }, 250);
+			    });
+			    $("#main-content").hover(function() {
+			        if (menuOpen) {
+			            closeMenu();
+			            $(".overlay").fadeTo(350, 0.0, "linear", function() {
+			                $(".grad").hide();
+			            });
+			        }
+			        menuOpen = false;
+			    });
+			    var canvas = $("<canvas class=\"overlay\" width="+ 800 +" height="+ 2 +"></canvas>").appendTo($(".grad"))[0]
+			    var ctx = canvas.getContext("2d");
+			    function handleCanvas() {
+			        if (window.innerWidth != canvas.width || (window.innerHeight != canvas.height)) {
+			            $(canvas).remove();
+			            canvas = $("<canvas class=\"overlay\" width="+ window.innerWidth +" height="+ window.innerHeight +"></canvas>").appendTo($(".grad"))[0]
+			            ctx = canvas.getContext("2d");
+			            var bg = "rgba(14, 14, 14, 0.85)"
+			            var highlight = "rgba(162, 0, 255, 1)"
+			            var grad = ctx.createLinearGradient(0, 0, canvas.width, 0);
+			            grad.addColorStop(0, highlight);
+			            grad.addColorStop(0.05, bg);
+			            grad.addColorStop(1, bg);
+			            ctx.fillStyle = grad;
+			            ctx.fillRect(0, 0, canvas.width, canvas.height);
+			        }
+			        requestAnimationFrame(handleCanvas);
+			    }
+			    handleCanvas();
+			});
+		</script>
+	</body>
+</html>
