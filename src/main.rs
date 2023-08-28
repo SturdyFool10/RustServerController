@@ -1,12 +1,13 @@
 use std::{
     fs::File,
-    io::{Read, Write},
+    io::{Write},
 };
 mod AppState;
 mod ControlledProgram;
 mod configuration;
+use axum_extra::response::JavaScript;
 use configuration::Config;
-use async_std::io::{self, BufReader};
+
 use axum::{
     extract::{ws::*, State, WebSocketUpgrade},
     response::{Html, Response},
@@ -15,13 +16,13 @@ use axum::{
 };
 use futures_util::stream::*;
 use futures_util::SinkExt;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use serde_json::Value as serdeValue;
-use tokio::io::{self as tokio_io, AsyncBufReadExt, BufReader as tokioBufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::{spawn, sync::broadcast};
 use tower_http::services::ServeDir;
 use tracing::*;
-use ControlledProgram::{ControlledProgramDescriptor, ControlledProgramInstance};
+use ControlledProgram::{ControlledProgramDescriptor};
 macro_rules! spawn_tasks {
     ($state:expr, $($task:expr),*) => {
         {
@@ -63,7 +64,7 @@ macro_rules! async_listener {
 }
 #[tokio::main]
 async fn main() -> Result<(), String> {
-    let mut config = load_json("config.json");
+    let config = load_json("config.json");
     tracing_subscriber::FmtSubscriber::builder()
         .pretty()
         .with_line_number(false)
@@ -80,10 +81,16 @@ async fn main() -> Result<(), String> {
     info!("Termination key pressed, closing the app.");
     Ok(())
 }
+
+async fn js_serve(State(_state): State<AppState::AppState>) -> JavaScript<String> {
+    JavaScript::from(include_str!("html_src/index.js").to_owned())
+}
+
 async fn get_router(_state: AppState::AppState) -> Router<AppState::AppState> {
     let router: Router<AppState::AppState> = Router::new()
         .nest_service("/html", ServeDir::new("html_src"))
         .route("/", get(main_serve))
+        .route("/index.js", get(js_serve))
         .route("/ws", get(handle_ws_upgrade));
     router
 }
@@ -146,7 +153,6 @@ async fn handle_ws_upgrade(
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState::AppState) {
-    info!("Socket Inbound!");
     let (mut sender, mut reciever) = socket.split();
     let mut rx = state.tx.subscribe();
 
@@ -176,7 +182,12 @@ async fn handle_socket(socket: WebSocket, state: AppState::AppState) {
         },
     };
 }
-
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct stdinInput {
+    r#type: String,
+    server_name: String,
+    value: String
+}
 async fn process_message(text: String, state: AppState::AppState) {
     let json: serdeValue = serde_json::from_str(&text.clone()).unwrap();
     let ev_type = match json["type"].as_str() {
@@ -189,7 +200,7 @@ async fn process_message(text: String, state: AppState::AppState) {
         Some(val) => val,
     };
     let mut _args: Vec<String> = vec![];
-    let arr = json["arguemnts"].as_array();
+    let arr = json["arguments"].as_array();
     match arr {
         None => {}
         Some(values) => {
@@ -232,6 +243,35 @@ async fn process_message(text: String, state: AppState::AppState) {
             }
             drop(config);
             let _ = state.tx.send(serde_json::to_string(&info).unwrap());
+        }
+        "stdinInput" =>  {
+            let value: stdinInput = serde_json::from_str(text.clone().as_str()).unwrap();
+            let serverName = value.server_name.clone();
+            let mut servers = state.servers.lock().await;
+            let mut isActiveServer = false;
+            for server in servers.iter_mut() {
+                if server.name == serverName {
+                    isActiveServer = true;
+                    tokio::spawn(pass_stdin(value.clone(), server.name.clone(), state.clone()));
+                }
+            }
+            drop(servers);
+            if (isActiveServer != true && value.value == "start") {
+                let config = state.config.lock().await;
+                let mut desc: ControlledProgramDescriptor = ControlledProgramDescriptor { name: "".to_owned(), exePath: "".to_owned(), arguments: vec![], working_dir: "".to_owned() };
+                let mut found = false;
+                for serverDesc in config.servers.iter() {
+                    if (serverDesc.name == value.server_name) {
+                        desc = serverDesc.clone();
+                        found = true;
+                    }
+                }
+                if (found) {
+                    let mut servers = state.servers.lock().await;
+                    servers.push(desc.into_instance());
+                    drop(servers);
+                }
+            }
         }
         _ => {}
     }
@@ -292,7 +332,7 @@ async fn process_stdout(state: AppState::AppState) {
                 }
                 match str {
                     Some(val) => {
-                        if val != "" {
+                        if !val.is_empty() {
                             let out = ConsoleOutput {
                                 r#type: "ServerOutput".to_owned(),
                                 output: val,
@@ -310,4 +350,23 @@ async fn process_stdout(state: AppState::AppState) {
         const SECONDS_TO_SLEEP: f64 = 1000. / REFRESHES_PER_SECOND / 1000.;
         std::thread::sleep(std::time::Duration::from_secs_f64(SECONDS_TO_SLEEP));
     }
+}
+
+async fn pass_stdin(message: stdinInput, server_name: String, state: AppState::AppState) {
+    let value = message.value + "\r\n";
+    let mut servers = state.servers.lock().await;
+    for server in servers.iter_mut() {
+        if server.name == server_name {
+            let stdi = server.process.stdin.as_mut().unwrap();
+            let res = stdi.write_all(value.as_bytes()).await;
+            match res {
+                Ok(_) => {},
+                Err(error) => {
+                    error!("Error passing command to server: {}", error);
+                }
+            }
+            break;
+        }
+    }
+    drop(servers);
 }

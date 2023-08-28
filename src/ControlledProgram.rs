@@ -5,7 +5,7 @@ use tokio::{
     process::*,
     time::{Duration, *},
 };
-use tracing::info;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ControlledProgramDescriptor {
     pub name: String,
@@ -48,7 +48,7 @@ impl ControlledProgramInstance {
         process = process.stdout(Stdio::piped());
         process = process.current_dir(working_dir.clone());
         for arg in arguments.iter() {
-            process = process.arg(arg.replace("\\\\", "\\").replace("\"", ""));
+            process = process.arg(arg.replace("\\\\", "\\").replace('\"', ""));
         }
         let child = process
             .spawn()
