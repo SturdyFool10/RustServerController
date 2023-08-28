@@ -1,0 +1,28 @@
+name: Build MacOS
+
+on:
+  push:
+    branches:
+      - testing  # Adjust this to your main branch name
+
+jobs:
+  build:
+    runs-on: macos-latest  # Use the latest macOS runner
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2  # This step checks out your repository
+
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+
+    - name: Build and Compile
+      run: cargo build --release  # Run your build command
+
+    - name: Archive Artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: MacOs_Artifact
+        path: target/release/server_host  # Replace with the actual path to your compiled binary
