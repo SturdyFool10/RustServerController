@@ -25,4 +25,4 @@ jobs:
       uses: actions/upload-artifact@v2
       with:
         name: my-program-artifact
-        path: target/release/server_host.exe  # Replace with the actual path to your compiled binary
+        path: target/release/server_host  # Replace with the actual path to your compiled binary
