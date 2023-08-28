@@ -4,6 +4,8 @@ use std::{
 };
 mod AppState;
 mod ControlledProgram;
+mod configuration;
+use configuration::Config;
 use async_std::io::{self, BufReader};
 use axum::{
     extract::{ws::*, State, WebSocketUpgrade},
@@ -60,6 +62,7 @@ macro_rules! async_listener {
 }
 #[tokio::main]
 async fn main() -> Result<(), String> {
+    let mut config = load_json("config.json");
     tracing_subscriber::FmtSubscriber::builder()
         .pretty()
         .with_line_number(false)
@@ -67,7 +70,7 @@ async fn main() -> Result<(), String> {
         .without_time()
         .init();
     let (tx, _rx) = broadcast::channel(100);
-    let mut app_state = AppState::AppState::new(tx);
+    let mut app_state = AppState::AppState::new(tx, config);
     let handles = spawn_tasks!(app_state.clone(), start_web_server, start_servers);
     {
         info!("Starting {} tasks", handles.len());
@@ -104,7 +107,7 @@ fn read_file(path: &str) -> Result<String, Box<dyn std::error::Error>> {
     Ok(data)
 }
 #[no_mangle]
-fn load_json(path: &str) -> serdeValue {
+fn load_json(path: &str) -> Config {
     let data = read_file(path);
     let data: String = match data {
         Ok(d) => d,
@@ -112,7 +115,7 @@ fn load_json(path: &str) -> serdeValue {
             error!(error);
             info!("this is likely ok, trying to salvage from error above by creating a default configuration.");
             info!("this can happen if it is your first launch");
-            let str = "{\n\t\"servers\": []\n}".to_owned();
+            let str = "{\n\t\"type\":\"ServerList\"\n\t\"servers\": []\n}".to_owned();
             let mut f = File::create(path)
                 .expect(&format!("There was an error creating the file specified: {}", &path)[..]);
             f.write_all(str.as_bytes()).expect("Error Writing to File");
@@ -124,37 +127,14 @@ fn load_json(path: &str) -> serdeValue {
 }
 #[no_mangle]
 async fn start_servers(_state: AppState::AppState) {
-    let mut json = load_json("config.json");
-    let servers: &mut Vec<serdeValue> = json["servers"].as_array_mut().unwrap();
-    let mut _server_instances: Vec<ControlledProgramInstance> = vec![];
-    for i in servers.iter_mut() {
-        /*
-        Server Format as follows:
-        {
-            "name": ""
-            "exePath": "",
-            "arguments": [
-
-            ]
-        }
-         */
-        let _name = i["name"]
-            .as_str()
-            .expect("server was not in proper format: server.name not found");
-        let _exe_path = i["exePath"]
-            .as_str()
-            .expect("server was not in proper format: server.exePath not found");
-        let _args: Vec<String> = i["arguments"]
-            .as_array()
-            .expect("server was not in proper format: server.arguments not found")
-            .iter()
-            .map(|val| -> String { val.to_string() })
-            .collect();
-        let _working_dir: String = i["working_dir"].as_str().expect("server was not in proper format: server.working_dir was either not a string or does not exist").to_owned();
-        let instance = ControlledProgramInstance::new(_name, _exe_path, _args, _working_dir);
-        _server_instances.push(instance);
+    let mut config = _state.config.lock().await;
+    for serverDesc in config.servers.iter_mut() {
+        let newDesc = serverDesc.clone();
+        let mut servers = _state.servers.lock().await;
+        servers.push(newDesc.into_instance());
+        drop(servers);
     }
-    tokio::spawn(process_stdout(_server_instances, _state.clone()));
+    tokio::spawn(process_stdout( _state.clone()));
 }
 #[no_mangle]
 async fn handle_ws_upgrade(
@@ -223,7 +203,7 @@ async fn process_message(text: String, state: AppState::AppState) {
         "requestInfo" => {
             info!("Sending information...");
             let servers = state.servers.lock().await;
-            let mut response = "{\n\t\"Servers\": [".to_owned();
+            let mut response = "{\n\t\"type\": \"ServerInfo\",\n\t\"Servers\": [".to_owned();
             let server_length = servers.len();
             servers.iter().enumerate().for_each(|(index, server)| {
                 response += format!("\"{}\"", server.name.as_str()).as_str();
@@ -239,12 +219,7 @@ async fn process_message(text: String, state: AppState::AppState) {
     }
 }
 
-async fn process_stdout(instances: Vec<ControlledProgramInstance>, state: AppState::AppState) {
-    let mut servers = state.servers.lock().await;
-    for server in instances {
-        servers.push(server);
-    }
-    drop(servers);
+async fn process_stdout(state: AppState::AppState) {
     loop {
         {
             let mut new_instances = vec![];
@@ -291,10 +266,21 @@ async fn process_stdout(instances: Vec<ControlledProgramInstance>, state: AppSta
                     Ok(val) => val,
                     _ => None,
                 };
+                #[derive(serde::Serialize)]
+                struct ConsoleOutput {
+                    r#type: String,
+                    output: String,
+                    server_name: String,
+                }
                 match str {
                     Some(val) => {
                         if val != "" {
-                            let _ = state.tx.send(format!("{{\"type\": \"ServerOutput\",\"out\": \"{}\",\"serverName\": \"{}\"}}", val, server.name.clone()).replace("\n", "\\n"));
+                            let out = ConsoleOutput {
+                                r#type: "ServerOutput".to_owned(),
+                                output: val,
+                                server_name: server.name.clone(),
+                            };
+                            let _ = state.tx.send(serde_json::to_string(&out).unwrap());
                         }
                     }
                     _ => {}

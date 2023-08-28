@@ -373,7 +373,18 @@
                socket.send(createEvent("infoRequest"))
             }
             socket.onmessage = function(message) {
-               console.log(message.data);
+				var obj = JSON.parse(message.data);
+				//console.log(obj);
+				switch(obj.type) {
+					case "ServerInfo":
+						for (index in obj.Servers) {
+							console.log(obj.Servers[index]);
+						}
+					break;
+					case "ServerOutput":
+						console.log("[" + obj.server_name + "]: " + obj.output);
+					break;
+				}
             }
             window.socket = socket
 			   $('#menu').animate({

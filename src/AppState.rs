@@ -1,7 +1,7 @@
 use std::sync::{atomic::AtomicBool, Arc};
 use tokio::sync::Mutex;
 
-use crate::ControlledProgram::ControlledProgramInstance;
+use crate::{ControlledProgram::ControlledProgramInstance, configuration::Config};
 use tokio::sync::broadcast;
 #[derive(Clone)]
 pub struct AppState {
@@ -9,14 +9,16 @@ pub struct AppState {
     pub tx: broadcast::Sender<String>,
     running: Arc<AtomicBool>,
     socket_removal_queue: Arc<Mutex<Vec<usize>>>,
+    pub config: Arc<Mutex<Config>>,
 }
 impl AppState {
-    pub fn new(tx: broadcast::Sender<String>) -> Self {
+    pub fn new(tx: broadcast::Sender<String>, config: Config) -> Self {
         Self {
             servers: Arc::new(Mutex::new(vec![])),
             tx,
             running: Arc::new(AtomicBool::new(true)),
             socket_removal_queue: Arc::new(Mutex::new(vec![])),
+            config: Arc::new(Mutex::new(config)),
         }
     }
     pub async fn remove_socket(&mut self, id: usize) {
