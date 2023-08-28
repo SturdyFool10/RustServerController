@@ -14,7 +14,9 @@ jobs:
       uses: actions/checkout@v2  # This step checks out your repository
 
     - name: Set up Rust
-      uses: actions-rs/toolchain@v1  # Set up the Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
 
     - name: Build and Compile
       run: cargo build --release  # Run your build command
