@@ -9,6 +9,7 @@ in order to allow you to compile this project, clone the main branch, then go in
 ```bash
 cargo build --release
 ```
+once the build is complete, you should be able to find your compiled executable as /target/release/server_host.exe, its standalone so move it where you please!
 Please note that you will need to go to <a href="http://rustup.rs">rustup</a> in order to get cargo installed and you may want git as well for easy cloning of the repo.
 ### go to the releases tab for official stable and complete builds
 I will be updating and posting pre-compiled executables to the repo, these are less secure for someone who does know rust, since I will likely not be distributing source code with the executable versions, but will require much less technical expertise and resources
