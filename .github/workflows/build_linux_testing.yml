@@ -1,0 +1,28 @@
+name: Build Linux Testing
+
+on:
+  push:
+    branches:
+      - testing  # Adjust this to your main branch name
+
+jobs:
+  build:
+    runs-on: ubuntu-latest  # Use the latest Windows runner
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2  # This step checks out your repository
+
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+
+    - name: Build and Compile
+      run: cargo build --release  # Run your build command
+
+    - name: Archive Artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: Linux_Artifact
+        path: target/release/server_host  # Replace with the actual path to your compiled binary
