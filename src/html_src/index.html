@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html>
 	<head>
+		<link rel="preconnect" href="https://fonts.googleapis.com">
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+		<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@500&display=swap" rel="stylesheet">
 		<style>
 			:root {
 			--pageBG: #0e0e0e;
@@ -49,6 +52,7 @@
 			padding: 0;
 			margin: 80px 0 0 0;
 			text-align: center;
+			font-family: 'Roboto', sans-serif;
 			}
 			.active {
 			border-width: 0px;
@@ -213,6 +217,7 @@
             line-height: 200%;
             text-align: center;
             color: var(--textCol);
+			font-family: 'Roboto', sans-serif;
          }
          .innerTopBarDropDown {
             position: absolute;
@@ -221,6 +226,63 @@
             height: 5vh;
             width: 100%;
          }
+		 .dropdownDrop {
+			position: absolute;
+			left: 0px;
+			top: 5vh;
+			width: 100%;
+			border-bottom-color: color-mix(in srgb, var(--menuBG) 70%, #fff 30%);
+			border-bottom-width: 3px;
+			border-bottom-style: solid;
+		 }
+		 .serverSTDOut {
+			position: relative;
+			top: 0px;
+			left: 0px;
+			width: 100%;
+			height: 40vh;
+			border-bottom-color: color-mix(in srgb, var(--menuBG) 80%, #fff 20%);
+			border-bottom-width: 3px;
+			border-bottom-style: solid;
+			overflow: auto;
+		 }
+		 .serverSTDIn {
+			position: relative;
+			top: 0px;
+			left: 0px;
+			width: 100%;
+			height: 3vh;
+		 }
+		 .STDInInput {
+			background-color: var(--pageBG);
+			color:rgba(255, 255, 255, 1);
+			position: relative;
+			left: 0px;
+			top: 0px;
+			width: 90%;
+			height: calc(100% - 6px);
+			font-family: 'Roboto', sans-serif;
+		 }
+		 .STDInSubmit {
+			left: calc(90% + 9px);
+			display: flex;
+    		align-items: center; /* Vertical alignment */
+    		justify-content: center; /* Horizontal alignment */
+    		text-decoration: none; /* Remove underline */
+			background-color: var(--highlightCol);
+			color:rgba(255, 255, 255, 1);
+			width: calc(10% - 9px);
+			font-family: 'Roboto', sans-serif;
+		 }
+		 .STDInSubmit:hover {
+			background-color: color-mix(in srgb, var(--highlightCol) 80%, var(--menuBG) 20%);
+		 }
+		 .STDOutMessage {
+			position: relative;
+			padding-left: 2%;
+			color:rgba(255, 255, 255, 1);
+			font-family: 'Roboto', sans-serif;
+		 }
 		</style>
 	</head>
 	<body>
@@ -331,6 +393,47 @@
 			    }, 350);
 			
 			}
+			function AnimateRotate(selector, start, angle, duration) {
+    			// caching the object for performance reasons
+    			var $elem = selector;
+
+    			// we use a pseudo object for the animation
+    			// (starts from `0` to `angle`), you can name it as you want
+    			$({deg: start}).animate({deg: angle}, {
+        		duration: duration,
+        		step: function(now) {
+            		// in the step-callback (that is fired each step of the animation),
+            		// you can use the `now` paramter which contains the current
+            		// animation-position (`0` up to `angle`)
+            		$elem.css({
+                		transform: 'rotate(' + now + 'deg)'
+            		});
+        		}
+    		});
+			}
+			function dropdownClick(event) {
+   				event.preventDefault();
+   				var dropdown = $(this).closest(".CentralMenuDropdown");
+   				var slider = dropdown.find(".dropdownDrop");
+   				var arrow = dropdown.find(".dropdownArrow");
+    			// Toggle the visibility of the ".dropdownDrop" content with a slide animation
+				if (slider.hasClass("open")) {
+					//close, then hide
+					AnimateRotate(arrow.find("svg"), 0, 180, 100);
+					slider.slideUp(250, function() {
+						console.log("hidden")
+						slider.hide();
+					});
+				} else {
+					//show, then open
+					AnimateRotate(arrow.find("svg"), 180, 0, 100);
+					console.log("shown")
+					slider.slideDown(250, function() {
+						slider.show()
+					})
+				}
+				slider.toggleClass("open")
+			}
          function get_ws_addr() {
             return document.location.href.replace("http", "ws").replace("https", "wss").replace("#", "") + "ws"
          }
@@ -350,8 +453,25 @@
          }
 
          function addServerDropdown(serverName) {
-            $("<div class=\"CentralMenuDropdown\">\n\t\t\t\t\t<div class=\"innerTopBarDropDown\"> <p class=\"serverName\">\n\t\t\t\t\t\t"+ serverName +"\n\t\t\t\t\t </p>\n\t\t\t\t\t\t   <a href=\"#\" class=\"button dropdownArrow\">\n\t\t\t\t\t\t<svg clip-rule=\"evenodd\" class=\"bloom\" fill-rule=\"evenodd\" stroke-linejoin=\"round\" stroke-miterlimit=\"2\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\">\n\t\t\t\t\t\t\t\t  <path d=\"m16.843 10.211c.108-.141.157-.3.157-.456 0-.389-.306-.755-.749-.755h-8.501c-.445 0-.75.367-.75.755 0 .157.05.316.159.457 1.203 1.554 3.252 4.199 4.258 5.498.142.184.36.29.592.29.23 0 .449-.107.591-.291zm-7.564.289h5.446l-2.718 3.522z\" fill-rule=\"nonzero\"/>\n\t\t\t\t\t\t\t  </svg>\n\t\t\t\t\t\t<svg clip-rule=\"evenodd\" fill-rule=\"evenodd\" stroke-linejoin=\"round\" stroke-miterlimit=\"2\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\">\n\t\t\t\t\t\t\t\t  <path d=\"m16.843 10.211c.108-.141.157-.3.157-.456 0-.389-.306-.755-.749-.755h-8.501c-.445 0-.75.367-.75.755 0 .157.05.316.159.457 1.203 1.554 3.252 4.199 4.258 5.498.142.184.36.29.592.29.23 0 .449-.107.591-.291zm-7.564.289h5.446l-2.718 3.522z\" fill-rule=\"nonzero\"/>\n\t\t\t\t\t\t\t  </svg>\n\n\t\t\t\t\t </a>\n\t\t\t\t\t   </div></div>\n").appendTo(".centerMenu.servers")
+            var dropdown = $("<div class=\"CentralMenuDropdown "+ serverName +"dropdown\"><div class=\"innerTopBarDropDown\"> <p class=\"serverName\">"+ serverName +"</p>   <a href=\"#\" class=\"button dropdownArrow\"><svg clip-rule=\"evenodd\" class=\"bloom\" fill-rule=\"evenodd\" stroke-linejoin=\"round\" stroke-miterlimit=\"2\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\">  <path d=\"m16.843 10.211c.108-.141.157-.3.157-.456 0-.389-.306-.755-.749-.755h-8.501c-.445 0-.75.367-.75.755 0 .157.05.316.159.457 1.203 1.554 3.252 4.199 4.258 5.498.142.184.36.29.592.29.23 0 .449-.107.591-.291zm-7.564.289h5.446l-2.718 3.522z\" fill-rule=\"nonzero\"/>  </svg><svg clip-rule=\"evenodd\" fill-rule=\"evenodd\" stroke-linejoin=\"round\" stroke-miterlimit=\"2\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"m16.843 10.211c.108-.141.157-.3.157-.456 0-.389-.306-.755-.749-.755h-8.501c-.445 0-.75.367-.75.755 0 .157.05.316.159.457 1.203 1.554 3.252 4.199 4.258 5.498.142.184.36.29.592.29.23 0 .449-.107.591-.291zm-7.564.289h5.446l-2.718 3.522z\" fill-rule=\"nonzero\"/></svg></a></div><div class=\"dropdownDrop\" style: \"display: none;\"><div class=\"serverSTDOut "+ serverName +"Out\"></div><div class=\"serverSTDIn\"><input class=\"STDInInput\"></input><a href=\"#\" class=\"STDInSubmit\">Submit</a></div></div></div>")
+			var arrow = dropdown.find(".dropdownArrow").children().css({
+				transform: "rotate(-180deg)"
+			});
+			dropdown.appendTo(".centerMenu.servers")
+			dropdown.find(".innerTopBarDropDown").click(dropdownClick);
+			dropdown.find(".dropdownDrop").slideUp(1).hide();
          }
+		 function addDropdownNoDupe(name) {
+			var existingServerEntryList = [];
+			var q = $(".serverName").toArray()
+			for (var i = 0; i < q.length; ++i) {
+				existingServerEntryList.push(q[i].textContent);
+			}
+			if (existingServerEntryList.includes(serverName) != true) {
+				console.log(serverName + " has no entry!");
+				addServerDropdown(serverName);
+			}
+		 }
          function createEvent(type, arguments) {
             var obj = {
                "type": type ?? [],
@@ -369,23 +489,42 @@
             socket.onclose = function() {
                hotReloadWhenReady()
             }
-            socket.onopen = function() {
-               socket.send(createEvent("infoRequest"))
-            }
+            socket.addEventListener("open", function() {
+				socket.send(createEvent("requestInfo"));
+			})
             socket.onmessage = function(message) {
 				var obj = JSON.parse(message.data);
 				//console.log(obj);
 				switch(obj.type) {
 					case "ServerInfo":
-						for (index in obj.Servers) {
-							console.log(obj.Servers[index]);
+						var existingServerEntryList = [];
+						var q = $(".serverName").toArray()
+						for (var i = 0; i < q.length; ++i) {
+							existingServerEntryList.push(q[i].textContent);
+						}
+						for (index in obj.servers) {
+							let serverName = obj.servers[index].name;
+							if (existingServerEntryList.includes(serverName) != true) {
+								console.log(serverName + " has no entry!");
+								addServerDropdown(serverName);
+							}
 						}
 					break;
 					case "ServerOutput":
-						console.log("[" + obj.server_name + "]: " + obj.output);
+						console.log(obj);
+						var str = obj.output;
+						var lines = str.split("\r\n");
+						for (var i in lines) {
+							var line = lines[i];
+							if (line != "") {
+								console.log("Adding Message: " + line);
+								$("<p class=\"STDOutMessage\">" + line + "</p>").appendTo("." + obj.server_name + "Out");
+							}
+						}
 					break;
 				}
             }
+			
             window.socket = socket
 			   $('#menu').animate({
 			        "left": "-25%"
@@ -439,6 +578,9 @@
 			    });
 			    var canvas = $("<canvas class=\"overlay\" width="+ 800 +" height="+ 2 +"></canvas>").appendTo($(".grad"))[0]
 			    var ctx = canvas.getContext("2d");
+				var dropdownSelector = $(".centerMenu.CentralMenuDropdown")
+				console.log(dropdownSelector);
+				dropdownSelector.click();
 			    function handleCanvas() {
 			        if (window.innerWidth != canvas.width || (window.innerHeight != canvas.height)) {
 			            $(canvas).remove();

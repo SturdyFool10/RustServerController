@@ -15,6 +15,7 @@ use axum::{
 };
 use futures_util::stream::*;
 use futures_util::SinkExt;
+use serde::Serialize;
 use serde_json::Value as serdeValue;
 use tokio::io::{self as tokio_io, AsyncBufReadExt, BufReader as tokioBufReader};
 use tokio::{spawn, sync::broadcast};
@@ -201,19 +202,36 @@ async fn process_message(text: String, state: AppState::AppState) {
     }
     match ev_type {
         "requestInfo" => {
-            info!("Sending information...");
             let servers = state.servers.lock().await;
-            let mut response = "{\n\t\"type\": \"ServerInfo\",\n\t\"Servers\": [".to_owned();
-            let server_length = servers.len();
-            servers.iter().enumerate().for_each(|(index, server)| {
-                response += format!("\"{}\"", server.name.as_str()).as_str();
-                if index < server_length - 1 {
-                    response += ", ";
-                }
-            });
+            #[derive(Clone, Serialize)]
+            struct ServerInfo {
+                name: String,
+                active: bool
+            }
+            
+            #[derive(Clone, Serialize)]
+            struct serverInfoMessage {
+                r#type: String,
+                servers: Vec<ServerInfo>
+            }
+            let mut info = serverInfoMessage {
+                r#type: "ServerInfo".to_owned(),
+                servers: vec![]
+            };
+            let mut usedNames: Vec<String> = vec![];
+            for server in servers.iter() {
+                usedNames.push(server.name.clone());
+                info.servers.push(ServerInfo { name: server.name.clone(), active: true });
+            }
             drop(servers);
-            response += "]\n}";
-            let _ = state.tx.send(response);
+            let config = state.config.lock().await;
+            for serverConfig in config.servers.iter() {
+                if !usedNames.contains(&serverConfig.name) {
+                    info.servers.push(ServerInfo { name: serverConfig.name.clone(), active: false })
+                }
+            }
+            drop(config);
+            let _ = state.tx.send(serde_json::to_string(&info).unwrap());
         }
         _ => {}
     }
