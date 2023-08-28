@@ -93,4 +93,8 @@ impl ControlledProgramInstance {
         };
         out
     }
+    pub async fn stop(&mut self) {
+        self.process.kill().await;
+
+    }
 }

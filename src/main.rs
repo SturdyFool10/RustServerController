@@ -272,6 +272,12 @@ async fn process_message(text: String, state: AppState::AppState) {
                     drop(servers);
                 }
             }
+        },
+        "terminateServers" => {
+            let mut servers = state.servers.lock().await;
+            for server in servers.iter_mut() {
+                server.stop().await;
+            }
         }
         _ => {}
     }

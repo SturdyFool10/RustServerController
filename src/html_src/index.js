@@ -34,6 +34,7 @@ function AnimateRotate(selector, start, angle, duration) {
 function dropdownClick(event) {
 	event.preventDefault();
 	var dropdown = $(this).closest(".CentralMenuDropdown");
+    dropdown.toggleClass("open");
 	var slider = dropdown.find(".dropdownDrop");
 	var arrow = dropdown.find(".dropdownArrow");
 	// Toggle the visibility of the ".dropdownDrop" content with a slide animation
@@ -42,9 +43,12 @@ function dropdownClick(event) {
 		AnimateRotate(arrow.find("svg"), 0, 180, 100);
 		slider.slideUp(250, function() {
 			slider.hide();
+            //$(".CentralMenuDropdown").show();
 		});
 	} else {
 		//show, then open
+        //$(".CentralMenuDropdown").hide();
+        //dropdown.show();
 		AnimateRotate(arrow.find("svg"), 180, 0, 100);
 		slider.slideDown(250, function() {
 			slider.show()
@@ -72,8 +76,12 @@ function hotReloadWhenReady() {
 	}, 1000);
 }
 
-function addServerDropdown(serverName) {
-    var dropdown = $("<div class=\"CentralMenuDropdown "+ serverName +"dropdown\"><div class=\"innerTopBarDropDown\"> <p class=\"serverName\">"+ serverName +"</p>   <a href=\"#\" class=\"button dropdownArrow\"><svg clip-rule=\"evenodd\" class=\"bloom\" fill-rule=\"evenodd\" stroke-linejoin=\"round\" stroke-miterlimit=\"2\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\">  <path d=\"m16.843 10.211c.108-.141.157-.3.157-.456 0-.389-.306-.755-.749-.755h-8.501c-.445 0-.75.367-.75.755 0 .157.05.316.159.457 1.203 1.554 3.252 4.199 4.258 5.498.142.184.36.29.592.29.23 0 .449-.107.591-.291zm-7.564.289h5.446l-2.718 3.522z\" fill-rule=\"nonzero\"/>  </svg><svg clip-rule=\"evenodd\" fill-rule=\"evenodd\" stroke-linejoin=\"round\" stroke-miterlimit=\"2\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"m16.843 10.211c.108-.141.157-.3.157-.456 0-.389-.306-.755-.749-.755h-8.501c-.445 0-.75.367-.75.755 0 .157.05.316.159.457 1.203 1.554 3.252 4.199 4.258 5.498.142.184.36.29.592.29.23 0 .449-.107.591-.291zm-7.564.289h5.446l-2.718 3.522z\" fill-rule=\"nonzero\"/></svg></a></div><div class=\"dropdownDrop\" style: \"display: none;\"><div class=\"serverSTDOut "+ serverName +"Out\"></div><div class=\"serverSTDIn\"><input class=\"STDInInput\"></input><a href=\"#\" class=\"STDInSubmit\">Submit</a></div></div></div>")
+function addServerDropdown(serverName, inactive) {
+    let titleText = serverName;
+    if (inactive) {
+        titleText += " (inactive)"
+    }
+    var dropdown = $("<div class=\"CentralMenuDropdown "+ serverName +"dropdown\"><div class=\"innerTopBarDropDown\"> <p class=\"serverName\">"+ titleText +"</p>   <a href=\"#\" class=\"button dropdownArrow\"><svg clip-rule=\"evenodd\" class=\"bloom\" fill-rule=\"evenodd\" stroke-linejoin=\"round\" stroke-miterlimit=\"2\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\">  <path d=\"m16.843 10.211c.108-.141.157-.3.157-.456 0-.389-.306-.755-.749-.755h-8.501c-.445 0-.75.367-.75.755 0 .157.05.316.159.457 1.203 1.554 3.252 4.199 4.258 5.498.142.184.36.29.592.29.23 0 .449-.107.591-.291zm-7.564.289h5.446l-2.718 3.522z\" fill-rule=\"nonzero\"/>  </svg><svg clip-rule=\"evenodd\" fill-rule=\"evenodd\" stroke-linejoin=\"round\" stroke-miterlimit=\"2\" viewBox=\"0 0 24 24\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"m16.843 10.211c.108-.141.157-.3.157-.456 0-.389-.306-.755-.749-.755h-8.501c-.445 0-.75.367-.75.755 0 .157.05.316.159.457 1.203 1.554 3.252 4.199 4.258 5.498.142.184.36.29.592.29.23 0 .449-.107.591-.291zm-7.564.289h5.446l-2.718 3.522z\" fill-rule=\"nonzero\"/></svg></a></div><div class=\"dropdownDrop\" style: \"display: none;\"><div class=\"serverSTDOut "+ serverName +"Out\"></div><div class=\"serverSTDIn\"><input class=\"STDInInput\"></input><a href=\"#\" class=\"STDInSubmit\">Submit</a></div></div></div>")
 	var arrow = dropdown.find(".dropdownArrow").children().css({
 		transform: "rotate(-180deg)"
 	});
@@ -128,16 +136,15 @@ function addServerDropdown(serverName) {
         }
     })
 	dropdown.find(".dropdownDrop").slideUp(1).hide();
+    if (inactive == true) {
+        dropdown.toggleClass("inactiveServer");
+    }
 }
 
-function addDropdownNoDupe(name) {
-	var existingServerEntryList = [];
-	var q = $(".serverName").toArray()
-	for (var i = 0; i < q.length; ++i) {
-		existingServerEntryList.push(q[i].textContent);
-	}
-	if (existingServerEntryList.includes(serverName) != true) {
-		addServerDropdown(serverName);
+function addDropdownNoDupe(name, inactive) {
+	var q = $("." + name + "dropdown").toArray().length != 0
+	if (q != true) {
+		addServerDropdown(name, inactive);
 	}
 }
 
@@ -160,22 +167,35 @@ $(document).ready(function() {
 	socket.addEventListener("open", function() {
 		socket.send(createEvent("requestInfo"));
 	})
+    setInterval(function() {
+        socket.send(createEvent("requestInfo"));
+        for (var index in window.serverInfoObj.servers) {
+            var server = window.serverInfoObj.servers[index];
+            var name = server.name;
+            var dropdown = $("." + name + "dropdown");
+            var title = dropdown.find(".serverName");
+            var titleText = title[0].textContent;
+            if (server.active == false && titleText.endsWith(" (inactive)") == false) {
+                title[0].textContent += " (inactive)"
+                dropdown.toggleClass("inactiveServer");
+            }
+            if (dropdown.hasClass("inactiveServer") && server.active) {
+                title[0].textContent = title[0].textContent.split(" (inactive)").join("");
+                dropdown.toggleClass("inactiveServer");
+            }
+        }
+    }, 2000);
 	socket.onmessage = function(message) {
 		var obj = JSON.parse(message.data);
 		//console.log(obj);
 		switch (obj.type) {
 			case "ServerInfo":
-				var existingServerEntryList = [];
-				var q = $(".serverName").toArray()
-				for (var i = 0; i < q.length; ++i) {
-					existingServerEntryList.push(q[i].textContent);
-				}
 				for (index in obj.servers) {
-					let serverName = obj.servers[index].name;
-					if (existingServerEntryList.includes(serverName) != true) {
-						addServerDropdown(serverName);
-					}
+                    var server = obj.servers[index];
+					let serverName = server.name;
+					addDropdownNoDupe(serverName, !server.active)
 				}
+                window.serverInfoObj = obj;
 			break;
 			case "ServerOutput":
 				var str = obj.output;
@@ -183,7 +203,12 @@ $(document).ready(function() {
 				for (var i in lines) {
 					var line = lines[i];
 					if (line != "") {
-						$(" <p class=\"STDOutMessage\">" + line + "</p>").appendTo("." + obj.server_name + "Out");
+                        var outDiv = $("." + obj.server_name + "Out")[0]
+                        var shouldScroll = outDiv.scrollTop == outDiv.scrollHeight
+						$(" <p class=\"STDOutMessage\">" + line + "</p>").appendTo(outDiv);
+                        if (true) {
+                            outDiv.scrollTop = outDiv.scrollHeight
+                        }
 					}
 				}
 			break;
@@ -196,6 +221,11 @@ $(document).ready(function() {
 	$('#menu').animate({
 		"left": "-25%"
 	}, 1);
+    $(".menuBTN1").click(function(e) {
+        if (e.which != 1) return;
+        console.log("Terminating all servers...")
+        socket.send(createEvent("terminateServers"));
+    })
 	var classMap = {
 		"Servers": ".servers",
 		"Configuration": ".config",
