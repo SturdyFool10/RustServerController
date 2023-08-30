@@ -1,7 +1,4 @@
-use std::{
-    fs::File,
-    io::{Write},
-};
+use std::{fs::File, io::Write, process::exit};
 mod AppState;
 mod ControlledProgram;
 mod configuration;
@@ -16,13 +13,13 @@ use axum::{
 };
 use futures_util::stream::*;
 use futures_util::SinkExt;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value as serdeValue;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::{spawn, sync::broadcast};
 use tower_http::services::ServeDir;
 use tracing::*;
-use ControlledProgram::{ControlledProgramDescriptor};
+use ControlledProgram::ControlledProgramDescriptor;
 macro_rules! spawn_tasks {
     ($state:expr, $($task:expr),*) => {
         {
@@ -79,6 +76,7 @@ async fn main() -> Result<(), String> {
     }
     let _ = tokio::spawn(async_listener!("t", app_state)).await;
     info!("Termination key pressed, closing the app.");
+    exit(0);
     Ok(())
 }
 
@@ -137,12 +135,14 @@ fn load_json(path: &str) -> Config {
 async fn start_servers(_state: AppState::AppState) {
     let mut config = _state.config.lock().await;
     for serverDesc in config.servers.iter_mut() {
-        let newDesc = serverDesc.clone();
-        let mut servers = _state.servers.lock().await;
-        servers.push(newDesc.into_instance());
-        drop(servers);
+        if (serverDesc.autoStart) { 
+            let newDesc = serverDesc.clone();
+            let mut servers = _state.servers.lock().await;
+            servers.push(newDesc.into_instance());
+            drop(servers);
+        }
     }
-    tokio::spawn(process_stdout( _state.clone()));
+    tokio::spawn(process_stdout(_state.clone()));
 }
 #[no_mangle]
 async fn handle_ws_upgrade(
@@ -186,7 +186,7 @@ async fn handle_socket(socket: WebSocket, state: AppState::AppState) {
 struct stdinInput {
     r#type: String,
     server_name: String,
-    value: String
+    value: String,
 }
 async fn process_message(text: String, state: AppState::AppState) {
     let json: serdeValue = serde_json::from_str(&text.clone()).unwrap();
@@ -217,62 +217,98 @@ async fn process_message(text: String, state: AppState::AppState) {
             #[derive(Clone, Serialize)]
             struct ServerInfo {
                 name: String,
-                active: bool
+                output: String,
+                active: bool,
             }
-            
+
             #[derive(Clone, Serialize)]
             struct serverInfoMessage {
                 r#type: String,
-                servers: Vec<ServerInfo>
+                servers: Vec<ServerInfo>,
             }
+            #[derive(Debug, Deserialize)]
+            struct SInfoRequestMessage {
+                r#type: String,
+                arguments: Vec<bool>,
+            }
+            let val: SInfoRequestMessage = serde_json::from_str(&text).unwrap();
+
             let mut info = serverInfoMessage {
                 r#type: "ServerInfo".to_owned(),
-                servers: vec![]
+                servers: vec![],
             };
             let mut usedNames: Vec<String> = vec![];
             for server in servers.iter() {
                 usedNames.push(server.name.clone());
-                info.servers.push(ServerInfo { name: server.name.clone(), active: true });
+                let mut sInfo = ServerInfo {
+                    name: server.name.clone(),
+                    output: "".to_owned(),
+                    active: true,
+                };
+                if (val.arguments[0] == true) {
+                    sInfo.output = server.currOutputInProgress.clone();
+                }
+                info.servers.push(sInfo);
             }
             drop(servers);
             let config = state.config.lock().await;
             for serverConfig in config.servers.iter() {
                 if !usedNames.contains(&serverConfig.name) {
-                    info.servers.push(ServerInfo { name: serverConfig.name.clone(), active: false })
+                    info.servers.push(ServerInfo {
+                        name: serverConfig.name.clone(),
+                        output: "".to_owned(),
+                        active: false,
+                    })
                 }
             }
             drop(config);
             let _ = state.tx.send(serde_json::to_string(&info).unwrap());
         }
-        "stdinInput" =>  {
-            let value: stdinInput = serde_json::from_str(text.clone().as_str()).unwrap();
-            let serverName = value.server_name.clone();
-            let mut servers = state.servers.lock().await;
-            let mut isActiveServer = false;
-            for server in servers.iter_mut() {
-                if server.name == serverName {
-                    isActiveServer = true;
-                    tokio::spawn(pass_stdin(value.clone(), server.name.clone(), state.clone()));
-                }
-            }
-            drop(servers);
-            if (isActiveServer != true && value.value == "start") {
-                let config = state.config.lock().await;
-                let mut desc: ControlledProgramDescriptor = ControlledProgramDescriptor { name: "".to_owned(), exePath: "".to_owned(), arguments: vec![], working_dir: "".to_owned() };
-                let mut found = false;
-                for serverDesc in config.servers.iter() {
-                    if (serverDesc.name == value.server_name) {
-                        desc = serverDesc.clone();
-                        found = true;
+        "stdinInput" => {
+            let value: Result<stdinInput, _> = serde_json::from_str(text.clone().as_str());
+            match value {
+                Ok(value) => {
+                    let serverName = value.server_name.clone();
+                    let mut servers = state.servers.lock().await;
+                    let mut isActiveServer = false;
+                    for server in servers.iter_mut() {
+                        if server.name == serverName {
+                            isActiveServer = true;
+                            tokio::spawn(pass_stdin(
+                                value.clone(),
+                                server.name.clone(),
+                                state.clone(),
+                            ));
+                        }
+                    }
+                    drop(servers);
+                    if (isActiveServer != true && value.value == "start") {
+                        let config = state.config.lock().await;
+                        let mut desc: ControlledProgramDescriptor = ControlledProgramDescriptor::new(
+                            "",
+                            "",
+                            vec![],
+                            "".to_owned()
+                        );
+                        let mut found = false;
+                        for serverDesc in config.servers.iter() {
+                            if (serverDesc.name == value.server_name) {
+                                desc = serverDesc.clone();
+                                found = true;
+                            }
+                        }
+                        if (found) {
+                            let mut servers = state.servers.lock().await;
+                            servers.push(desc.into_instance());
+                            drop(servers);
+                        }
                     }
                 }
-                if (found) {
-                    let mut servers = state.servers.lock().await;
-                    servers.push(desc.into_instance());
-                    drop(servers);
+                Err(e) => {
+                    dbg!(e, text);
                 }
             }
-        },
+        }
         "terminateServers" => {
             let mut servers = state.servers.lock().await;
             for server in servers.iter_mut() {
@@ -366,7 +402,7 @@ async fn pass_stdin(message: stdinInput, server_name: String, state: AppState::A
             let stdi = server.process.stdin.as_mut().unwrap();
             let res = stdi.write_all(value.as_bytes()).await;
             match res {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(error) => {
                     error!("Error passing command to server: {}", error);
                 }

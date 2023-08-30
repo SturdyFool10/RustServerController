@@ -1,7 +1,7 @@
 use std::sync::{atomic::AtomicBool, Arc};
 use tokio::sync::Mutex;
 
-use crate::{ControlledProgram::ControlledProgramInstance, configuration::Config};
+use crate::{configuration::Config, ControlledProgram::ControlledProgramInstance};
 use tokio::sync::broadcast;
 #[derive(Clone)]
 pub struct AppState {
