@@ -9,13 +9,13 @@ use axum::{
     extract::{ws::*, State, WebSocketUpgrade},
     response::{Html, Response},
     routing::get,
-    Router, ServiceExt,
+    Router,
 };
 use futures_util::stream::*;
 use futures_util::SinkExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as serdeValue;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::{spawn, sync::broadcast};
 use tower_http::services::ServeDir;
 use tracing::*;
@@ -173,11 +173,9 @@ async fn handle_socket(socket: WebSocket, state: AppState::AppState) {
     let mut listen_task = tokio::spawn(listen_task_handle);
     tokio::select! {
         _ = (&mut send_task) => {
-            info!("A socket has terminated!");
             listen_task.abort()
         },
         _ = (&mut listen_task) => {
-            info!("A socket has terminated!");
             send_task.abort()
         },
     };
