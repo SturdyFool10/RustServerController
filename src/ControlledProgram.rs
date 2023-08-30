@@ -120,7 +120,13 @@ impl ControlledProgramInstance {
                 self.currOutputInProgress += &val[..];
                 let cp = self.currOutputInProgress.split("\n");
                 let lines: Vec<&str> = cp.into_iter().collect();
-                self.currOutputInProgress = lines[std::cmp::max(0, lines.len() - 150)..lines.len()].join("\n");
+                let mut inp = lines.len();
+                if (inp < 150) {
+                    inp = 0;
+                } else {
+                    inp = inp - 150;
+                }
+                self.currOutputInProgress = lines[std::cmp::max(0, inp)..lines.len()].join("\n");
                 Some(val.clone())
             }
             None => None,

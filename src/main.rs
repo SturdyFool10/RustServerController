@@ -252,7 +252,13 @@ async fn process_message(text: String, state: AppState::AppState) {
                 if (val.arguments[0] == true) {
                     let cl: String =  server.currOutputInProgress.clone();
                     let split: Vec<&str> = cl.split("\n").into_iter().collect();
-                    sInfo.output = split[max(0, split.len() - 150)..split.len()].join("\n");
+                    let mut inp = split.len();
+                    if (inp < 150) {
+                        inp = 0;
+                    } else {
+                        inp = inp - 150;
+                    }
+                    sInfo.output = split[inp..split.len()].join("\n");
                 }
                 info.servers.push(sInfo);
             }
