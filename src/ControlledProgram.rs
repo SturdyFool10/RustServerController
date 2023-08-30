@@ -118,6 +118,9 @@ impl ControlledProgramInstance {
         match out {
             Some(val) => {
                 self.currOutputInProgress += &val[..];
+                let cp = self.currOutputInProgress.split("\n");
+                let lines: Vec<&str> = cp.into_iter().collect();
+                self.currOutputInProgress = lines[std::cmp::max(0, lines.len() - 150)..lines.len()].join("\n");
                 Some(val.clone())
             }
             None => None,

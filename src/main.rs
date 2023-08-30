@@ -20,6 +20,7 @@ use tokio::{spawn, sync::broadcast};
 use tower_http::services::ServeDir;
 use tracing::*;
 use ControlledProgram::ControlledProgramDescriptor;
+use std::cmp::*;
 macro_rules! spawn_tasks {
     ($state:expr, $($task:expr),*) => {
         {
@@ -249,7 +250,9 @@ async fn process_message(text: String, state: AppState::AppState) {
                     active: true,
                 };
                 if (val.arguments[0] == true) {
-                    sInfo.output = server.currOutputInProgress.clone();
+                    let cl: String =  server.currOutputInProgress.clone();
+                    let split: Vec<&str> = cl.split("\n").into_iter().collect();
+                    sInfo.output = split[max(0, split.len() - 150)..split.len()].join("\n");
                 }
                 info.servers.push(sInfo);
             }

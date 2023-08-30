@@ -108,9 +108,13 @@ function addServerDropdown(serverName, inactive) {
 				$("." + serverName + "Out").children().remove()
 			}
             if (commands.length > 25) {
-                commands = commands.slice(-25); // Keep the last 25 items
+                var commandsTemp = [];
+				for (var i = Math.max(0, commands.length - 26); i < commands.length; ++i) {
+					commandsTemp.push(commands[i]);
+				}
+				commands = commandsTemp;
             }
-            commands.push(input);
+            commands.push(input2);
             numBack = 0;
             socket.send(JSON.stringify(obj));
         } else if (e.which === 40) {
@@ -133,10 +137,12 @@ function addServerDropdown(serverName, inactive) {
                 server_name: serverName,
                 value: input2
             };
-            if (commands.length > 25) {
-                commands = commands.slice(-25); // Keep the last 25 items
-            }
-            commands.push(input);
+			commands = commandsTemp;
+            commands.push(input2);
+			var commandsTemp = [];
+			for (var i = Math.max(0, commands.length - 26); i < commands.length; ++i) {
+				commandsTemp.push(commands[i]);
+			}
             numBack = 0;
             socket.send(JSON.stringify(obj));
         }
