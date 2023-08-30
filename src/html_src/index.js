@@ -93,14 +93,20 @@ function addServerDropdown(serverName, inactive) {
     input.keydown(function(e) {
         if (e.which === 13) {
             //enter pressed
-            var input = $(this).val();
-            if (input == "") return;
+            var input2 = $(this).val();
+            if (input2 == "") return;
             $(this).val("");
             var obj = {
                 type: "stdinInput",
                 server_name: serverName,
-                value: input
+                value: input2
             };
+
+			var dropdow = dropdown.find("."+serverName +"dropdown").prevObject;
+			console.log(dropdow);
+			if (input2 == "start" && dropdow.hasClass("inactiveServer")) {
+				$("." + serverName + "Out").children().remove()
+			}
             if (commands.length > 25) {
                 commands = commands.slice(-25); // Keep the last 25 items
             }
@@ -165,26 +171,29 @@ $(document).ready(function() {
 		hotReloadWhenReady()
 	}
 	socket.addEventListener("open", function() {
-		socket.send(createEvent("requestInfo"));
+		socket.send(createEvent("requestInfo", [true]));
 	})
     setInterval(function() {
-        socket.send(createEvent("requestInfo"));
+		try {
+        socket.send(createEvent("requestInfo", [false]));
         for (var index in window.serverInfoObj.servers) {
-            var server = window.serverInfoObj.servers[index];
-            var name = server.name;
-            var dropdown = $("." + name + "dropdown");
-            var title = dropdown.find(".serverName");
-            var titleText = title[0].textContent;
-            if (server.active == false && titleText.endsWith(" (inactive)") == false) {
-                title[0].textContent += " (inactive)"
-                dropdown.toggleClass("inactiveServer");
-            }
-            if (dropdown.hasClass("inactiveServer") && server.active) {
-                title[0].textContent = title[0].textContent.split(" (inactive)").join("");
-                dropdown.toggleClass("inactiveServer");
-            }
-        }
-    }, 2000);
+            	var server = window.serverInfoObj.servers[index];
+            	var name = server.name;
+            	var dropdown = $("." + name + "dropdown");
+            	var title = dropdown.find(".serverName");
+            	var titleText = title[0].textContent;
+            	if (server.active == false && titleText.endsWith(" (inactive)") == false) {
+                	title[0].textContent += " (inactive)"
+            	    dropdown.toggleClass("inactiveServer");
+            	}
+            	if (dropdown.hasClass("inactiveServer") && server.active) {
+                	title[0].textContent = title[0].textContent.split(" (inactive)").join("");
+                	dropdown.toggleClass("inactiveServer");
+            	}
+        	}
+		} catch(e) {}
+    }, 200);
+	var justStarted = true;
 	socket.onmessage = function(message) {
 		var obj = JSON.parse(message.data);
 		//console.log(obj);
@@ -194,6 +203,16 @@ $(document).ready(function() {
                     var server = obj.servers[index];
 					let serverName = server.name;
 					addDropdownNoDupe(serverName, !server.active)
+					if (justStarted) {
+						justStarted = false;
+						var lines = server.output.split("\r\n");
+						for (linePos in lines) {
+							var line = lines[linePos];
+							var p = $("<p class=\"STDOutMessage\"></p>").appendTo("." + serverName + "Out")[0]
+							p.textContent = line;
+						}
+					}
+
 				}
                 window.serverInfoObj = obj;
 			break;
@@ -205,7 +224,8 @@ $(document).ready(function() {
 					if (line != "") {
                         var outDiv = $("." + obj.server_name + "Out")[0]
                         var shouldScroll = outDiv.scrollTop == outDiv.scrollHeight
-						$(" <p class=\"STDOutMessage\">" + line + "</p>").appendTo(outDiv);
+						var p = $(" <p class=\"STDOutMessage\"></p>").appendTo(outDiv)[0];
+						p.textContent = line;
                         if (true) {
                             outDiv.scrollTop = outDiv.scrollHeight
                         }

@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use tokio::{
     io::*,
@@ -12,14 +12,25 @@ pub struct ControlledProgramDescriptor {
     pub exePath: String,
     pub arguments: Vec<String>,
     pub working_dir: String,
+    pub autoStart: bool
 }
 impl ControlledProgramDescriptor {
+    pub fn newAS(name: &str, exePath: &str, arguments: Vec<String>, working_dir: String, autoStart: bool) -> Self {
+        Self {
+            name: name.to_owned(),
+            exePath: exePath.to_owned(),
+            arguments,
+            working_dir,
+            autoStart: autoStart
+        }
+    }
     pub fn new(name: &str, exePath: &str, arguments: Vec<String>, working_dir: String) -> Self {
         Self {
             name: name.to_owned(),
             exePath: exePath.to_owned(),
             arguments,
             working_dir,
+            autoStart: false
         }
     }
     pub fn into_instance(self) -> ControlledProgramInstance {
@@ -31,6 +42,17 @@ impl ControlledProgramDescriptor {
         )
     }
 }
+impl Default for ControlledProgramDescriptor {
+    fn default() -> Self {
+        Self {
+            name: "".to_owned(),
+            exePath: "".to_owned(),
+            arguments: vec![],
+            working_dir: "".to_owned(),
+            autoStart: false
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct ControlledProgramInstance {
@@ -40,6 +62,7 @@ pub struct ControlledProgramInstance {
     pub process: Child,
     pub working_dir: String,
     pub lastLogLines: usize,
+    pub currOutputInProgress: String,
 }
 impl ControlledProgramInstance {
     pub fn new(name: &str, exePath: &str, arguments: Vec<String>, working_dir: String) -> Self {
@@ -60,6 +83,7 @@ impl ControlledProgramInstance {
             process: child,
             working_dir,
             lastLogLines: 0,
+            currOutputInProgress: "".to_string(),
         }
     }
     pub async fn readOutput(&mut self) -> Option<String> {
@@ -70,7 +94,7 @@ impl ControlledProgramInstance {
             let mut has_more = true;
 
             while has_more {
-                let mut buf = [0u8; 1000];
+                let mut buf = [0u8; 10000];
                 let take = self.process.stdout.as_mut();
                 let read =
                     match timeout(Duration::from_millis(10), take.unwrap().read(&mut buf)).await {
@@ -84,17 +108,22 @@ impl ControlledProgramInstance {
                     line = read;
                 }
 
-                if read < 100 {
+                if read < 10 {
                     has_more = false;
                 }
             }
 
             out = Some(out2);
         };
-        out
+        match out {
+            Some(val) => {
+                self.currOutputInProgress += &val[..];
+                Some(val.clone())
+            }
+            None => None,
+        }
     }
     pub async fn stop(&mut self) {
         self.process.kill().await;
-
     }
 }
