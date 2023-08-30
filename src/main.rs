@@ -96,9 +96,14 @@ async fn get_router(_state: AppState::AppState) -> Router<AppState::AppState> {
 #[no_mangle]
 async fn start_web_server(_state: AppState::AppState) {
     let router = get_router(_state.clone()).await; //.route("/ws", get(handle_socket))
-    info!("Starting server on *:81");
+    let config = _state.config.lock().await;
+    let mut address = config.interface.clone();
+    address += (":".to_owned() + config.port.clone().as_str()).as_str();
+    drop(config);
+    info!("Starting server on {}", address.replace("0.0.0.0", "*"));
+    
     let stateful_router = router.with_state(_state);
-    axum::Server::bind(&"0.0.0.0:81".parse().unwrap())
+    axum::Server::bind(&address.parse().unwrap())
         .serve(stateful_router.into_make_service())
         .await
         .unwrap();
@@ -121,7 +126,7 @@ fn load_json(path: &str) -> Config {
             error!(error);
             info!("this is likely ok, trying to salvage from error above by creating a default configuration.");
             info!("this can happen if it is your first launch");
-            let str = "{\n\t\"type\":\"ServerList\"\n\t\"servers\": []\n}".to_owned();
+            let str = include_str!("defaultconfig.json").to_owned();
             let mut f = File::create(path)
                 .expect(&format!("There was an error creating the file specified: {}", &path)[..]);
             f.write_all(str.as_bytes()).expect("Error Writing to File");
