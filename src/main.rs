@@ -218,6 +218,7 @@ async fn process_message(text: String, state: AppState::AppState) {
     match ev_type {
         "requestInfo" => {
             let servers = state.servers.lock().await;
+            
             #[derive(Clone, Serialize)]
             struct ServerInfo {
                 name: String,
@@ -229,6 +230,7 @@ async fn process_message(text: String, state: AppState::AppState) {
             struct serverInfoMessage {
                 r#type: String,
                 servers: Vec<ServerInfo>,
+                config: configuration::Config,
             }
             #[derive(Debug, Deserialize)]
             struct SInfoRequestMessage {
@@ -237,10 +239,14 @@ async fn process_message(text: String, state: AppState::AppState) {
             }
             let val: SInfoRequestMessage = serde_json::from_str(&text).unwrap();
 
+            let config = state.config.lock().await;
+
             let mut info = serverInfoMessage {
                 r#type: "ServerInfo".to_owned(),
                 servers: vec![],
+                config: config.clone(),
             };
+            drop(config);
             let mut usedNames: Vec<String> = vec![];
             for server in servers.iter() {
                 usedNames.push(server.name.clone());
@@ -326,6 +332,18 @@ async fn process_message(text: String, state: AppState::AppState) {
             for server in servers.iter_mut() {
                 server.stop().await;
             }
+        },
+        "configChange" => {
+            #[derive(Deserialize)]
+            struct configChangeMessage {
+                r#type: String,
+                updatedConfig: Config
+            }
+            let message: configChangeMessage = serde_json::from_str(text.clone().as_str()).unwrap();
+            let mut config = state.config.lock().await;
+            config.change(message.updatedConfig);
+            config.update_config_file("config.json");
+            drop(config);
         }
         _ => {}
     }

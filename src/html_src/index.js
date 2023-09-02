@@ -199,6 +199,9 @@ $(document).ready(function() {
         	}
 		} catch(e) {}
     }, 200);
+	window.config = {
+		state: "NotInit"
+	}
 	var justStarted = true;
 	socket.onmessage = function(message) {
 		var obj = JSON.parse(message.data);
@@ -210,6 +213,8 @@ $(document).ready(function() {
 					let serverName = server.name;
 					addDropdownNoDupe(serverName, !server.active)
 					if (justStarted) {
+						window.config = obj.config;
+						$(".editorText").val(JSON.stringify(obj.config, undefined, 4))
 						justStarted = false;
 						var lines = server.output.split("\r\n");
 						for (linePos in lines) {
@@ -218,7 +223,11 @@ $(document).ready(function() {
 							p.textContent = line;
 						}
 					}
-
+					if (JSON.stringify(window.config) != JSON.stringify(obj.config)) {
+						//the config is out of sync, copy it to the config textarea
+						$(".editorText").val(JSON.stringify(obj.config, undefined, 4))
+						window.config = obj.config;
+					}
 				}
                 window.serverInfoObj = obj;
 			break;
@@ -243,6 +252,25 @@ $(document).ready(function() {
 	if (typeof InstallTrigger !== 'undefined') { // Check if Firefox
 		document.getElementById('scrollable-div').classList.add('scrollbar'); // Add the Firefox-specific class
 	}
+	var saveTimeout = undefined;
+	$(".editorText").keypress(function(e) {
+		var currentTextareaVal = $(this).val();
+		var newConfig = JSON.parse(currentTextareaVal)
+		if (JSON.stringify(window.config) !== JSON.stringify(newConfig)) {
+			//the value of the config has changed, update the server
+			if (saveTimeout != undefined) {
+				clearTimeout(saveTimeout);
+			}
+			var obj = {
+				type: "configChange",
+				updatedConfig: newConfig
+			}
+			saveTimeout = setTimeout(function() {
+				socket.send(JSON.stringify(obj));
+				alert("Config has been saved, all servers restarting...")
+			}, 5000);
+		}
+	})
 	window.socket = socket
 	$('#menu').animate({
 		"left": "-25%"

@@ -289,6 +289,25 @@
 			color:rgba(255, 255, 255, 1);
 			font-family: 'Roboto', sans-serif;
 		 }
+		 .ConfigEditor {
+			position: absolute;
+			left: 0;
+			top: 70px;
+			width: 100%;
+			overflow: hidden;
+			height: calc(100% - 70px);
+		 }
+		 .editorText {
+			overflow: auto;
+			position: absolute;
+			left: 0px;
+			top: 0px;
+			height: 100%;
+			width: calc(100% - 6px);
+			background-color: var(--pageBG);
+			font-family: 'Roboto', sans-serif;
+			color: var(--textCol);
+		 }
 		</style>
 	</head>
 	<body>
@@ -349,7 +368,9 @@
 				<div class="leftBar"></div>
 				<div class="centralContent">
 					<div class="innerTopBar"></div>
-					<div class="expandingMenu"></div>
+					<div class="ConfigEditor">
+						<textarea class="editorText"></textarea>
+					</div>
 				</div>
 				<div class="rightBar"></div>
 			</div>
