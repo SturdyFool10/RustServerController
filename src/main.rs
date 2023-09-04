@@ -346,9 +346,7 @@ async fn process_message(text: String, state: AppState::AppState) {
             for server in servers.iter_mut() {
                 server.stop().await
             }
-            for i in (0..servers.len()) {
-                servers.remove(0);
-            }
+            servers.clear();
             config.change(message.updatedConfig);
             config.update_config_file("config.json");
             for (index, desc) in config.servers.iter_mut().enumerate() {
