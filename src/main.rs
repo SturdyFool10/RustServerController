@@ -349,12 +349,12 @@ async fn process_message(text: String, state: AppState::AppState) {
             for i in (0..servers.len()) {
                 servers.remove(i);
             }
+            config.change(message.updatedConfig);
+            config.update_config_file("config.json");
             for (index, desc) in config.servers.iter_mut().enumerate() {
                 let mut descClone = desc.clone();
                 servers.push(descClone.into_instance());
             }
-            config.change(message.updatedConfig);
-            config.update_config_file("config.json");
             drop(config);
             drop(servers)
         }
