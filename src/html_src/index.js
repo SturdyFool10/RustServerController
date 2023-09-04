@@ -253,23 +253,15 @@ $(document).ready(function() {
 		document.getElementById('scrollable-div').classList.add('scrollbar'); // Add the Firefox-specific class
 	}
 	var saveTimeout = undefined;
-	$(".editorText").keypress(function(e) {
-		var currentTextareaVal = $(this).val();
-		var newConfig = JSON.parse(currentTextareaVal)
-		if (JSON.stringify(window.config) !== JSON.stringify(newConfig)) {
-			//the value of the config has changed, update the server
-			if (saveTimeout != undefined) {
-				clearTimeout(saveTimeout);
-			}
-			var obj = {
-				type: "configChange",
-				updatedConfig: newConfig
-			}
-			saveTimeout = setTimeout(function() {
-				socket.send(JSON.stringify(obj));
-				alert("Config has been saved, all servers restarting...")
-			}, 5000);
+	$(".configSave").click(function(e) {
+		if (e.which !== 1) return;
+		if (saveTimeout !== undefined) clearTimeout(saveTimeout);
+		var newConfig = JSON.parse($(".editorText").val());
+		var obj = {
+			type: "configChange",
+			updatedConfig: newConfig
 		}
+		socket.send(JSON.stringify(obj));
 	})
 	window.socket = socket
 	$('#menu').animate({

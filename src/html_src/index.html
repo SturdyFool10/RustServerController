@@ -308,6 +308,21 @@
 			font-family: 'Roboto', sans-serif;
 			color: var(--textCol);
 		 }
+		 .saveSVG {
+			fill: var(--altHighlightCol);
+			position: absolute;
+			width: 90%;
+			height: 90%;
+			top: calc(70px * 0.1 / 2.0);
+			aspect-ratio: 1;
+		 }
+		 .configSave {
+			left: 2%;
+			width: 70px;
+			aspect-ratio: 1;
+			position: absolute;
+		 }
+		 
 		</style>
 	</head>
 	<body>
@@ -367,7 +382,12 @@
 				</div>
 				<div class="leftBar"></div>
 				<div class="centralContent">
-					<div class="innerTopBar"></div>
+					<div class="innerTopBar">
+						<a href="#" class="configSave">
+							<svg xmlns="http://www.w3.org/2000/svg" class="saveSVG bloom" width="24" height="24" viewBox="0 0 24 24"><path d="M13 3h2.996v5h-2.996v-5zm11 1v20h-24v-24h20l4 4zm-17 5h10v-7h-10v7zm15-4.171l-2.828-2.829h-.172v9h-14v-9h-3v20h20v-17.171zm-3 10.171h-14v1h14v-1zm0 2h-14v1h14v-1zm0 2h-14v1h14v-1z"/></svg>
+							<svg xmlns="http://www.w3.org/2000/svg" class="saveSVG" width="24" height="24" viewBox="0 0 24 24"><path d="M13 3h2.996v5h-2.996v-5zm11 1v20h-24v-24h20l4 4zm-17 5h10v-7h-10v7zm15-4.171l-2.828-2.829h-.172v9h-14v-9h-3v20h20v-17.171zm-3 10.171h-14v1h14v-1zm0 2h-14v1h14v-1zm0 2h-14v1h14v-1z"/></svg>
+						</a>
+					</div>
 					<div class="ConfigEditor">
 						<textarea class="editorText"></textarea>
 					</div>
@@ -389,7 +409,8 @@
 				</div>
 				<div class="leftBar"></div>
 				<div class="centralContent">
-					<div class="innerTopBar"></div>
+					<div class="innerTopBar">
+					</div>
 				</div>
 				<div class="rightBar"></div>
 			</div>
