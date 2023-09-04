@@ -350,8 +350,10 @@ async fn process_message(text: String, state: AppState::AppState) {
             config.change(message.updatedConfig);
             config.update_config_file("config.json");
             for (index, desc) in config.servers.iter_mut().enumerate() {
-                let mut descClone = desc.clone();
-                servers.push(descClone.into_instance());
+                if (desc.autoStart) {
+                    let mut descClone = desc.clone();
+                    servers.push(descClone.into_instance());
+                }
             }
             drop(config);
             drop(servers)
