@@ -340,10 +340,25 @@ async fn process_message(text: String, state: AppState::AppState) {
                 updatedConfig: Config
             }
             let message: configChangeMessage = serde_json::from_str(text.clone().as_str()).unwrap();
+            let mut servers = state.servers.lock().await;
             let mut config = state.config.lock().await;
+            //we will need all of the above data to be locked and under our control, since we do not need the servers to be autorestarting while we are trying to reconfigure
+
+
+            servers.iter_mut().for_each(|server| {
+                server.stop();
+            });
+            for i in (0..servers.len()) {
+                servers.remove(i);
+            }
+            for (index, desc) in config.servers.iter_mut().enumerate() {
+                let mut descClone = desc.clone();
+                servers.push(descClone.into_instance());
+            }
             config.change(message.updatedConfig);
             config.update_config_file("config.json");
             drop(config);
+            drop(servers)
         }
         _ => {}
     }
