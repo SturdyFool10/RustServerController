@@ -167,6 +167,29 @@ function createEvent(type, arguments) {
 	}
 	return JSON.stringify(obj);
 }
+function getClassList(element) {
+	return $(element).attr("class").split("/\s+/").join(" ").split(" ");
+}
+function checkAllServers() {
+	var servers = $(".CentralMenuDropdown").toArray();
+	servers.forEach(function(server) {
+		var classList = getClassList(server);
+		classList.forEach(function(clas) {
+			var doesMatch = clas.match(/^(.*?)\wdropdown$/gm);
+			if (doesMatch) {
+				var includes = false;
+				window.serverInfoObj.config.servers.forEach(function(server2) {
+					if (server2.name === clas.replace("dropdown", "")) {
+						includes = true;
+					}
+				});
+				if (includes == false) {
+					$(server).remove();
+				}
+			}
+		})
+	});
+}
 $(document).ready(function() {
 	var socket;
 	socket = new WebSocket(get_ws_addr())
@@ -181,8 +204,8 @@ $(document).ready(function() {
 	})
     setInterval(function() {
 		try {
-        socket.send(createEvent("requestInfo", [false]));
-        for (var index in window.serverInfoObj.servers) {
+        	socket.send(createEvent("requestInfo", [false]));
+        	for (var index in window.serverInfoObj.servers) {
             	var server = window.serverInfoObj.servers[index];
             	var name = server.name;
             	var dropdown = $("." + name + "dropdown");
@@ -197,6 +220,7 @@ $(document).ready(function() {
                 	dropdown.toggleClass("inactiveServer");
             	}
         	}
+			checkAllServers();
 		} catch(e) {}
     }, 200);
 	window.config = {
