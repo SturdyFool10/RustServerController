@@ -190,6 +190,27 @@ function checkAllServers() {
 		})
 	});
 }
+function generateSecureSalt(lengthInBytes) {
+	lengthInBytes = lengthInBytes / 2
+	const saltArray = new Uint8Array(lengthInBytes);
+	crypto.getRandomValues(saltArray);
+	
+	// Convert the Uint8Array directly to a hexadecimal string without doubling the length
+	let salt = '';
+	for (let i = 0; i < saltArray.length; i++) {
+	  	salt += (saltArray[i] < 16 ? '0' : '') + saltArray[i].toString(16);
+	}
+	
+	return salt;
+}
+async function hashPasswordWithSalt(password, salt) {
+	const encoder = new TextEncoder();
+	const data = encoder.encode(password + salt);
+	const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+	const hashArray = Array.from(new Uint8Array(hashBuffer));
+	const hashHex = hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
+	return hashHex;
+}
 $(document).ready(function() {
 	var socket;
 	socket = new WebSocket(get_ws_addr())
