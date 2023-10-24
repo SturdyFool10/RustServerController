@@ -1,13 +1,24 @@
-use axum::{extract::{State, WebSocketUpgrade, ws::{WebSocket, Message}}, Router, routing::get, response::{IntoResponse, Response}, http::StatusCode, body::Body};
+use axum::{
+    body::Body,
+    extract::{
+        ws::{Message, WebSocket},
+        State, WebSocketUpgrade,
+    },
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::get,
+    Router,
+};
 use axum_extra::response::*;
-use futures_util::{StreamExt, SinkExt};
-use serde::{Serialize, Deserialize};
+use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tower_http::services::ServeDir;
 use tracing::*;
 
-use crate::{AppState::AppState, ControlledProgram::ControlledProgramDescriptor, configuration::Config};
-
+use crate::{
+    configuration::Config, AppState::AppState, ControlledProgram::ControlledProgramDescriptor,
+};
 
 async fn js_serve(State(_state): State<AppState>) -> JavaScript<String> {
     JavaScript::from(include_str!("html_src/index.js").to_owned())
@@ -40,7 +51,7 @@ pub async fn start_web_server(_state: AppState) {
     address += (":".to_owned() + config.port.clone().as_str()).as_str();
     drop(config);
     info!("Starting server on {}", address.replace("0.0.0.0", "*"));
-    
+
     let stateful_router = router.with_state(_state);
     axum::Server::bind(&address.parse().unwrap())
         .serve(stateful_router.into_make_service())
@@ -49,14 +60,11 @@ pub async fn start_web_server(_state: AppState) {
 }
 #[no_mangle]
 async fn main_serve(State(_state): State<AppState>) -> Html<String> {
-    Html::from(include_str!("html_src/index.html").to_owned())
+    Html::from(include_str!("html_src/index.html").to_owned().replace("styles!();", include_str!("html_src/style.css")))
 }
 
 #[no_mangle]
-async fn handle_ws_upgrade(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
+async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 async fn handle_socket(socket: WebSocket, state: AppState) {
@@ -139,7 +147,7 @@ async fn process_message(text: String, state: AppState) {
     match ev_type {
         "requestInfo" => {
             let servers = state.servers.lock().await;
-            
+
             #[derive(Clone, Serialize)]
             struct ServerInfo {
                 name: String,
@@ -177,7 +185,7 @@ async fn process_message(text: String, state: AppState) {
                     active: true,
                 };
                 if (val.arguments[0] == true) {
-                    let cl: String =  server.currOutputInProgress.clone();
+                    let cl: String = server.currOutputInProgress.clone();
                     let split: Vec<&str> = cl.split("\n").into_iter().collect();
                     let mut inp = split.len();
                     if (inp < 150) {
@@ -223,12 +231,8 @@ async fn process_message(text: String, state: AppState) {
                     drop(servers);
                     if (isActiveServer != true && value.value == "start") {
                         let config = state.config.lock().await;
-                        let mut desc: ControlledProgramDescriptor = ControlledProgramDescriptor::new(
-                            "",
-                            "",
-                            vec![],
-                            "".to_owned()
-                        );
+                        let mut desc: ControlledProgramDescriptor =
+                            ControlledProgramDescriptor::new("", "", vec![], "".to_owned());
                         let mut found = false;
                         for serverDesc in config.servers.iter() {
                             if (serverDesc.name == value.server_name) {
@@ -253,12 +257,12 @@ async fn process_message(text: String, state: AppState) {
             for server in servers.iter_mut() {
                 server.stop().await;
             }
-        },
+        }
         "configChange" => {
             #[derive(Deserialize)]
             struct configChangeMessage {
                 r#type: String,
-                updatedConfig: Config
+                updatedConfig: Config,
             }
             let message: configChangeMessage = serde_json::from_str(text.clone().as_str()).unwrap();
             let mut servers = state.servers.lock().await;

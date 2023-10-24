@@ -2,17 +2,16 @@ mod AppState;
 mod ControlledProgram;
 mod configuration;
 mod files;
-mod webserver;
 mod macros;
 mod servers;
+mod webserver;
 
+use files::*;
+use servers::start_servers;
 use std::process::exit;
 use tokio::{spawn, sync::broadcast};
 use tracing::*;
-use files::*;
 use webserver::start_web_server;
-use servers::start_servers;
-
 
 #[tokio::main]
 async fn main() -> Result<(), String> {

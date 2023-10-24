@@ -4,7 +4,7 @@ use tracing::*;
 pub async fn start_servers(_state: AppState) {
     let mut config = _state.config.lock().await;
     for serverDesc in config.servers.iter_mut() {
-        if (serverDesc.autoStart) { 
+        if (serverDesc.autoStart) {
             let newDesc = serverDesc.clone();
             let mut servers = _state.servers.lock().await;
             servers.push(newDesc.into_instance());

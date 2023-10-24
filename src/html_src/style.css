@@ -1,0 +1,322 @@
+:root {
+    --pageBG: #0e0e0e;
+    --textCol: #e5e5e5;
+    --menuBG: #1d1d1d;
+    --highlightCol: #a200ff;
+    --altHighlightCol: #00ffee;
+}
+body {
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+    background-color: var(--pageBG);
+}
+.menu-icon {
+    position: relative;
+    top: 0px;
+    left: 0px;
+    width: 30px;
+    height: 30px;
+    padding: 20px;
+    border-bottom-right-radius: 20px;
+    background-color: var(--menuBG);
+    overflow: hidden;
+    cursor: pointer;
+    z-index: 1000;
+}
+.bar {
+    width: 30px;
+    height: 3px;
+    background-color: var(--textCol);
+    margin: 6px 0;
+    box-shadow: 0 0 15px #fff;
+}
+.menu {
+    position: absolute;
+    left: 0;
+    width: 25%;
+    height: 100%;
+    background-color: var(--menuBG);
+    color: var(--textCol);
+}
+.menu ul {
+    list-style-type: none;
+    padding: 0;
+    margin: 80px 0 0 0;
+    text-align: center;
+    font-family: 'Roboto', sans-serif;
+}
+.active {
+    border-width: 0px;
+    box-shadow: 0 0 10px color-mix(in srgb, rgba(255, 255, 255, 1) 75%, var(--highlightCol)), 0 0 25px var(--highlightCol);
+    border-color: var(--highlightCol);
+    border-style: solid none solid none;
+    text-shadow: #fff 0 0 5px;
+}
+.menu li {
+    width: 100%;
+    padding: 10px 0;
+}
+.menu a {
+    text-decoration: none;
+    color: var(--textCol);
+    font-size: 18px;
+}
+#main-content {
+    position: absolute;
+    top: 0px;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    transition: background-color 0.35s ease;
+}
+#main-content.regular {
+    transition: background-color 0.35s ease;
+    background: linear-gradient(90deg, var(--highlightCol) 0%, var(--pageBG) 0%, var(--pageBG) 100%);
+}
+.shifted {
+    transition: background-color 0.35s ease;
+}
+.page {
+    position: absolute;
+    width: 100%;
+    top: 0px;
+    height: 100%;
+}
+h1 {
+    color: var(--textCol);
+    width: 100%;
+    text-align: center;
+}
+.overlay {
+    position: absolute;
+    top: 0px;
+    left: 0px;
+    z-index: 100;
+}
+.centralContent {
+    position: absolute;
+    width: 75%;
+    height: calc(100% - 2% - calc(70px + 2%));
+    left: 12.5%;
+    background-color: var(--menuBG);
+    border-radius: 15px;
+    top: calc(70px + 2%);
+}
+.leftBar {
+    position: absolute;
+    width: 12.5%;
+    top: calc(70px + 2%);
+    padding-top: 80px;
+    left: 0px;
+    height: 100%;
+}
+.rightBar {
+    position: absolute;
+    width: 12.5%;
+    top: calc(70px + 2%);
+    left: 87.5%;
+    height: 100%;
+}
+.topbar {
+    position: absolute;
+    left: 90px;
+    top: 0px;
+    border-bottom-left-radius: 20px;
+    background-color: var(--menuBG);
+    width: 100%;
+    height: 70px;
+}
+.innerTopBar {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    background-color: var(--menuBG);
+    border-bottom-color: color-mix(in srgb, var(--menuBG) 90%, #fff 10%);
+    border-bottom-width: 3px;
+    border-bottom-style: solid;
+    width: 100%;
+    height: 70px;
+    border-top-right-radius: 15px;
+    border-top-left-radius: 15px;
+}
+.bloom {
+    filter: blur(15px);
+    z-index: 50;
+    background-blend-mode: additive;
+}
+.addServerIcon {
+    position: absolute;
+    color: var(--highlightCol);
+   /* Set the font color using the custom property */
+    text-decoration: none;
+   /* Remove the default underline style for links */
+    left: 20px;
+    top: 5px;
+    bottom: 5px;
+    aspect-ratio: 1;
+}
+.addServerIcon svg {
+    fill: color-mix(in srgb, var(--altHighlightCol) 50%, #fff);
+    width: 100%;
+    height: 100%;
+}
+.menuBTN1 {
+    position: absolute;
+    left: 10px;
+    top: 10px;
+    height: calc(70px - 20px);
+    aspect-ratio: 1;
+}
+.menuBTN1 svg {
+    fill: color-mix(in srgb, var(--altHighlightCol) 50%, #fff) 
+}
+.centerMenu {
+    position: absolute;
+    left: 0px;
+    top: 70px;
+    width: 100%;
+    height: calc(100% - 70px);
+    overflow-x: hidden;
+    overflow-y: default;
+}
+.CentralMenuDropdown {
+    position: relative;
+    left: 0px;
+    top: 0px;
+    height: 5%;
+    width: 100%;
+    border-bottom-width: 3px;
+    border-bottom-color: color-mix(in srgb, var(--menuBG) 80%, #fff 20%);
+    border-bottom-style: solid;
+    transition: max-height 250ms linear;
+}
+.CentralMenuDropdown.open {
+    height: 48vh;
+    transition: max-height 250ms linear;
+}
+.CentralMenuDropdown a {
+    position: absolute;
+    right: 2%;
+    top: 2%;
+    height: 96%;
+    aspect-ratio: 1;
+}
+.CentralMenuDropdown a svg {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 100%;
+    height: 100%;
+    fill: var(--altHighlightCol);
+}
+.serverName {
+    position: absolute;
+    left: 2%;
+    line-height: 200%;
+    text-align: center;
+    color: var(--textCol);
+    font-family: 'Roboto', sans-serif;
+}
+.innerTopBarDropDown {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    height: 5vh;
+    width: 100%;
+}
+.dropdownDrop {
+    position: absolute;
+    left: 0px;
+    top: 5vh;
+    width: 100%;
+    border-bottom-color: color-mix(in srgb, var(--menuBG) 70%, #fff 30%);
+    border-bottom-width: 3px;
+    border-bottom-style: solid;
+}
+.serverSTDOut {
+    position: relative;
+    top: 0px;
+    left: 0px;
+    width: 100%;
+    height: 40vh;
+    border-bottom-color: color-mix(in srgb, var(--menuBG) 80%, #fff 20%);
+    border-bottom-width: 3px;
+    border-bottom-style: solid;
+    overflow: auto;
+}
+.serverSTDIn {
+    position: relative;
+    top: 0px;
+    left: 0px;
+    width: 100%;
+    height: 3vh;
+}
+.STDInInput {
+    background-color: var(--pageBG);
+    color:rgba(255, 255, 255, 1);
+    padding-left: 2vw;
+    position: relative;
+    left: 0px;
+    top: 0px;
+    width: 90%;
+    height: calc(100% - 6px);
+    font-family: 'Roboto', sans-serif;
+}
+.STDInSubmit {
+    left: calc(90% + 9px);
+    display: flex;
+    align-items: center;
+   /* Vertical alignment */
+    justify-content: center;
+   /* Horizontal alignment */
+    text-decoration: none;
+   /* Remove underline */
+    background-color: var(--highlightCol);
+    color:rgba(255, 255, 255, 1);
+    width: calc(10% - 9px);
+    font-family: 'Roboto', sans-serif;
+}
+.STDInSubmit:hover {
+    background-color: color-mix(in srgb, var(--highlightCol) 80%, var(--menuBG) 20%);
+}
+.STDOutMessage {
+    position: relative;
+    padding-left: 2%;
+    color:rgba(255, 255, 255, 1);
+    font-family: 'Roboto', sans-serif;
+}
+.ConfigEditor {
+    position: absolute;
+    left: 0;
+    top: 70px;
+    width: 100%;
+    overflow: hidden;
+    height: calc(100% - 70px);
+}
+.editorText {
+    overflow: auto;
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    height: 100%;
+    width: calc(100% - 6px);
+    background-color: var(--pageBG);
+    font-family: 'Roboto', sans-serif;
+    color: var(--textCol);
+}
+.saveSVG {
+    fill: var(--altHighlightCol);
+    position: absolute;
+    width: 90%;
+    height: 90%;
+    top: calc(70px * 0.1 / 2.0);
+    aspect-ratio: 1;
+}
+.configSave {
+    left: 2%;
+    width: 70px;
+    aspect-ratio: 1;
+    position: absolute;
+}

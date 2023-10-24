@@ -12,16 +12,22 @@ pub struct ControlledProgramDescriptor {
     pub exePath: String,
     pub arguments: Vec<String>,
     pub working_dir: String,
-    pub autoStart: bool
+    pub autoStart: bool,
 }
 impl ControlledProgramDescriptor {
-    pub fn newAS(name: &str, exePath: &str, arguments: Vec<String>, working_dir: String, autoStart: bool) -> Self {
+    pub fn newAS(
+        name: &str,
+        exePath: &str,
+        arguments: Vec<String>,
+        working_dir: String,
+        autoStart: bool,
+    ) -> Self {
         Self {
             name: name.to_owned(),
             exePath: exePath.to_owned(),
             arguments,
             working_dir,
-            autoStart: autoStart
+            autoStart: autoStart,
         }
     }
     pub fn new(name: &str, exePath: &str, arguments: Vec<String>, working_dir: String) -> Self {
@@ -30,7 +36,7 @@ impl ControlledProgramDescriptor {
             exePath: exePath.to_owned(),
             arguments,
             working_dir,
-            autoStart: false
+            autoStart: false,
         }
     }
     pub fn into_instance(self) -> ControlledProgramInstance {
@@ -49,7 +55,7 @@ impl Default for ControlledProgramDescriptor {
             exePath: "".to_owned(),
             arguments: vec![],
             working_dir: "".to_owned(),
-            autoStart: false
+            autoStart: false,
         }
     }
 }
