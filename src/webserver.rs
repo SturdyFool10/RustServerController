@@ -153,6 +153,8 @@ async fn process_message(text: String, state: AppState) {
                 name: String,
                 output: String,
                 active: bool,
+                specialization: Option<crate::ControlledProgram::SpecializedServerTypes>,
+                specializedInfo: Option<crate::ControlledProgram::SpecializedServerInformation>
             }
 
             #[derive(Clone, Serialize)]
@@ -183,6 +185,8 @@ async fn process_message(text: String, state: AppState) {
                     name: server.name.clone(),
                     output: "".to_owned(),
                     active: true,
+                    specialization: server.specializedServerType.clone(),
+                    specializedInfo: server.specializedServerInfo.clone()
                 };
                 if (val.arguments[0] == true) {
                     let cl: String = server.currOutputInProgress.clone();
@@ -205,6 +209,8 @@ async fn process_message(text: String, state: AppState) {
                         name: serverConfig.name.clone(),
                         output: "".to_owned(),
                         active: false,
+                        specialization: serverConfig.specializedServerType.clone(),
+                        specializedInfo: serverConfig.specializedServerInfo.clone()
                     })
                 }
             }

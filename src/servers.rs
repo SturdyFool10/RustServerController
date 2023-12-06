@@ -31,12 +31,16 @@ pub async fn process_stdout(state: AppState) {
                         );
                         if exit_code != 0 {
                             info!("Server ID: {} has crashed, restarting it...", index);
-                            new_instances.push(ControlledProgramDescriptor::new(
+                            let mut descriptor = ControlledProgramDescriptor::new(
                                 server.name.as_str(),
                                 server.executablePath.as_str(),
                                 server.commandLineArgs.clone(),
                                 server.working_dir.clone(),
-                            ))
+                            );
+                            if server.specializedServerType.is_some() {
+                                descriptor.setSpecialization(server.specializedServerType.clone().unwrap());
+                            }
+                            new_instances.push(descriptor);
                         }
                         to_remove.push(index);
                     }
@@ -66,6 +70,7 @@ pub async fn process_stdout(state: AppState) {
                     r#type: String,
                     output: String,
                     server_name: String,
+                    server_type: Option<crate::ControlledProgram::SpecializedServerTypes>
                 }
                 match str {
                     Some(val) => {
@@ -74,6 +79,7 @@ pub async fn process_stdout(state: AppState) {
                                 r#type: "ServerOutput".to_owned(),
                                 output: val,
                                 server_name: server.name.clone(),
+                                server_type: server.specializedServerType.clone(),
                             };
                             let _ = state.tx.send(serde_json::to_string(&out).unwrap());
                         }

@@ -5,11 +5,13 @@
         {
             "name": "",
             "exePath": "",
+            "arguments": [
+                
+            ],
             "working_dir": "",
             "autoStart": true,
-            "arguments": [
-
-            ]
+            "specializedServerType": null,
+            "specializedServerInfo": null
         }
     ]
 }
