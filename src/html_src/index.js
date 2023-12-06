@@ -102,8 +102,6 @@ function addServerDropdown(serverName, inactive) {
                 value: input2
             };
 
-			var dropdow = dropdown.find("."+serverName +"dropdown").prevObject;
-			console.log(dropdow);
 			if (input2 == "start" && dropdow.hasClass("inactiveServer")) {
 				$("." + serverName + "Out").children().remove()
 			}
@@ -191,22 +189,24 @@ function checkAllServers() {
 	});
 }
 function updateServerInfoMCSpecialization() {
-    const serverInfo = window.serverInfoObj
-    serverInfo.servers.forEach(server => {
-        if (server.specialization === 'Minecraft') {  // Check if the specialization is Minecraft
-			const serverElement = $(`.${server.name}dropdown`).find(".serverName")[0];
-            if (serverElement) {
-				if (server.active) {
-                	const specializedInfo = server.specializedInfo['Minecraft'];
-                	const [playerCount, maxPlayers, isReady] = specializedInfo;
-                	const statusText = isReady ? 'Ready To Join' : 'Starting up';
-                	serverElement.textContent = `${server.name} (${playerCount}/${maxPlayers}) (${statusText})`;
-				} else {
-					serverElement.textContent = `${server.name} (inactive)`;
-				}
-            }
-		}
-    });
+	try {
+    	const serverInfo = window.serverInfoObj
+    	serverInfo.servers.forEach(server => {
+        	if (server.specialization === 'Minecraft') {  // Check if the specialization is Minecraft
+				const serverElement = $(`.${server.name}dropdown`).find(".serverName")[0];
+            	if (serverElement) {
+					if (server.active) {
+                		const specializedInfo = server.specializedInfo['Minecraft'];
+                		const [playerCount, maxPlayers, isReady] = specializedInfo;
+                		const statusText = isReady ? 'Ready To Join' : 'Starting up';
+                		serverElement.textContent = `${server.name} (${playerCount}/${maxPlayers}) (${statusText})`;
+					} else {
+						serverElement.textContent = `${server.name} (inactive)`;
+					}
+            	}
+			}
+    	});
+	} catch(e) {}
 }
 function generateSecureSalt(lengthInBytes) {
 	lengthInBytes = lengthInBytes / 2
@@ -271,7 +271,6 @@ $(document).ready(function() {
 	var justStarted = true;
 	socket.onmessage = function(message) {
 		var obj = JSON.parse(message.data);
-		//console.log(obj);
 		switch (obj.type) {
 			case "ServerInfo":
 				for (index in obj.servers) {
@@ -335,7 +334,6 @@ $(document).ready(function() {
 	}, 1);
     $(".menuBTN1").click(function(e) {
         if (e.which != 1) return;
-        console.log("Terminating all servers...")
         socket.send(createEvent("terminateServers"));
     })
 	var classMap = {
@@ -388,7 +386,6 @@ $(document).ready(function() {
 	var canvas = $("<canvas class=\"overlay\" width=" + 800 + " height=" + 2 + "></canvas>").appendTo($(".grad"))[0]
 	var ctx = canvas.getContext("2d");
 	var dropdownSelector = $(".centerMenu.CentralMenuDropdown")
-	console.log(dropdownSelector);
 	dropdownSelector.click();
 
 	function handleCanvas() {
