@@ -190,6 +190,24 @@ function checkAllServers() {
 		})
 	});
 }
+function updateServerInfoMCSpecialization() {
+    const serverInfo = window.serverInfoObj
+    serverInfo.servers.forEach(server => {
+        if (server.specialization === 'Minecraft') {  // Check if the specialization is Minecraft
+			const serverElement = $(`.${server.name}dropdown`).find(".serverName")[0];
+            if (serverElement) {
+				if (server.active) {
+                	const specializedInfo = server.specializedInfo['Minecraft'];
+                	const [playerCount, maxPlayers, isReady] = specializedInfo;
+                	const statusText = isReady ? 'Ready To Join' : 'Starting up';
+                	serverElement.textContent = `${server.name} (${playerCount}/${maxPlayers}) (${statusText})`;
+				} else {
+					serverElement.textContent = `${server.name} (inactive)`;
+				}
+            }
+		}
+    });
+}
 function generateSecureSalt(lengthInBytes) {
 	lengthInBytes = lengthInBytes / 2
 	const saltArray = new Uint8Array(lengthInBytes);
@@ -217,6 +235,9 @@ $(document).ready(function() {
 	socket.onerror = function() {
 		hotReloadWhenReady()
 	}
+	// Set interval to update server info every quarter second
+	setInterval(updateServerInfoMCSpecialization, 250);
+
 	socket.onclose = function() {
 		hotReloadWhenReady()
 	}
