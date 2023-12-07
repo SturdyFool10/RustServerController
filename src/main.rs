@@ -5,6 +5,8 @@ mod files;
 mod macros;
 mod servers;
 mod webserver;
+mod websocket;
+
 
 use files::*;
 use servers::start_servers;
