@@ -1,7 +1,10 @@
 use std::sync::{atomic::AtomicBool, Arc};
 use tokio::sync::Mutex;
 
-use crate::{configuration::Config, ControlledProgram::ControlledProgramInstance};
+use crate::{
+    configuration::Config, master::SlaveConnection, messages::ServerInfo,
+    ControlledProgram::ControlledProgramInstance,
+};
 use tokio::sync::broadcast;
 #[derive(Clone)]
 pub struct AppState {
@@ -9,6 +12,8 @@ pub struct AppState {
     pub tx: broadcast::Sender<String>,
     running: Arc<AtomicBool>,
     pub config: Arc<Mutex<Config>>,
+    pub slave_servers: Arc<Mutex<Vec<ServerInfo>>>,
+    pub slave_connections: Arc<Mutex<Vec<SlaveConnection>>>,
 }
 impl AppState {
     pub fn new(tx: broadcast::Sender<String>, config: Config) -> Self {
@@ -17,6 +22,8 @@ impl AppState {
             tx,
             running: Arc::new(AtomicBool::new(true)),
             config: Arc::new(Mutex::new(config)),
+            slave_servers: Arc::new(Mutex::new(vec![])),
+            slave_connections: Arc::new(Mutex::new(vec![])),
         }
     }
     pub fn stop(&mut self) {

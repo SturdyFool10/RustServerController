@@ -3,21 +3,27 @@ mod ControlledProgram;
 mod configuration;
 mod files;
 mod macros;
+mod master;
+mod messages;
 mod servers;
+mod slave;
 mod webserver;
 mod websocket;
-mod master;
 
 use files::*;
-use servers::start_servers;
 use std::process::exit;
 use tokio::{spawn, sync::broadcast};
 use tracing::*;
-use webserver::start_web_server;
+
+use crate::{
+    master::create_slave_connections, servers::start_servers, slave::start_slave,
+    webserver::start_web_server,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let config = load_json("config.json");
+    let slave: bool = config.slave.clone();
     tracing_subscriber::FmtSubscriber::builder()
         .pretty()
         .with_line_number(false)
@@ -26,7 +32,17 @@ async fn main() -> Result<(), String> {
         .init();
     let (tx, _rx) = broadcast::channel(100);
     let mut app_state = AppState::AppState::new(tx, config);
-    let handles = spawn_tasks!(app_state.clone(), start_web_server, start_servers);
+    let handles: Vec<tokio::task::JoinHandle<()>>;
+    if slave {
+        handles = spawn_tasks!(app_state.clone(), start_servers, start_slave)
+    } else {
+        handles = spawn_tasks!(
+            app_state.clone(),
+            start_web_server,
+            start_servers,
+            create_slave_connections
+        );
+    }
     {
         info!("Starting {} tasks", handles.len());
     }

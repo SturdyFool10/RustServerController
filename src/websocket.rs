@@ -17,7 +17,8 @@ use tower_http::services::ServeDir;
 use tracing::*;
 
 use crate::{
-    configuration::Config, AppState::AppState, ControlledProgram::ControlledProgramDescriptor,
+    configuration::Config, master::SlaveConnection, messages::*, AppState::AppState,
+    ControlledProgram::ControlledProgramDescriptor,
 };
 #[no_mangle]
 pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -70,13 +71,6 @@ async fn pass_stdin(message: stdinInput, server_name: String, state: AppState) {
     }
     drop(servers);
 }
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-struct stdinInput {
-    r#type: String,
-    server_name: String,
-    value: String,
-}
 async fn process_message(text: String, state: AppState) {
     let json: serde_json::Value = serde_json::from_str(&text.clone()).unwrap();
     let ev_type = match json["type"].as_str() {
@@ -103,31 +97,10 @@ async fn process_message(text: String, state: AppState) {
     match ev_type {
         "requestInfo" => {
             let servers = state.servers.lock().await;
-
-            #[derive(Clone, Serialize)]
-            struct ServerInfo {
-                name: String,
-                output: String,
-                active: bool,
-                specialization: Option<crate::ControlledProgram::SpecializedServerTypes>,
-                specializedInfo: Option<crate::ControlledProgram::SpecializedServerInformation>
-            }
-
-            #[derive(Clone, Serialize)]
-            struct serverInfoMessage {
-                r#type: String,
-                servers: Vec<ServerInfo>,
-                config: crate::configuration::Config,
-            }
-            #[derive(Debug, Deserialize)]
-            struct SInfoRequestMessage {
-                r#type: String,
-                arguments: Vec<bool>,
-            }
             let val: SInfoRequestMessage = serde_json::from_str(&text).unwrap();
 
             let config = state.config.lock().await;
-
+            let slave = config.slave.clone();
             let mut info = serverInfoMessage {
                 r#type: "ServerInfo".to_owned(),
                 servers: vec![],
@@ -142,7 +115,8 @@ async fn process_message(text: String, state: AppState) {
                     output: "".to_owned(),
                     active: true,
                     specialization: server.specializedServerType.clone(),
-                    specializedInfo: server.specializedServerInfo.clone()
+                    specializedInfo: server.specializedServerInfo.clone(),
+                    host: None,
                 };
                 if (val.arguments[0] == true) {
                     let cl: String = server.currOutputInProgress.clone();
@@ -158,6 +132,22 @@ async fn process_message(text: String, state: AppState) {
                 info.servers.push(sInfo);
             }
             drop(servers);
+            let slave_servers = state.slave_servers.lock().await;
+            for serverInfo in slave_servers.iter() {
+                let mut output: String = "".to_owned();
+                if (val.arguments[0] == true) {
+                    output = serverInfo.output.clone();
+                }
+                let newInfo = ServerInfo {
+                    name: serverInfo.name.clone(),
+                    output: output,
+                    host: None,
+                    active: serverInfo.active.clone(),
+                    specialization: serverInfo.specialization.clone(),
+                    specializedInfo: serverInfo.specializedInfo.clone()
+                };
+                info.servers.push(newInfo);
+            }
             let config = state.config.lock().await;
             for serverConfig in config.servers.iter() {
                 if !usedNames.contains(&serverConfig.name) {
@@ -166,7 +156,8 @@ async fn process_message(text: String, state: AppState) {
                         output: "".to_owned(),
                         active: false,
                         specialization: serverConfig.specializedServerType.clone(),
-                        specializedInfo: serverConfig.specializedServerInfo.clone()
+                        specializedInfo: serverConfig.specializedServerInfo.clone(),
+                        host: None,
                     })
                 }
             }
@@ -180,9 +171,11 @@ async fn process_message(text: String, state: AppState) {
                     let serverName = value.server_name.clone();
                     let mut servers = state.servers.lock().await;
                     let mut isActiveServer = false;
+                    let mut serverFound = false;
                     for server in servers.iter_mut() {
-                        if server.name == serverName {
+                        if server.name == serverName && serverFound == false {
                             isActiveServer = true;
+                            serverFound = true;
                             tokio::spawn(pass_stdin(
                                 value.clone(),
                                 server.name.clone(),
@@ -191,6 +184,39 @@ async fn process_message(text: String, state: AppState) {
                         }
                     }
                     drop(servers);
+                    let config = state.config.lock().await;
+                    let slave = config.slave.clone();
+                    drop(config);
+                    if serverFound == false && !slave {
+                        let mut slaveServers = state.slave_servers.lock().await;
+                        for server in slaveServers.iter_mut() {
+                            if server.name == serverName && serverFound == false {
+                                serverFound = true;
+                                isActiveServer = true;
+                                if let Some(host) = server.host.clone() {
+                                    let mut slaves = state.slave_connections.lock().await;
+                                    let mut slaveFound = false;
+                                    for slave in slaves.iter_mut() {
+                                        if slaveFound {
+                                            continue;
+                                        }
+                                        if (slave.address == host.address
+                                            && slave.port == host.port)
+                                        {
+                                            slaveFound = true;
+                                            let _ = slave
+                                                .write_stdin(
+                                                    server.name.clone(),
+                                                    value.value.clone(),
+                                                )
+                                                .await;
+                                        }
+                                    }
+                                    drop(slaves);
+                                }
+                            }
+                        }
+                    }
                     if (isActiveServer != true && value.value == "start") {
                         let config = state.config.lock().await;
                         let mut desc: ControlledProgramDescriptor =

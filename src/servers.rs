@@ -38,7 +38,9 @@ pub async fn process_stdout(state: AppState) {
                                 server.working_dir.clone(),
                             );
                             if server.specializedServerType.is_some() {
-                                descriptor.setSpecialization(server.specializedServerType.clone().unwrap());
+                                descriptor.setSpecialization(
+                                    server.specializedServerType.clone().unwrap(),
+                                );
                             }
                             new_instances.push(descriptor);
                         }
@@ -70,7 +72,7 @@ pub async fn process_stdout(state: AppState) {
                     r#type: String,
                     output: String,
                     server_name: String,
-                    server_type: Option<crate::ControlledProgram::SpecializedServerTypes>
+                    server_type: Option<crate::ControlledProgram::SpecializedServerTypes>,
                 }
                 match str {
                     Some(val) => {

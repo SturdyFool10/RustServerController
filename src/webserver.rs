@@ -1,3 +1,4 @@
+use crate::websocket::*;
 use axum::{
     body::Body,
     extract::{
@@ -15,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tower_http::services::ServeDir;
 use tracing::*;
-use crate::websocket::*;
 
 use crate::{
     configuration::Config, AppState::AppState, ControlledProgram::ControlledProgramDescriptor,
@@ -61,6 +61,9 @@ pub async fn start_web_server(_state: AppState) {
 }
 #[no_mangle]
 async fn main_serve(State(_state): State<AppState>) -> Html<String> {
-    Html::from(include_str!("html_src/index.html").to_owned().replace("styles!();", include_str!("html_src/style.css")))
+    Html::from(
+        include_str!("html_src/index.html")
+            .to_owned()
+            .replace("styles!();", include_str!("html_src/style.css")),
+    )
 }
-

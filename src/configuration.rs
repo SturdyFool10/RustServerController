@@ -10,7 +10,7 @@ pub struct Config {
     pub port: String,
     pub servers: Vec<crate::ControlledProgram::ControlledProgramDescriptor>,
     pub slave: bool,
-    pub slaveConnections: Vec<SlaveConnectionDescriptor>
+    pub slaveConnections: Vec<SlaveConnectionDescriptor>,
 }
 
 impl Config {
