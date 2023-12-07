@@ -2,11 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
 
+use crate::master::SlaveConnectionDescriptor;
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub interface: String,
     pub port: String,
     pub servers: Vec<crate::ControlledProgram::ControlledProgramDescriptor>,
+    pub slave: bool,
+    pub slaveConnections: Vec<SlaveConnectionDescriptor>
 }
 
 impl Config {
