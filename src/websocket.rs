@@ -22,6 +22,7 @@ use crate::{
 };
 #[no_mangle]
 pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    println!("Handling a socket...");
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 async fn handle_socket(socket: WebSocket, state: AppState) {
@@ -94,8 +95,10 @@ async fn process_message(text: String, state: AppState) {
                 .collect();
         }
     }
+    info!("Message: {}", &text);
     match ev_type {
         "requestInfo" => {
+            info!("Sending server info");
             let servers = state.servers.lock().await;
             let val: SInfoRequestMessage = serde_json::from_str(&text).unwrap();
 
@@ -144,7 +147,7 @@ async fn process_message(text: String, state: AppState) {
                     host: None,
                     active: serverInfo.active.clone(),
                     specialization: serverInfo.specialization.clone(),
-                    specializedInfo: serverInfo.specializedInfo.clone()
+                    specializedInfo: serverInfo.specializedInfo.clone(),
                 };
                 info.servers.push(newInfo);
             }

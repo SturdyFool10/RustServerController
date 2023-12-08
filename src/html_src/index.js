@@ -246,7 +246,7 @@ $(document).ready(function() {
 	})
     setInterval(function() {
 		try {
-        	socket.send(createEvent("requestInfo", [false]));
+        	socket.send(createEvent("requestInfo", [true]));
         	for (var index in window.serverInfoObj.servers) {
             	var server = window.serverInfoObj.servers[index];
             	var name = server.name;
