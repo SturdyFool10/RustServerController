@@ -77,6 +77,7 @@ function hotReloadWhenReady() {
 }
 
 function addServerDropdown(serverName, inactive) {
+	console.log("adding a dropdown");
     let titleText = serverName;
     if (inactive) {
         titleText += " (inactive)"
@@ -149,6 +150,7 @@ function addServerDropdown(serverName, inactive) {
     if (inactive == true) {
         dropdown.toggleClass("inactiveServer");
     }
+	updateServerInfoMCSpecialization()
 }
 
 function addDropdownNoDupe(name, inactive) {
@@ -170,23 +172,7 @@ function getClassList(element) {
 }
 function checkAllServers() {
 	var servers = $(".CentralMenuDropdown").toArray();
-	servers.forEach(function(server) {
-		var classList = getClassList(server);
-		classList.forEach(function(clas) {
-			var doesMatch = clas.match(/^(.*?)\wdropdown$/gm);
-			if (doesMatch) {
-				var includes = false;
-				window.serverInfoObj.config.servers.forEach(function(server2) {
-					if (server2.name === clas.replace("dropdown", "")) {
-						includes = true;
-					}
-				});
-				if (includes == false) {
-					$(server).remove();
-				}
-			}
-		})
-	});
+	//finish this, make sure serverInfo
 }
 function updateServerInfoMCSpecialization() {
 	try {
