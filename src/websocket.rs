@@ -95,10 +95,11 @@ async fn process_message(text: String, state: AppState) {
                 .collect();
         }
     }
-    info!("Message: {}", &text);
+    if (ev_type != "requestInfo") {
+        info!("Message: {}", text.clone());
+    }
     match ev_type {
         "requestInfo" => {
-            info!("Sending server info");
             let servers = state.servers.lock().await;
             let val: SInfoRequestMessage = serde_json::from_str(&text).unwrap();
 
@@ -190,34 +191,17 @@ async fn process_message(text: String, state: AppState) {
                     let config = state.config.lock().await;
                     let slave = config.slave.clone();
                     drop(config);
-                    if serverFound == false && !slave {
-                        let mut slaveServers = state.slave_servers.lock().await;
-                        for server in slaveServers.iter_mut() {
-                            if server.name == serverName && serverFound == false {
-                                serverFound = true;
-                                isActiveServer = true;
-                                if let Some(host) = server.host.clone() {
-                                    let mut slaves = state.slave_connections.lock().await;
-                                    let mut slaveFound = false;
-                                    for slave in slaves.iter_mut() {
-                                        if slaveFound {
-                                            continue;
-                                        }
-                                        if (slave.address == host.address
-                                            && slave.port == host.port)
-                                        {
-                                            slaveFound = true;
-                                            let _ = slave
-                                                .write_stdin(
-                                                    server.name.clone(),
-                                                    value.value.clone(),
-                                                )
-                                                .await;
-                                        }
-                                    }
-                                    drop(slaves);
-                                }
-                            }
+                    let mut slaveServers = state.slave_connections.lock().await;
+                    for slave in slaveServers.iter_mut() {
+                        info!(
+                            "Writing to slave: {}",
+                            serde_json::to_string_pretty(slave).unwrap()
+                        );
+                        let res = slave
+                            .write_stdin(value.server_name.clone(), value.value.clone())
+                            .await;
+                        if let Err(what) = res {
+                            info!("there was an error writing: {}", what)
                         }
                     }
                     if (isActiveServer != true && value.value == "start") {
@@ -276,4 +260,5 @@ async fn process_message(text: String, state: AppState) {
         }
         _ => {}
     }
+    
 }

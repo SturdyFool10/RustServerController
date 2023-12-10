@@ -1,4 +1,6 @@
-use crate::{AppState::AppState, ControlledProgram::ControlledProgramDescriptor};
+use crate::{
+    messages::ConsoleOutput, AppState::AppState, ControlledProgram::ControlledProgramDescriptor,
+};
 use tracing::*;
 #[no_mangle]
 pub async fn start_servers(_state: AppState) {
@@ -67,13 +69,6 @@ pub async fn process_stdout(state: AppState) {
                     Ok(val) => val,
                     _ => None,
                 };
-                #[derive(serde::Serialize)]
-                struct ConsoleOutput {
-                    r#type: String,
-                    output: String,
-                    server_name: String,
-                    server_type: Option<crate::ControlledProgram::SpecializedServerTypes>,
-                }
                 match str {
                     Some(val) => {
                         if !val.is_empty() {
@@ -84,8 +79,10 @@ pub async fn process_stdout(state: AppState) {
                                 server_type: server.specializedServerType.clone(),
                             };
                             let _ = state.tx.send(serde_json::to_string(&out).unwrap());
+
                         }
                     }
+
                     _ => {}
                 }
             }

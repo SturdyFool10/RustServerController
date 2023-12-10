@@ -75,7 +75,7 @@ function hotReloadWhenReady() {
 		} catch (e) {}
 	}, 1000);
 }
-
+window.commands = [];
 function addServerDropdown(serverName, inactive) {
 	console.log("adding a dropdown");
     let titleText = serverName;
@@ -88,7 +88,7 @@ function addServerDropdown(serverName, inactive) {
 	});
 	dropdown.appendTo(".centerMenu.servers");
     dropdown.find(".innerTopBarDropDown").click(dropdownClick);
-    var commands = [];
+
     var numBack = 0;
     var input = dropdown.find(".STDInInput");
     input.keydown(function(e) {
@@ -126,24 +126,25 @@ function addServerDropdown(serverName, inactive) {
             $(this).val(commands[commands.length - numBack]);
         }
     });
+	var commandsTemp = []
     dropdown.find(".STDInSubmit").click(function(e) {
         if (e.which === 1) {
-            var input2 = $(input).val();
+			var input2 = $(input).val();
             if (input2 == "") return;
             $(input).val("");
-            var obj = {
-                type: "stdinInput",
-                server_name: serverName,
-                value: input2
-            };
-			commands = commandsTemp;
-            commands.push(input2);
+			var obj = {
+				type: "stdinInput",
+				server_name: serverName,
+				value: input2
+			};
+			socket.send(JSON.stringify(obj));
 			var commandsTemp = [];
-			for (var i = Math.max(0, commands.length - 26); i < commands.length; ++i) {
-				commandsTemp.push(commands[i]);
+			window.commands = commandsTemp;
+            window.commands.push(input2);
+			for (var i = Math.max(0, window.commands.length - 26); i < window.commands.length; ++i) {
+				commandsTemp.push(window.commands[i]);
 			}
             numBack = 0;
-            socket.send(JSON.stringify(obj));
         }
     })
 	dropdown.find(".dropdownDrop").slideUp(1).hide();

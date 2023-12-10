@@ -13,6 +13,14 @@ pub struct ServerInfo {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct ConsoleOutput {
+    pub r#type: String,
+    pub output: String,
+    pub server_name: String,
+    pub server_type: Option<crate::ControlledProgram::SpecializedServerTypes>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct serverInfoMessage {
     pub r#type: String,
     pub servers: Vec<ServerInfo>,
