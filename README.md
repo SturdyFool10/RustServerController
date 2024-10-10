@@ -40,6 +40,8 @@ The recent addition of a new feature enables a clustered setup with master and s
 
 ## Configuring a Master to Connect to a Slave:
 - On Windows, use the `ipconfig` command to obtain the IPv4 address of the slave node's host PC.
+- On Linux, use the `ifconfig -a` command
+- On Mac, use the `ipconfig getifaddr en0` or `ipconfig getifaddr en1`(which one depends on the specific system)
 - Edit the configuration using the following template, inserting the slave's IPv4 address and port:
   ```json
   {
