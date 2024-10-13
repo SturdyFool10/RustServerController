@@ -22,7 +22,7 @@ jobs:
         run: cargo build --release # Run your build command
 
       - name: Archive Artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: Win_Artifact
           path: target/release/server_host.exe # Replace with the actual path to your compiled binary
