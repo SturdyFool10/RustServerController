@@ -1,106 +1,160 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-	<head>
-		<link rel="preconnect" href="https://fonts.googleapis.com">
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-		<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@500&display=swap" rel="stylesheet">
-		<link rel="icon" type="image/x-icon" href="/favicon.ico" />
-		<title>Sturdy's Web Server Controller</title>
-		<style>
-			styles!();
-		</style>
-	</head>
-	<body>
-		<div class="menu" id="menu">
-			<ul>
-				<li>
-					<a href="#">Servers</a>
-				</li>
-				<li>
-					<a href="#">Configuration</a>
-				</li>
-				<li>
-					<a href="#">Stats</a>
-				</li>
-			</ul>
-		</div>
-		<div id="main-content" class="regular">
-			<div class="menu-icon" id="menu-icon">
-				<div class="bar"></div>
-				<div class="bar"></div>
-				<div class="bar"></div>
-			</div>
-			<div class="page grad"></div>
-			<div class="page servers">
-				<div class="topbar">
-					<a href="#" class="menuBTN1">
-						<svg class="bloom" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z" />
-						</svg>
-					</a>
-					<a href="#" class="menuBTN1">
-						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z" />
-						</svg>
-					</a>
-				</div>
-				<div class="leftBar"></div>
-				<div class="centralContent">
-					<div class="innerTopBar">
-					</div>
-					<div class="centerMenu servers"></div>
-				</div>
-				<div class="rightBar"></div>
-			</div>
-			<div class="page config">
-				<div class="topbar">
-					<a href="#" class="menuBTN1">
-						<svg class="bloom" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z" />
-						</svg>
-					</a>
-					<a href="#" class="menuBTN1">
-						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z" />
-						</svg>
-					</a>
-				</div>
-				<div class="leftBar"></div>
-				<div class="centralContent">
-					<div class="innerTopBar">
-						<a href="#" class="configSave">
-							<svg xmlns="http://www.w3.org/2000/svg" class="saveSVG bloom" width="24" height="24" viewBox="0 0 24 24"><path d="M13 3h2.996v5h-2.996v-5zm11 1v20h-24v-24h20l4 4zm-17 5h10v-7h-10v7zm15-4.171l-2.828-2.829h-.172v9h-14v-9h-3v20h20v-17.171zm-3 10.171h-14v1h14v-1zm0 2h-14v1h14v-1zm0 2h-14v1h14v-1z"/></svg>
-							<svg xmlns="http://www.w3.org/2000/svg" class="saveSVG" width="24" height="24" viewBox="0 0 24 24"><path d="M13 3h2.996v5h-2.996v-5zm11 1v20h-24v-24h20l4 4zm-17 5h10v-7h-10v7zm15-4.171l-2.828-2.829h-.172v9h-14v-9h-3v20h20v-17.171zm-3 10.171h-14v1h14v-1zm0 2h-14v1h14v-1zm0 2h-14v1h14v-1z"/></svg>
-						</a>
-					</div>
-					<div class="ConfigEditor">
-						<textarea class="editorText"></textarea>
-					</div>
-				</div>
-				<div class="rightBar"></div>
-			</div>
-			<div class="page stat">
-				<div class="topbar">
-					<a href="#" class="menuBTN1">
-						<svg class="bloom" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z" />
-						</svg>
-					</a>
-					<a href="#" class="menuBTN1">
-						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-							<path d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z" />
-						</svg>
-					</a>
-				</div>
-				<div class="leftBar"></div>
-				<div class="centralContent">
-					<div class="innerTopBar">
-					</div>
-				</div>
-				<div class="rightBar"></div>
-			</div>
-		</div>
-		<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.0/jquery.min.js"></script>
-		<script src="/index.js"></script>
-	</body>
+    <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Roboto:wght@500&display=swap"
+            rel="stylesheet"
+        />
+        <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+        <title>Sturdy's Web Server Controller</title>
+        <style>
+            styles!();
+        </style>
+    </head>
+    <body>
+        <div class="menu" id="menu">
+            <ul>
+                <li>
+                    <a href="#">Servers</a>
+                </li>
+                <li>
+                    <a href="#">Configuration</a>
+                </li>
+                <li>
+                    <a href="#">Stats</a>
+                </li>
+            </ul>
+        </div>
+        <div id="main-content" class="regular">
+            <div class="menu-icon" id="menu-icon">
+                <div class="bar"></div>
+                <div class="bar"></div>
+                <div class="bar"></div>
+            </div>
+            <div class="page grad"></div>
+            <div class="page servers">
+                <div class="topbar">
+                    <a href="#" class="menuBTN1">
+                        <svg
+                            class="bloom"
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"
+                            />
+                        </svg>
+                    </a>
+                    <a href="#" class="menuBTN1">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"
+                            />
+                        </svg>
+                    </a>
+                </div>
+                <div class="leftBar"></div>
+                <div class="centralContent">
+                    <div class="innerTopBar"></div>
+                    <div class="centerMenu servers"></div>
+                </div>
+                <div class="rightBar"></div>
+            </div>
+            <div class="page config">
+                <div class="topbar">
+                    <a href="#" class="menuBTN1">
+                        <svg
+                            class="bloom"
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"
+                            />
+                        </svg>
+                    </a>
+                    <a href="#" class="menuBTN1">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"
+                            />
+                        </svg>
+                    </a>
+                </div>
+                <div class="leftBar"></div>
+                <div class="centralContent">
+                    <div class="innerTopBar">
+                        <a href="#" class="configSave">
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="saveSVG bloom"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    d="M13 3h2.996v5h-2.996v-5zm11 1v20h-24v-24h20l4 4zm-17 5h10v-7h-10v7zm15-4.171l-2.828-2.829h-.172v9h-14v-9h-3v20h20v-17.171zm-3 10.171h-14v1h14v-1zm0 2h-14v1h14v-1zm0 2h-14v1h14v-1z"
+                                />
+                            </svg>
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="saveSVG"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    d="M13 3h2.996v5h-2.996v-5zm11 1v20h-24v-24h20l4 4zm-17 5h10v-7h-10v7zm15-4.171l-2.828-2.829h-.172v9h-14v-9h-3v20h20v-17.171zm-3 10.171h-14v1h14v-1zm0 2h-14v1h14v-1zm0 2h-14v1h14v-1z"
+                                />
+                            </svg>
+                        </a>
+                    </div>
+                    <div class="ConfigEditor">
+                        <textarea class="editorText"></textarea>
+                    </div>
+                </div>
+                <div class="rightBar"></div>
+            </div>
+            <div class="page stat">
+                <div class="topbar">
+                    <a href="#" class="menuBTN1">
+                        <svg
+                            class="bloom"
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"
+                            />
+                        </svg>
+                    </a>
+                    <a href="#" class="menuBTN1">
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                d="M14 12h-4v-12h4v12zm4.213-10.246l-1.213 1.599c2.984 1.732 5 4.955 5 8.647 0 5.514-4.486 10-10 10s-10-4.486-10-10c0-3.692 2.016-6.915 5-8.647l-1.213-1.599c-3.465 2.103-5.787 5.897-5.787 10.246 0 6.627 5.373 12 12 12s12-5.373 12-12c0-4.349-2.322-8.143-5.787-10.246z"
+                            />
+                        </svg>
+                    </a>
+                </div>
+                <div class="leftBar"></div>
+                <div class="centralContent">
+                    <div class="innerTopBar"></div>
+                </div>
+                <div class="rightBar"></div>
+            </div>
+        </div>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+        <script src="/index.js"></script>
+    </body>
 </html>
