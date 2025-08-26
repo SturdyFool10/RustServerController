@@ -1,5 +1,6 @@
 mod AppState;
 mod ControlledProgram;
+mod ansi_to_html;
 mod configuration;
 mod files;
 mod macros;

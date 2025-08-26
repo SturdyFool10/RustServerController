@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ansi_escapers = "0.2.0"
 async-std = { version = "1.12.0", features = ["tokio03", "tokio02", "tokio1"] }
 axum = { version = "0.6.20", features = ["tracing", "ws", "macros", "headers"] }
 axum-extra = "0.7.7"
