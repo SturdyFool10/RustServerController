@@ -1,4 +1,3 @@
-#[macro_use]
 #[macro_export]
 macro_rules! spawn_tasks {
     ($state:expr, $($task:expr),*) => {
@@ -14,7 +13,6 @@ macro_rules! spawn_tasks {
     };
 }
 
-#[macro_use]
 #[macro_export]
 macro_rules! async_listener {
     ($key:expr, $app:expr) => {{

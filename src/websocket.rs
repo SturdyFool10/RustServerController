@@ -118,12 +118,12 @@ async fn process_message(text: String, state: AppState) {
                     name: server.name.clone(),
                     output: "".to_owned(),
                     active: true,
-                    specialization: server.specializedServerType.clone(),
-                    specializedInfo: server.specializedServerInfo.clone(),
+                    specialization: server.specialized_server_type.clone(),
+                    specializedInfo: server.specialized_server_info.clone(),
                     host: None,
                 };
                 if (val.arguments[0] == true) {
-                    let cl: String = server.currOutputInProgress.clone();
+                    let cl: String = server.curr_output_in_progress.clone();
                     let split: Vec<&str> = cl.split("\n").into_iter().collect();
                     let mut inp = split.len();
                     if (inp < 150) {
@@ -159,8 +159,8 @@ async fn process_message(text: String, state: AppState) {
                         name: serverConfig.name.clone(),
                         output: "".to_owned(),
                         active: false,
-                        specialization: serverConfig.specializedServerType.clone(),
-                        specializedInfo: serverConfig.specializedServerInfo.clone(),
+                        specialization: serverConfig.specialized_server_type.clone(),
+                        specializedInfo: serverConfig.specialized_server_info.clone(),
                         host: None,
                     })
                 }
@@ -250,7 +250,7 @@ async fn process_message(text: String, state: AppState) {
             config.change(message.updatedConfig);
             config.update_config_file("config.json");
             for (index, desc) in config.servers.iter_mut().enumerate() {
-                if (desc.autoStart) {
+                if (desc.auto_start) {
                     let mut descClone = desc.clone();
                     servers.push(descClone.into_instance());
                 }
@@ -260,5 +260,4 @@ async fn process_message(text: String, state: AppState) {
         }
         _ => {}
     }
-    
 }

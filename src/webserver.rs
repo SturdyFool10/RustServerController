@@ -34,7 +34,7 @@ async fn get_router(_state: AppState) -> Router<AppState> {
         .route("/favicon.ico", get(handle_icon));
     router
 }
-async fn handle_icon(State(state): State<AppState>) -> impl IntoResponse {
+async fn handle_icon(State(_state): State<AppState>) -> impl IntoResponse {
     let ico_bytes: &'static [u8] = include_bytes!("html_src/icon.ico");
     let response = Response::builder()
         .status(StatusCode::OK)

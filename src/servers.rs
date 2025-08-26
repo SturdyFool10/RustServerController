@@ -5,11 +5,11 @@ use tracing::*;
 #[no_mangle]
 pub async fn start_servers(_state: AppState) {
     let mut config = _state.config.lock().await;
-    for serverDesc in config.servers.iter_mut() {
-        if (serverDesc.autoStart) {
-            let newDesc = serverDesc.clone();
+    for server_desc in config.servers.iter_mut() {
+        if server_desc.auto_start {
+            let new_desc = server_desc.clone();
             let mut servers = _state.servers.lock().await;
-            servers.push(newDesc.into_instance());
+            servers.push(new_desc.into_instance());
             drop(servers);
         }
     }
@@ -35,13 +35,13 @@ pub async fn process_stdout(state: AppState) {
                             info!("Server ID: {} has crashed, restarting it...", index);
                             let mut descriptor = ControlledProgramDescriptor::new(
                                 server.name.as_str(),
-                                server.executablePath.as_str(),
-                                server.commandLineArgs.clone(),
+                                server.executable_path.as_str(),
+                                server.command_line_args.clone(),
                                 server.working_dir.clone(),
                             );
-                            if server.specializedServerType.is_some() {
-                                descriptor.setSpecialization(
-                                    server.specializedServerType.clone().unwrap(),
+                            if server.specialized_server_type.is_some() {
+                                descriptor.set_specialization(
+                                    server.specialized_server_type.clone().unwrap(),
                                 );
                             }
                             new_instances.push(descriptor);
@@ -62,7 +62,7 @@ pub async fn process_stdout(state: AppState) {
             for server in servers.iter_mut() {
                 let str = match tokio::time::timeout(
                     tokio::time::Duration::from_secs_f64(1. / 10.),
-                    server.readOutput(),
+                    server.read_output(),
                 )
                 .await
                 {
@@ -76,10 +76,9 @@ pub async fn process_stdout(state: AppState) {
                                 r#type: "ServerOutput".to_owned(),
                                 output: val,
                                 server_name: server.name.clone(),
-                                server_type: server.specializedServerType.clone(),
+                                server_type: server.specialized_server_type.clone(),
                             };
                             let _ = state.tx.send(serde_json::to_string(&out).unwrap());
-
                         }
                     }
 

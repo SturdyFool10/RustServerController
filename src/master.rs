@@ -15,12 +15,7 @@ use tokio_tungstenite::{
 };
 use tracing::{error, info};
 
-use crate::{
-    configuration::Config,
-    messages::{serverInfoMessage, stdinInput, ConsoleOutput, SInfoRequestMessage, ServerInfo},
-    slave,
-    AppState::AppState,
-};
+use crate::{configuration::Config, messages::*, slave, AppState::AppState};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SlaveConnectionDescriptor {
@@ -69,9 +64,9 @@ impl SlaveConnection {
             let def = serverInfoMessage {
                 r#type: "".to_string(),
                 servers: vec![],
-                config: serde_json::from_str(include_str!("defaultconfig.json")).unwrap(),
+                config: Config::default(),
             };
-            let mut sinfo: serverInfoMessage = def.clone();
+            let mut _sinfo: serverInfoMessage = def.clone();
             if let Some(stream) = &mut self.stream {
                 while let Some(message) = stream.next().await {
                     match message {
@@ -80,66 +75,68 @@ impl SlaveConnection {
                             if let Message::Text(text) = msg {
                                 let js: Result<Value, _> = serde_json::from_str(&text);
                                 let js2: Value;
-                                if (js.is_ok()) {
+                                if js.is_ok() {
                                     js2 = js.unwrap();
                                     match js2["type"].as_str().unwrap() {
                                         "ServerInfo" => {
-                                            let serdeRes = serde_json::from_str(&text);
-                                            if let Ok(val) = serdeRes {
-                                                sinfo = val;
+                                            let serde_res = serde_json::from_str(&text);
+                                            if let Ok(val) = serde_res {
+                                                _sinfo = val;
                                                 let mut slave_servers =
                                                     app_state.slave_servers.lock().await;
-                                                let sMessage =
-                                                    serde_json::to_string(&sinfo).unwrap();
-                                                let sDef = serde_json::to_string(&def).unwrap();
-                                                if (sMessage != sDef && sinfo.servers.len() != 0) {
-                                                    for serverInfo in sinfo.servers.iter() {
-                                                        let newInfo = ServerInfo {
-                                                            name: serverInfo.name.clone(),
-                                                            output: serverInfo.output.clone(),
-                                                            active: serverInfo.active,
+                                                let s_message =
+                                                    serde_json::to_string(&_sinfo).unwrap();
+                                                let s_def = serde_json::to_string(&def).unwrap();
+                                                if s_message != s_def && _sinfo.servers.len() != 0 {
+                                                    for server_info in _sinfo.servers.iter() {
+                                                        let new_info = ServerInfo {
+                                                            name: server_info.name.clone(),
+                                                            output: server_info.output.clone(),
+                                                            active: server_info.active,
                                                             host: Some(SlaveConnectionDescriptor {
                                                                 address: self.address.clone(),
                                                                 port: self.port.clone(),
                                                             }),
-                                                            specialization: serverInfo
+                                                            specialization: server_info
                                                                 .specialization
                                                                 .clone(),
-                                                            specializedInfo: serverInfo
+                                                            specializedInfo: server_info
                                                                 .specializedInfo
                                                                 .clone(),
                                                         };
-                                                        let mut foundExistingServer = false;
+                                                        let mut found_existing_server = false;
                                                         for existing_server in
                                                             slave_servers.iter_mut()
                                                         {
-                                                            if existing_server.name == newInfo.name
+                                                            if existing_server.name == new_info.name
                                                             {
                                                                 existing_server.output =
-                                                                    newInfo.output.clone();
+                                                                    new_info.output.clone();
                                                                 existing_server.specialization =
-                                                                    newInfo.specialization.clone();
+                                                                    new_info.specialization.clone();
                                                                 existing_server.specializedInfo =
-                                                                    newInfo.specializedInfo.clone();
-                                                                foundExistingServer = true;
+                                                                    new_info
+                                                                        .specializedInfo
+                                                                        .clone();
+                                                                found_existing_server = true;
                                                             }
                                                         }
-                                                        if !foundExistingServer {
-                                                            slave_servers.push(newInfo);
+                                                        if !found_existing_server {
+                                                            slave_servers.push(new_info);
                                                         }
                                                     }
                                                 }
                                             }
                                         }
                                         "ServerOutput" => {
-                                            app_state.tx.send(text.clone());
+                                            let _ = app_state.tx.send(text.clone());
                                         }
                                         _ => {}
                                     }
                                 }
                             }
                         }
-                        Err(e) => {
+                        Err(_e) => {
                             // Handle error
                         }
                     }
@@ -166,7 +163,8 @@ impl SlaveConnection {
         if let Some(stream) = &mut self.stream {
             let message = Message::Text(message);
 
-            tokio::time::timeout(Duration::from_secs_f64(1. / 1000.), stream.send(message)).await;
+            let _ = tokio::time::timeout(Duration::from_secs_f64(1. / 1000.), stream.send(message))
+                .await;
         }
 
         // You might want to read a response or confirmation from the slave

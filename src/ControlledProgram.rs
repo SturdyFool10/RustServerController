@@ -1,6 +1,6 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::{fs::File, process::Stdio};
+use std::process::Stdio;
 use tokio::{
     io::*,
     process::*,
@@ -21,72 +21,72 @@ pub enum SpecializedServerInformation {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ControlledProgramDescriptor {
     pub name: String,
-    pub exePath: String,
+    pub exe_path: String,
     pub arguments: Vec<String>,
     pub working_dir: String,
-    pub autoStart: bool,
+    pub auto_start: bool,
     //optional, do not use unless you need specialization, remove if unused then fix errors by removing lines
-    pub specializedServerType: Option<SpecializedServerTypes>,
-    pub specializedServerInfo: Option<SpecializedServerInformation>,
+    pub specialized_server_type: Option<SpecializedServerTypes>,
+    pub specialized_server_info: Option<SpecializedServerInformation>,
 }
 impl ControlledProgramDescriptor {
-    pub fn newAS(
+    pub fn new_as(
         name: &str,
-        exePath: &str,
+        exe_path: &str,
         arguments: Vec<String>,
         working_dir: String,
-        autoStart: bool,
+        auto_start: bool,
     ) -> Self {
         Self {
             name: name.to_owned(),
-            exePath: exePath.to_owned(),
+            exe_path: exe_path.to_owned(),
             arguments,
             working_dir,
-            autoStart: autoStart,
-            specializedServerType: None,
-            specializedServerInfo: None,
+            auto_start,
+            specialized_server_type: None,
+            specialized_server_info: None,
         }
     }
-    pub fn new(name: &str, exePath: &str, arguments: Vec<String>, working_dir: String) -> Self {
+    pub fn new(name: &str, exe_path: &str, arguments: Vec<String>, working_dir: String) -> Self {
         Self {
             name: name.to_owned(),
-            exePath: exePath.to_owned(),
+            exe_path: exe_path.to_owned(),
             arguments,
             working_dir,
-            autoStart: false,
-            specializedServerType: None,
-            specializedServerInfo: None,
+            auto_start: false,
+            specialized_server_type: None,
+            specialized_server_info: None,
         }
     }
     pub fn into_instance(self) -> ControlledProgramInstance {
         let mut instance = ControlledProgramInstance::new(
             self.name.as_str(),
-            self.exePath.as_str(),
+            self.exe_path.as_str(),
             self.arguments,
             self.working_dir,
         );
-        match self.specializedServerType {
+        match self.specialized_server_type {
             None => {}
             Some(value) => {
-                instance.setSpecialization(value);
+                instance.set_specialization(value);
             }
         }
         instance
     }
-    pub fn setSpecialization(&mut self, spec: SpecializedServerTypes) {
-        self.specializedServerType = Some(spec.clone())
+    pub fn set_specialization(&mut self, spec: SpecializedServerTypes) {
+        self.specialized_server_type = Some(spec.clone())
     }
 }
 impl Default for ControlledProgramDescriptor {
     fn default() -> Self {
         Self {
             name: "".to_owned(),
-            exePath: "".to_owned(),
+            exe_path: "".to_owned(),
             arguments: vec![],
             working_dir: "".to_owned(),
-            autoStart: false,
-            specializedServerType: None,
-            specializedServerInfo: None,
+            auto_start: false,
+            specialized_server_type: None,
+            specialized_server_info: None,
         }
     }
 }
@@ -94,19 +94,19 @@ impl Default for ControlledProgramDescriptor {
 #[derive(Debug)]
 pub struct ControlledProgramInstance {
     pub name: String,
-    pub executablePath: String,
-    pub commandLineArgs: Vec<String>,
+    pub executable_path: String,
+    pub command_line_args: Vec<String>,
     pub process: Child,
     pub working_dir: String,
-    pub lastLogLines: usize,
-    pub currOutputInProgress: String,
+    pub last_log_lines: usize,
+    pub curr_output_in_progress: String,
     //optional, remove if unused then remove any references within this file
-    pub specializedServerType: Option<SpecializedServerTypes>,
-    pub specializedServerInfo: Option<SpecializedServerInformation>,
+    pub specialized_server_type: Option<SpecializedServerTypes>,
+    pub specialized_server_info: Option<SpecializedServerInformation>,
 }
 impl ControlledProgramInstance {
-    pub fn new(name: &str, exePath: &str, arguments: Vec<String>, working_dir: String) -> Self {
-        let mut process = Command::new(exePath);
+    pub fn new(name: &str, exe_path: &str, arguments: Vec<String>, working_dir: String) -> Self {
+        let mut process = Command::new(exe_path);
         let mut process = process.stdin(Stdio::piped());
         process = process.stdout(Stdio::piped());
         process = process.current_dir(working_dir.clone());
@@ -118,37 +118,37 @@ impl ControlledProgramInstance {
             .expect("Could not spawn process for server.");
         Self {
             name: name.to_owned(),
-            executablePath: exePath.to_owned(),
-            commandLineArgs: arguments,
+            executable_path: exe_path.to_owned(),
+            command_line_args: arguments,
             process: child,
             working_dir,
-            lastLogLines: 0,
-            currOutputInProgress: "".to_string(),
-            specializedServerType: None,
-            specializedServerInfo: None,
+            last_log_lines: 0,
+            curr_output_in_progress: "".to_string(),
+            specialized_server_type: None,
+            specialized_server_info: None,
         }
     }
-    pub fn setSpecialization(&mut self, spec: SpecializedServerTypes) {
-        self.specializedServerType = Some(spec.clone());
+    pub fn set_specialization(&mut self, spec: SpecializedServerTypes) {
+        self.specialized_server_type = Some(spec.clone());
         info!("Setting server specialization...");
         match spec {
             SpecializedServerTypes::Minecraft => {
-                let mut pathStr = self.working_dir.clone();
-                if !(pathStr.ends_with("/")) && !(pathStr.ends_with("\\")) {
-                    pathStr += "/";
+                let mut path_str = self.working_dir.clone();
+                if !(path_str.ends_with("/")) && !(path_str.ends_with("\\")) {
+                    path_str += "/";
                 }
-                pathStr += "server.properties";
+                path_str += "server.properties";
 
-                let fileResult = crate::files::read_file(pathStr.as_str());
+                let file_result = crate::files::read_file(path_str.as_str());
                 info!("Reading server.properties...");
-                match fileResult {
+                match file_result {
                     Ok(val) => {
                         // Regex to find the max-players line
                         let regex = Regex::new(r"max-players=(\d+)").unwrap();
                         if let Some(caps) = regex.captures(&val) {
                             if let Some(max_players) = caps.get(1) {
                                 if let Ok(max_players) = max_players.as_str().parse::<usize>() {
-                                    self.specializedServerInfo =
+                                    self.specialized_server_info =
                                         Some(SpecializedServerInformation::Minecraft(
                                             0,
                                             max_players,
@@ -160,23 +160,23 @@ impl ControlledProgramInstance {
                         }
                     }
                     _ => {
-                        tracing::log::error!("Could not find server.properties for minecraft server: \"{}\" at location: {}", self.name, pathStr.clone());
+                        tracing::log::error!("Could not find server.properties for minecraft server: \"{}\" at location: {}", self.name, path_str.clone());
                     }
                 }
                 if let Some(SpecializedServerInformation::Minecraft(_, _, _, _)) =
-                    self.specializedServerInfo
+                    self.specialized_server_info
                 {
                 } else {
-                    self.specializedServerInfo =
+                    self.specialized_server_info =
                         Some(SpecializedServerInformation::Minecraft(0, 0, false, vec![]));
                 }
             }
             SpecializedServerTypes::Terraria => {
-                self.specializedServerInfo = Some(SpecializedServerInformation::Terraria(0, 0))
+                self.specialized_server_info = Some(SpecializedServerInformation::Terraria(0, 0))
             }
         }
     }
-    pub async fn readOutput(&mut self) -> Option<String> {
+    pub async fn read_output(&mut self) -> Option<String> {
         let mut out = None;
         {
             let mut out2 = String::new();
@@ -207,7 +207,7 @@ impl ControlledProgramInstance {
         };
         match out {
             Some(val) => {
-                if let Some(typ) = &self.specializedServerType {
+                if let Some(typ) = &self.specialized_server_type {
                     #[allow(unreachable_patterns)]
                     //we allow this because I am guarding using a default path
                     match typ {
@@ -220,22 +220,22 @@ impl ControlledProgramInstance {
                                     match pattern.captures(&line) {
                                         Some(caps) => {
                                             if let Some(SpecializedServerInformation::Minecraft(
-                                                mut currentPlayersCount,
-                                                maxPlayerCount,
+                                                mut current_players_count,
+                                                max_player_count,
                                                 ready,
-                                                mut playerList,
-                                            )) = self.specializedServerInfo.clone()
+                                                mut player_list,
+                                            )) = self.specialized_server_info.clone()
                                             {
                                                 let second = &caps[1];
-                                                currentPlayersCount += 1;
-                                                let playerName = second;
-                                                playerList.push(playerName.to_string());
-                                                self.specializedServerInfo =
+                                                current_players_count += 1;
+                                                let player_name = second;
+                                                player_list.push(player_name.to_string());
+                                                self.specialized_server_info =
                                                     Some(SpecializedServerInformation::Minecraft(
-                                                        currentPlayersCount,
-                                                        maxPlayerCount,
+                                                        current_players_count,
+                                                        max_player_count,
                                                         ready,
-                                                        playerList,
+                                                        player_list,
                                                     ));
                                             } //we found something, do something with it
                                         }
@@ -252,24 +252,26 @@ impl ControlledProgramInstance {
                                     match pattern.captures(&line) {
                                         Some(caps) => {
                                             if let Some(SpecializedServerInformation::Minecraft(
-                                                mut currentPlayersCount,
-                                                maxPlayerCount,
+                                                mut current_players_count,
+                                                max_player_count,
                                                 ready,
-                                                mut playerList,
-                                            )) = self.specializedServerInfo.clone()
+                                                mut player_list,
+                                            )) = self.specialized_server_info.clone()
                                             {
-                                                if currentPlayersCount > 0 {
-                                                    currentPlayersCount = currentPlayersCount - 1;
+                                                if current_players_count > 0 {
+                                                    current_players_count =
+                                                        current_players_count - 1;
                                                 }
-                                                let player_name = &caps[1];
-                                                playerList
-                                                    .retain(|playerName| playerName != player_name);
-                                                self.specializedServerInfo =
+                                                let player_name0 = &caps[1];
+                                                player_list.retain(|player_name| {
+                                                    player_name != player_name0
+                                                });
+                                                self.specialized_server_info =
                                                     Some(SpecializedServerInformation::Minecraft(
-                                                        currentPlayersCount,
-                                                        maxPlayerCount,
+                                                        current_players_count,
+                                                        max_player_count,
                                                         ready,
-                                                        playerList,
+                                                        player_list,
                                                     ));
                                             }
                                             //we found something, do something with it
@@ -285,11 +287,11 @@ impl ControlledProgramInstance {
                                 let lines = val.split("\n");
                                 for line in lines {
                                     if let Some(SpecializedServerInformation::Minecraft(
-                                        currentPlayersCount,
-                                        maxPlayerCount,
+                                        current_players_count,
+                                        max_player_count,
                                         ready,
-                                        playerList,
-                                    )) = &mut self.specializedServerInfo
+                                        player_list,
+                                    )) = &mut self.specialized_server_info
                                     {
                                         if regex.is_match(&line) {
                                             *ready = true; // Set the server ready state to true
@@ -302,22 +304,22 @@ impl ControlledProgramInstance {
                         _ => {}
                     }
                 }
-                self.currOutputInProgress += &val[..];
-                let cp = self.currOutputInProgress.split("\n");
+                self.curr_output_in_progress += &val[..];
+                let cp = self.curr_output_in_progress.split("\n");
                 let lines: Vec<&str> = cp.into_iter().collect();
                 let mut inp = lines.len();
-                if (inp < 150) {
+                if inp < 150 {
                     inp = 0;
                 } else {
                     inp = inp - 150;
                 }
-                self.currOutputInProgress = lines[std::cmp::max(0, inp)..lines.len()].join("\n");
+                self.curr_output_in_progress = lines[std::cmp::max(0, inp)..lines.len()].join("\n");
                 Some(val.clone())
             }
             None => None,
         }
     }
     pub async fn stop(&mut self) {
-        self.process.kill().await;
+        let _ = self.process.kill().await;
     }
 }

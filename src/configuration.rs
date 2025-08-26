@@ -39,3 +39,14 @@ impl Config {
         }
     }
 }
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            interface: "0.0.0.0".to_string(),
+            port: "80".to_string(),
+            servers: vec![],
+            slave: false,
+            slaveConnections: vec![],
+        }
+    }
+}
