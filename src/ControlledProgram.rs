@@ -107,9 +107,18 @@ pub struct ControlledProgramInstance {
 impl ControlledProgramInstance {
     pub fn new(name: &str, exe_path: &str, arguments: Vec<String>, working_dir: String) -> Self {
         let mut process = Command::new(exe_path);
-        let mut process = process.stdin(Stdio::piped());
-        process = process.stdout(Stdio::piped());
-        process = process.current_dir(working_dir.clone());
+        let mut process = process //this line needs to be here to prevent dropped value error
+            .stdin(Stdio::piped()) //pipe stdin
+            .stdout(Stdio::piped()) //pipe stdout
+            .current_dir(working_dir.clone()) //set the working directory, makes the app think that its being run from within working_dir
+            // Set environment variables to simulate a full terminal
+            .env("TERM", "xterm-256color") // Standard terminal type with 256 colors
+            .env("COLORTERM", "truecolor") // Indicate 24-bit color support
+            .env("COLUMNS", "120") // Default terminal width
+            .env("LINES", "30") // Default terminal height
+            .env("TERM_PROGRAM", "RustServerController") // Terminal program name
+            .env("FORCE_COLOR", "1"); // Force colored output in many applications
+
         for arg in arguments.iter() {
             process = process.arg(arg.replace("\\\\", "\\").replace('\"', ""));
         }
