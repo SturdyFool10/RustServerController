@@ -9,7 +9,7 @@ pub struct ServerInfo {
     pub active: bool,
     pub host: Option<SlaveConnectionDescriptor>,
     pub specialization: Option<crate::ControlledProgram::SpecializedServerTypes>,
-    pub specializedInfo: Option<crate::ControlledProgram::SpecializedServerInformation>,
+    pub specialized_info: Option<crate::ControlledProgram::SpecializedServerInformation>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -21,7 +21,7 @@ pub struct ConsoleOutput {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct serverInfoMessage {
+pub struct ServerInfoMessage {
     pub r#type: String,
     pub servers: Vec<ServerInfo>,
     pub config: crate::configuration::Config,
@@ -32,7 +32,7 @@ pub struct SInfoRequestMessage {
     pub arguments: Vec<bool>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct stdinInput {
+pub struct StdinInput {
     pub r#type: String,
     pub server_name: String,
     pub value: String,

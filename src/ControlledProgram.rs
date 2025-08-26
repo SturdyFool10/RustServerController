@@ -30,6 +30,7 @@ pub struct ControlledProgramDescriptor {
     pub specialized_server_info: Option<SpecializedServerInformation>,
 }
 impl ControlledProgramDescriptor {
+    #[allow(unused)]
     pub fn new_as(
         name: &str,
         exe_path: &str,
@@ -98,6 +99,7 @@ pub struct ControlledProgramInstance {
     pub command_line_args: Vec<String>,
     pub process: Child,
     pub working_dir: String,
+    #[allow(unused)]
     pub last_log_lines: usize,
     pub curr_output_in_progress: String,
     //optional, remove if unused then remove any references within this file
@@ -186,6 +188,7 @@ impl ControlledProgramInstance {
         }
     }
     pub async fn read_output(&mut self) -> Option<String> {
+        #[allow(unused)]
         let mut out = None;
         {
             let mut out2 = String::new();
@@ -195,12 +198,10 @@ impl ControlledProgramInstance {
             while has_more {
                 let mut buf = [0u8; 10000];
                 let take = self.process.stdout.as_mut();
-                let read =
-                    match timeout(Duration::from_millis(10), take.unwrap().read(&mut buf)).await {
-                        Ok(val) => val.unwrap(),
-                        Err(_) => 0,
-                    };
-
+                let read = match timeout(Duration::from_millis(10), take.unwrap().read(&mut buf)).await {
+                    Ok(val) => val.unwrap(),
+                    Err(_) => 0,
+                };
                 if read > 0 && line < read {
                     let new_str = String::from_utf8_lossy(&buf[0..read]);
                     out2.push_str(&new_str);
@@ -295,6 +296,7 @@ impl ControlledProgramInstance {
                                 let regex = Regex::new(pattern).unwrap();
                                 let lines = val.split("\n");
                                 for line in lines {
+                                    #[allow(unused)]
                                     if let Some(SpecializedServerInformation::Minecraft(
                                         current_players_count,
                                         max_player_count,

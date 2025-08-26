@@ -52,12 +52,12 @@ impl SlaveConnection {
             let _res = stream.send(message).await;
 
             // Read response
-            let def = serverInfoMessage {
+            let def = ServerInfoMessage {
                 r#type: "".to_string(),
                 servers: vec![],
                 config: Config::default(),
             };
-            let mut _sinfo: serverInfoMessage = def.clone();
+            let mut _sinfo: ServerInfoMessage = def.clone();
             if let Some(stream) = &mut self.stream {
                 while let Some(message) = stream.next().await {
                     match message {
@@ -91,8 +91,8 @@ impl SlaveConnection {
                                                             specialization: server_info
                                                                 .specialization
                                                                 .clone(),
-                                                            specializedInfo: server_info
-                                                                .specializedInfo
+                                                            specialized_info: server_info
+                                                                .specialized_info
                                                                 .clone(),
                                                         };
                                                         let mut found_existing_server = false;
@@ -105,9 +105,9 @@ impl SlaveConnection {
                                                                     new_info.output.clone();
                                                                 existing_server.specialization =
                                                                     new_info.specialization.clone();
-                                                                existing_server.specializedInfo =
+                                                                existing_server.specialized_info =
                                                                     new_info
-                                                                        .specializedInfo
+                                                                        .specialized_info
                                                                         .clone();
                                                                 found_existing_server = true;
                                                             }
@@ -144,7 +144,7 @@ impl SlaveConnection {
         message: String,
     ) -> Result<(), Box<dyn Error>> {
         // Prepare your stdin message
-        let stdin_message = stdinInput {
+        let stdin_message = StdinInput {
             r#type: "stdinInput".to_owned(),
             server_name,
             value: message,
@@ -169,10 +169,10 @@ pub async fn create_slave_connections(state: AppState) {
     let conf = state.config.lock().await;
     let config: Config = conf.clone();
     drop(conf);
-    for slaveDesc in config.slaveConnections {
-        let mut slave = SlaveConnection::new(slaveDesc.address.clone(), slaveDesc.port.clone());
-        let connRes = slave.create_connection().await;
-        match connRes {
+    for slave_desc in config.slave_connections {
+        let mut slave = SlaveConnection::new(slave_desc.address.clone(), slave_desc.port.clone());
+        let conn_res = slave.create_connection().await;
+        match conn_res {
             Ok(_) => {
                 println!("Success connecting to a slave node!");
                 slaves.push(slave);
@@ -180,15 +180,15 @@ pub async fn create_slave_connections(state: AppState) {
             Err(what) => {
                 error!(
                     "Error connecting to: {}:{}, Message: {}",
-                    &slaveDesc.address, &slaveDesc.port, what
+                    &slave_desc.address, &slave_desc.port, what
                 );
             }
         }
     }
     {
-        let mut slavesList = state.slave_connections.lock().await;
+        let mut slaves_list = state.slave_connections.lock().await;
         for slave in slaves {
-            slavesList.push(slave);
+            slaves_list.push(slave);
         }
     }
     //create the polling loop at 4 polls per second

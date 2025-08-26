@@ -50,5 +50,4 @@ async fn main() -> Result<(), String> {
     let _ = tokio::spawn(async_listener!("t", app_state)).await;
     info!("Termination key pressed, closing the app.");
     exit(0);
-    Ok(())
 }
