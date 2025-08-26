@@ -1,23 +1,17 @@
 use axum::{
-    body::Body,
     extract::{
         ws::{Message, WebSocket},
         State, WebSocketUpgrade,
     },
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    routing::get,
-    Router,
+    response::Response,
 };
-use axum_extra::response::*;
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
-use tower_http::services::ServeDir;
 use tracing::*;
 
 use crate::{
-    configuration::Config, master::SlaveConnection, messages::*, AppState::AppState,
+    configuration::Config, messages::*, AppState::AppState,
     ControlledProgram::ControlledProgramDescriptor,
 };
 #[no_mangle]
@@ -95,7 +89,7 @@ async fn process_message(text: String, state: AppState) {
                 .collect();
         }
     }
-    if (ev_type != "requestInfo") {
+    if ev_type != "requestInfo" {
         info!("Message: {}", text.clone());
     }
     match ev_type {
@@ -122,11 +116,11 @@ async fn process_message(text: String, state: AppState) {
                     specializedInfo: server.specialized_server_info.clone(),
                     host: None,
                 };
-                if (val.arguments[0] == true) {
+                if val.arguments[0] == true {
                     let cl: String = server.curr_output_in_progress.clone();
                     let split: Vec<&str> = cl.split("\n").into_iter().collect();
                     let mut inp = split.len();
-                    if (inp < 150) {
+                    if inp < 150 {
                         inp = 0;
                     } else {
                         inp = inp - 150;
@@ -139,7 +133,7 @@ async fn process_message(text: String, state: AppState) {
             let slave_servers = state.slave_servers.lock().await;
             for serverInfo in slave_servers.iter() {
                 let mut output: String = "".to_owned();
-                if (val.arguments[0] == true) {
+                if val.arguments[0] == true {
                     output = serverInfo.output.clone();
                 }
                 let newInfo = ServerInfo {
@@ -204,18 +198,18 @@ async fn process_message(text: String, state: AppState) {
                             info!("there was an error writing: {}", what)
                         }
                     }
-                    if (isActiveServer != true && value.value == "start") {
+                    if isActiveServer != true && value.value == "start" {
                         let config = state.config.lock().await;
                         let mut desc: ControlledProgramDescriptor =
                             ControlledProgramDescriptor::new("", "", vec![], "".to_owned());
                         let mut found = false;
                         for serverDesc in config.servers.iter() {
-                            if (serverDesc.name == value.server_name) {
+                            if serverDesc.name == value.server_name {
                                 desc = serverDesc.clone();
                                 found = true;
                             }
                         }
-                        if (found) {
+                        if found {
                             let mut servers = state.servers.lock().await;
                             servers.push(desc.into_instance());
                             drop(servers);
@@ -250,8 +244,8 @@ async fn process_message(text: String, state: AppState) {
             config.change(message.updatedConfig);
             config.update_config_file("config.json");
             for (index, desc) in config.servers.iter_mut().enumerate() {
-                if (desc.auto_start) {
-                    let mut descClone = desc.clone();
+                if desc.auto_start {
+                    let descClone = desc.clone();
                     servers.push(descClone.into_instance());
                 }
             }

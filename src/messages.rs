@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::master::{SlaveConnection, SlaveConnectionDescriptor};
+use crate::master::SlaveConnectionDescriptor;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ServerInfo {

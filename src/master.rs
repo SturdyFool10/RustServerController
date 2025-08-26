@@ -1,21 +1,12 @@
-use futures::io;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{error::Error, time::Duration};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-    time,
-};
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::{protocol::WebSocketConfig, Message},
-    MaybeTlsStream, WebSocketStream,
-};
-use tracing::{error, info};
+use tokio::{net::TcpStream, time};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+use tracing::error;
 
-use crate::{configuration::Config, messages::*, slave, AppState::AppState};
+use crate::{configuration::Config, messages::*, AppState::AppState};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SlaveConnectionDescriptor {

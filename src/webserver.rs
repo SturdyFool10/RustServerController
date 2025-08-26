@@ -1,25 +1,17 @@
 use crate::websocket::*;
 use axum::{
     body::Body,
-    extract::{
-        ws::{Message, WebSocket},
-        State, WebSocketUpgrade,
-    },
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
 use axum_extra::response::*;
-use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
 use tower_http::services::ServeDir;
 use tracing::*;
 
-use crate::{
-    configuration::Config, AppState::AppState, ControlledProgram::ControlledProgramDescriptor,
-};
+use crate::AppState::AppState;
 
 async fn js_serve(State(_state): State<AppState>) -> JavaScript<String> {
     JavaScript::from(include_str!("html_src/index.js").to_owned())
