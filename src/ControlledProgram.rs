@@ -7,6 +7,8 @@ use tokio::{
     time::{Duration, *},
 };
 use tracing::info;
+
+use crate::ansi_to_html::ansi_to_html;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SpecializedServerTypes {
     Minecraft,
@@ -196,15 +198,16 @@ impl ControlledProgramInstance {
             let mut has_more = true;
 
             while has_more {
-                let mut buf = [0u8; 10000];
+                let mut buf = [0u8; 4096];
                 let take = self.process.stdout.as_mut();
-                let read = match timeout(Duration::from_millis(10), take.unwrap().read(&mut buf)).await {
-                    Ok(val) => val.unwrap(),
-                    Err(_) => 0,
-                };
+                let read =
+                    match timeout(Duration::from_millis(10), take.unwrap().read(&mut buf)).await {
+                        Ok(val) => val.unwrap(),
+                        Err(_) => 0,
+                    };
                 if read > 0 && line < read {
                     let new_str = String::from_utf8_lossy(&buf[0..read]);
-                    out2.push_str(&new_str);
+                    out2.push_str(ansi_to_html(&new_str).as_str());
                     line = read;
                 }
 

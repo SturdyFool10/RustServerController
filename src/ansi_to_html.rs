@@ -1,5 +1,19 @@
 use ansi_escapers::{interpreter::*, types::*};
 
+/// Escapes HTML special characters to prevent XSS attacks
+fn escape_html(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '&' => "&amp;".to_string(),
+            '<' => "&lt;".to_string(),
+            '>' => "&gt;".to_string(),
+            '"' => "&quot;".to_string(),
+            '\'' => "&#39;".to_string(),
+            _ => c.to_string(),
+        })
+        .collect()
+}
+
 // ANSI color constants
 const COLOR_BLACK: &str = "#000000";
 const COLOR_RED: &str = "#FF0000";
@@ -96,27 +110,72 @@ fn get_html_style(codes: Vec<SgrAttribute>) -> String {
 }
 
 pub fn ansi_to_html(inp: &str) -> String {
-    let mut interpreter = AnsiParser::new(inp);
-    let parse_result = interpreter.parse_annotated();
-    parse_result
-        .spans
-        .iter()
-        .map(|span| -> String {
-            if span.end > parse_result.text.len() {
-                return "".to_string();
-            }
-            let mut res: String = String::new();
-            res += format!(
-                "<span style=\"{}\">{}</span>",
-                get_html_style(span.codes.clone()),
-                &parse_result.text[span.start..span.end]
-            )
-            .as_str();
+    // Pre-process input to preserve newlines before ANSI parsing
+    let inp = inp.replace("\n", "\\n").replace("\r", "\\r");
 
-            res
-        })
-        .filter(|x| !x.is_empty())
-        //.map(|x| x.clone())
-        .collect::<Vec<String>>()
-        .join("")
+    let mut interpreter = AnsiParser::new(&inp);
+    let parse_result = interpreter.parse_annotated();
+
+    // If there are no spans, just return the escaped text
+    if parse_result.spans.is_empty() {
+        // Restore newlines in the output
+        return escape_html(&parse_result.text)
+            .replace("\\n", "<br>")
+            .replace("\\r", "");
+    }
+
+    // Create styled spans
+    let mut styled_spans = Vec::new();
+    for span in &parse_result.spans {
+        if span.end > parse_result.text.len() {
+            continue;
+        }
+
+        let style = get_html_style(span.codes.clone());
+        // Escape HTML and preserve newlines by converting to <br>
+        let content = escape_html(&parse_result.text[span.start..span.end])
+            .replace("\\n", "<br>")
+            .replace("\\r", "");
+
+        styled_spans.push((
+            span.start,
+            span.end,
+            format!("<span style=\"{}\">{}</span>", style, content),
+        ));
+    }
+
+    // Sort spans by start position
+    styled_spans.sort_by_key(|&(start, _, _)| start);
+
+    // Build the final output by replacing text with styled spans
+    let mut result = String::new();
+    let mut current_pos = 0;
+
+    for (start, end, styled_span) in styled_spans {
+        // Add any text before this span
+        if start > current_pos {
+            result.push_str(
+                &escape_html(&parse_result.text[current_pos..start])
+                    .replace("\\n", "<br>")
+                    .replace("\\r", ""),
+            );
+        }
+
+        // Add the styled span
+        result.push_str(&styled_span);
+
+        // Update current position
+        current_pos = end;
+    }
+
+    // Add any remaining text after the last span
+    if current_pos < parse_result.text.len() {
+        result.push_str(
+            &escape_html(&parse_result.text[current_pos..])
+                .replace("\\n", "<br>")
+                .replace("\\r", ""),
+        );
+    }
+
+    result
 }
