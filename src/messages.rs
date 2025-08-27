@@ -40,6 +40,12 @@ pub struct StdinInput {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct ConfigInfo {
+    pub r#type: String,
+    pub config: crate::configuration::Config,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct GetThemesList {
     pub r#type: String, // Should be "getThemesList"
 }

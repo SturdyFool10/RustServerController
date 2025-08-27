@@ -404,6 +404,15 @@ $(document).ready(function () {
   var justStarted = true;
   var editor; // Monaco editor instance
 
+  // Send requestConfig at startup
+  function sendRequestConfig() {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "requestConfig" }));
+    } else {
+      setTimeout(sendRequestConfig, 100);
+    }
+  }
+
   // Initialize Monaco Editor
   function initMonacoEditor() {
     if (typeof monaco !== "undefined") {
@@ -468,19 +477,23 @@ $(document).ready(function () {
   socket.onmessage = function (message) {
     var obj = JSON.parse(message.data);
     switch (obj.type) {
+      case "ConfigInfo":
+        // Always update config editor with received config
+        window.config = obj.config;
+        const jsonConfig = JSON.stringify(obj.config, undefined, 4);
+        $(".editorText").val(jsonConfig);
+        if (editor) {
+          editor.setValue(jsonConfig);
+        }
+        justStarted = false;
+        break;
       case "ServerInfo":
         for (index in obj.servers) {
           var server = obj.servers[index];
           let serverName = server.name;
           addDropdownNoDupe(serverName, !server.active);
           if (justStarted) {
-            window.config = obj.config;
-            const jsonConfig = JSON.stringify(obj.config, undefined, 4);
-            $(".editorText").val(jsonConfig);
-            if (editor) {
-              editor.setValue(jsonConfig);
-            }
-            justStarted = false;
+            // Do not update config here, wait for ConfigInfo
             var lines = server.output.split("\r\n");
             for (linePos in lines) {
               var line = lines[linePos];
@@ -489,15 +502,6 @@ $(document).ready(function () {
               )[0];
               p.innerHTML = line;
             }
-          }
-          if (JSON.stringify(window.config) != JSON.stringify(obj.config)) {
-            //the config is out of sync, copy it to the config textarea
-            const jsonConfig = JSON.stringify(obj.config, undefined, 4);
-            $(".editorText").val(jsonConfig);
-            if (editor) {
-              editor.setValue(jsonConfig);
-            }
-            window.config = obj.config;
           }
         }
         window.serverInfoObj = obj;
@@ -597,6 +601,9 @@ $(document).ready(function () {
   }
 
   // Server will send theme list after connection
+
+  // Request config at startup (only once)
+  sendRequestConfig();
 
   // if (typeof InstallTrigger !== 'undefined') { // Check if Firefox
   // 	document.getElementById('scrollable-div').classList.add('scrollbar'); // broke firefox

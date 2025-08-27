@@ -20,6 +20,8 @@ impl Config {
         self.port = new_config.port;
         self.servers = new_config.servers.clone();
         self.themes_folder = new_config.themes_folder.clone();
+        self.slave = new_config.slave;
+        self.slave_connections = new_config.slave_connections.clone();
     }
 
     pub fn update_config_file(&self, file_path: &str) {

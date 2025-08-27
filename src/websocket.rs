@@ -91,6 +91,14 @@ async fn process_message(text: String, state: AppState) {
         }
     }
     match ev_type {
+        "requestConfig" => {
+            let config = state.config.lock().await;
+            let config_info = crate::messages::ConfigInfo {
+                r#type: "ConfigInfo".to_owned(),
+                config: config.clone(),
+            };
+            let _ = state.tx.send(serde_json::to_string(&config_info).unwrap());
+        }
         "requestInfo" => {
             let servers = state.servers.lock().await;
             let val: SInfoRequestMessage = serde_json::from_str(&text).unwrap();
@@ -373,6 +381,12 @@ async fn process_message(text: String, state: AppState) {
                     servers.push(desc_clone.into_instance());
                 }
             }
+            // Broadcast ConfigInfo to all clients
+            let config_info = crate::messages::ConfigInfo {
+                r#type: "ConfigInfo".to_owned(),
+                config: config.clone(),
+            };
+            let _ = state.tx.send(serde_json::to_string(&config_info).unwrap());
             drop(config);
             drop(servers)
         }
