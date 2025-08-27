@@ -274,6 +274,7 @@ $(document).ready(function () {
   };
   socket.addEventListener("open", function () {
     socket.send(createEvent("requestInfo", [true]));
+    requestThemesList(); // Request themes when connection is established
   });
   setInterval(function () {
     try {
@@ -304,6 +305,102 @@ $(document).ready(function () {
   window.config = {
     state: "NotInit",
   };
+
+  // Theme functions
+  function applyTheme(themeName, cssContent) {
+    // Remove any existing theme style tag
+    const existingThemeStyle = document.getElementById("current-theme");
+    if (existingThemeStyle) {
+      existingThemeStyle.remove();
+    }
+
+    // Create and add new style tag with theme CSS
+    const themeStyle = document.createElement("style");
+    themeStyle.id = "current-theme";
+    themeStyle.textContent = cssContent;
+    document.head.appendChild(themeStyle);
+
+    // Save to localStorage
+    localStorage.setItem("selectedTheme", themeName);
+    localStorage.setItem("themeCSS", cssContent);
+
+    // Update UI if there's a theme selector
+    const themeSelector = document.getElementById("theme-selector");
+    if (themeSelector) {
+      themeSelector.value = themeName;
+
+      // Remove loading indicator if it exists
+      const loadingIndicator = document.querySelector(".theme-loading");
+      if (loadingIndicator) {
+        loadingIndicator.style.display = "none";
+      }
+    }
+
+    console.log(`Applied theme: ${themeName}`);
+
+    // Add a subtle transition effect when changing themes
+    document.body.style.transition =
+      "background-color 0.3s ease, color 0.3s ease";
+    setTimeout(() => {
+      document.body.style.transition = "";
+    }, 300);
+  }
+
+  function loadThemeFromStorage() {
+    const themeName = localStorage.getItem("selectedTheme");
+    const themeCSS = localStorage.getItem("themeCSS");
+
+    if (themeName && themeCSS) {
+      console.log("Loading theme from localStorage:", themeName);
+      applyTheme(themeName, themeCSS);
+      return themeName;
+    }
+    console.log("No theme found in localStorage");
+    return null;
+  }
+
+  function requestThemesList() {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      console.log("Requesting themes list from server");
+      const msg = {
+        type: "getThemesList",
+      };
+      socket.send(JSON.stringify(msg));
+      return true;
+    }
+    return false;
+  }
+
+  function requestThemeCSS(themeName) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      console.log("Requesting theme CSS for:", themeName);
+      const msg = {
+        type: "getThemeCSS",
+        theme_name: themeName,
+      };
+      socket.send(JSON.stringify(msg));
+
+      // Add or update loading indicator next to theme selector
+      let loadingIndicator = document.querySelector(".theme-loading");
+      if (!loadingIndicator) {
+        const themeContainer = document.querySelector(".theme-container");
+        if (themeContainer) {
+          loadingIndicator = document.createElement("span");
+          loadingIndicator.className = "theme-loading";
+          themeContainer.appendChild(loadingIndicator);
+        }
+      }
+
+      if (loadingIndicator) {
+        loadingIndicator.style.display = "inline";
+        loadingIndicator.textContent = "Loading...";
+      }
+
+      return true;
+    }
+    return false;
+  }
+
   var justStarted = true;
   socket.onmessage = function (message) {
     var obj = JSON.parse(message.data);
@@ -350,8 +447,86 @@ $(document).ready(function () {
           }
         }
         break;
+      case "themesList":
+        console.log("Received themes list from server:", obj.themes);
+        // Handle received list of themes
+        const themes = obj.themes;
+        if (themes && Array.isArray(themes) && themes.length > 0) {
+          // Check if we already have a theme selector, create one if not
+          let themeSelector = document.getElementById("theme-selector");
+          if (!themeSelector) {
+            // Create theme selector dropdown
+            themeSelector = document.createElement("select");
+            themeSelector.id = "theme-selector";
+
+            // Add to the UI - placing it in the inner top bar
+            const innerTopBar = document.querySelector(".innerTopBar");
+            if (innerTopBar) {
+              const themeContainer = document.createElement("div");
+              themeContainer.className = "theme-container";
+              themeContainer.innerHTML =
+                '<label for="theme-selector">Theme</label>';
+              themeContainer.appendChild(themeSelector);
+
+              // Add loading indicator
+              const loadingIndicator = document.createElement("span");
+              loadingIndicator.className = "theme-loading";
+              loadingIndicator.textContent = "Loading...";
+              loadingIndicator.style.display = "none";
+              themeContainer.appendChild(loadingIndicator);
+
+              innerTopBar.appendChild(themeContainer);
+            }
+
+            // Add change event listener
+            themeSelector.addEventListener("change", function () {
+              const selectedTheme = this.value;
+              requestThemeCSS(selectedTheme);
+            });
+          } else {
+            // Clear existing options
+            themeSelector.innerHTML = "";
+          }
+
+          // Populate options
+          themes.forEach((theme) => {
+            const option = document.createElement("option");
+            option.value = theme;
+            option.textContent = theme;
+            themeSelector.appendChild(option);
+          });
+
+          // Get current theme from localStorage or use first theme
+          const currentTheme =
+            localStorage.getItem("selectedTheme") || themes[0];
+          themeSelector.value = currentTheme;
+
+          // Request CSS for the selected theme
+          requestThemeCSS(currentTheme);
+        }
+        break;
+      case "themeCSS":
+        console.log("Received theme CSS for:", obj.theme_name);
+        // Apply received theme CSS
+        applyTheme(obj.theme_name, obj.css);
+        break;
     }
   };
+
+  // Initialize theme system
+  console.log("Initializing theme system");
+
+  // First try to load from localStorage
+  const loadedTheme = loadThemeFromStorage();
+
+  if (loadedTheme) {
+    console.log("Theme loaded from localStorage:", loadedTheme);
+  } else {
+    console.log("No theme in localStorage, will request from server");
+  }
+
+  // Server will send theme list after connection
+
   // if (typeof InstallTrigger !== 'undefined') { // Check if Firefox
   // 	document.getElementById('scrollable-div').classList.add('scrollbar'); // broke firefox
   // }
@@ -367,6 +542,68 @@ $(document).ready(function () {
     socket.send(JSON.stringify(obj));
   });
   window.socket = socket;
+
+  // Add some CSS for theme selector
+  const themeStyles = document.createElement("style");
+  themeStyles.textContent = `
+    .theme-container {
+      display: flex;
+      align-items: center;
+      position: absolute;
+      right: 80px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 10;
+    }
+    .theme-container label {
+      margin-right: 10px;
+      color: var(--text, white);
+      font-family: 'Roboto', sans-serif;
+      font-weight: 500;
+      text-shadow: 0 0 3px rgba(0, 0, 0, 0.4);
+    }
+    #theme-selector {
+      background-color: var(--bg-dark, #222);
+      color: var(--text, white);
+      border: 1px solid var(--border, #555);
+      border-radius: 5px;
+      padding: 6px 12px;
+      font-size: 14px;
+      font-family: 'Roboto', sans-serif;
+      cursor: pointer;
+      outline: none;
+      transition: all 0.2s ease;
+      box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
+      min-width: 120px;
+    }
+    #theme-selector:hover {
+      border-color: var(--primary, #777);
+      box-shadow: 0 0 8px var(--primary, #777);
+    }
+    #theme-selector:focus {
+      border-color: var(--primary, #777);
+      box-shadow: 0 0 12px var(--primary, #777);
+    }
+    #theme-selector option {
+      background: var(--bg, #2a2a2a);
+      color: var(--text, white);
+      padding: 8px;
+    }
+    .theme-loading {
+      margin-left: 8px;
+      color: var(--primary, #777);
+      font-size: 12px;
+      font-family: 'Roboto', sans-serif;
+      animation: pulse 1.5s infinite ease-in-out;
+    }
+    @keyframes pulse {
+      0% { opacity: 0.5; }
+      50% { opacity: 1; }
+      100% { opacity: 0.5; }
+    }
+  `;
+  document.head.appendChild(themeStyles);
+
   $("#menu").animate(
     {
       left: "-25%",

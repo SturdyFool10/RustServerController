@@ -13,6 +13,7 @@ use tracing::*;
 use crate::{
     app_state::AppState, configuration::Config, controlled_program::ControlledProgramDescriptor,
     master::SlaveConnection, messages::*, servers::send_termination_message,
+    theme::ThemeCollection,
 };
 #[no_mangle]
 pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -254,6 +255,90 @@ async fn process_message(text: String, state: AppState) {
             }
             servers.clear();
             drop(servers);
+        }
+        "getThemesList" => {
+            // Handle the request for themes list
+            let config = state.config.lock().await;
+            let themes_folder = config
+                .themes_folder
+                .clone()
+                .unwrap_or_else(|| "themes".to_string());
+            drop(config);
+
+            // Load themes from the specified directory
+            let theme_collection = match ThemeCollection::load_from_directory(&themes_folder) {
+                Ok(collection) => collection,
+                Err(_) => ThemeCollection::default(),
+            };
+
+            // Create the response message with just the list of theme names
+            let theme_names: Vec<String> = theme_collection
+                .themes
+                .iter()
+                .map(|theme| theme.name.clone())
+                .collect();
+
+            let themes_list = ThemesList {
+                r#type: "themesList".to_string(),
+                themes: theme_names,
+            };
+
+            // Send the response
+            let _ = state.tx.send(serde_json::to_string(&themes_list).unwrap());
+        }
+        "getThemeCSS" => {
+            // Parse the request to get the theme name
+            let message: GetThemeCSS = match serde_json::from_str(&text) {
+                Ok(msg) => msg,
+                Err(_) => {
+                    let _ = state
+                        .tx
+                        .send("Error parsing GetThemeCSS message".to_string());
+                    return;
+                }
+            };
+
+            // Get the themes directory from config
+            let config = state.config.lock().await;
+            let themes_folder = config
+                .themes_folder
+                .clone()
+                .unwrap_or_else(|| "themes".to_string());
+            drop(config);
+
+            // Load theme collection
+            let theme_collection = match ThemeCollection::load_from_directory(&themes_folder) {
+                Ok(collection) => collection,
+                Err(_) => ThemeCollection::default(),
+            };
+
+            // Find the requested theme
+            let css = if let Some(theme) = theme_collection
+                .themes
+                .iter()
+                .find(|t| t.name == message.theme_name)
+            {
+                theme.to_css()
+            } else {
+                // If requested theme wasn't found, return the default theme CSS
+                let default_theme = ThemeCollection::default();
+                if let Some(theme) = default_theme.themes.first() {
+                    theme.to_css()
+                } else {
+                    // Highly unlikely but as a fallback
+                    String::new()
+                }
+            };
+
+            // Create the response
+            let theme_css = ThemeCSS {
+                r#type: "themeCSS".to_string(),
+                theme_name: message.theme_name,
+                css,
+            };
+
+            // Send the response
+            let _ = state.tx.send(serde_json::to_string(&theme_css).unwrap());
         }
         "configChange" => {
             #[allow(unused)]

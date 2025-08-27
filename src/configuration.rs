@@ -11,13 +11,15 @@ pub struct Config {
     pub servers: Vec<crate::controlled_program::ControlledProgramDescriptor>,
     pub slave: bool,
     pub slave_connections: Vec<SlaveConnectionDescriptor>,
+    pub themes_folder: Option<String>,
 }
 
 impl Config {
     pub fn change(&mut self, new_config: Config) {
         self.interface = new_config.interface;
         self.port = new_config.port;
-        self.servers = new_config.servers.clone()
+        self.servers = new_config.servers.clone();
+        self.themes_folder = new_config.themes_folder.clone();
     }
 
     pub fn update_config_file(&self, file_path: &str) {
@@ -47,6 +49,7 @@ impl Default for Config {
             servers: vec![],
             slave: false,
             slave_connections: vec![],
+            themes_folder: Some("themes".to_string()),
         }
     }
 }

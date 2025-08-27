@@ -1,3 +1,4 @@
+use crate::configuration;
 use colorlab::colorspaces::{
     color::Color, colorspace::ColorSpace, hsl::Hsl, lch::Lch, oklab::Oklab, oklch::Oklch,
     srgb::Srgb,
@@ -6,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Represents the available color spaces that can be used for themes
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -295,6 +296,33 @@ impl Theme {
         Ok(theme)
     }
 
+    /// Find a theme file by name in a directory
+    pub fn find_in_directory<P: AsRef<Path>>(dir_path: P, theme_name: &str) -> Option<PathBuf> {
+        let dir_path = dir_path.as_ref();
+        if !dir_path.exists() || !dir_path.is_dir() {
+            return None;
+        }
+
+        if let Ok(entries) = fs::read_dir(dir_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+
+                // Only check JSON files
+                if path.extension().map_or(false, |ext| ext == "json") {
+                    if let Ok(json) = fs::read_to_string(&path) {
+                        if let Ok(theme) = serde_json::from_str::<Theme>(&json) {
+                            if theme.name == theme_name {
+                                return Some(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Convert the Theme to a HashMap for easier manipulation
     pub fn to_map(&self) -> HashMap<String, Color> {
         let mut map = HashMap::new();
@@ -456,9 +484,59 @@ impl ThemeCollection {
         Ok(collection)
     }
 
+    /// Load all themes from a directory
+    pub fn load_from_directory<P: AsRef<Path>>(dir_path: P) -> io::Result<Self> {
+        let dir_path = dir_path.as_ref();
+
+        // Check if directory exists
+        if !dir_path.exists() || !dir_path.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Theme directory not found: {:?}", dir_path),
+            ));
+        }
+
+        let mut collection = ThemeCollection::default();
+
+        // Read all JSON files in the directory
+        for entry in fs::read_dir(dir_path)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            // Only process JSON files
+            if path.extension().map_or(false, |ext| ext == "json") {
+                match Theme::load_from_file(&path) {
+                    Ok(theme) => {
+                        collection.add_theme(theme);
+                    }
+                    Err(e) => {
+                        eprintln!("Error loading theme from {:?}: {}", path, e);
+                        // Continue with other themes
+                    }
+                }
+            }
+        }
+
+        Ok(collection)
+    }
+
     /// Generate CSS for the current theme
     pub fn current_theme_css(&self) -> Option<String> {
         self.current().map(|theme| theme.to_css())
+    }
+
+    /// Load themes from the configuration's themes_folder
+    /// If the folder doesn't exist or cannot be read, returns the default theme collection
+    pub fn load_from_config(config: &crate::configuration::Config) -> Self {
+        if let Some(themes_dir) = &config.themes_folder {
+            match Self::load_from_directory(themes_dir) {
+                Ok(collection) if !collection.themes.is_empty() => return collection,
+                Ok(_) => eprintln!("No themes found in directory: {}", themes_dir),
+                Err(e) => eprintln!("Error loading themes: {}", e),
+            }
+        }
+        // Return default theme collection if no themes could be loaded
+        Self::default()
     }
 
     /// Set the color space for all themes
@@ -467,6 +545,36 @@ impl ThemeCollection {
             theme.color_space = color_space;
         }
         self
+    }
+
+    /// Save all themes to individual files in a directory
+    pub fn save_to_directory<P: AsRef<Path>>(&self, dir_path: P) -> io::Result<()> {
+        let dir_path = dir_path.as_ref();
+
+        // Create directory if it doesn't exist
+        if !dir_path.exists() {
+            fs::create_dir_all(dir_path)?;
+        }
+
+        for theme in &self.themes {
+            let file_name = format!("{}.json", theme.name.replace(" ", "_"));
+            let file_path = dir_path.join(file_name);
+            theme.save_to_file(&file_path)?;
+        }
+
+        // Save the collection metadata (current theme name)
+        let collection_meta = serde_json::json!({
+            "current_theme": self.current_theme
+        });
+        let meta_path = dir_path.join("_collection_meta.json");
+        let mut file = fs::File::create(meta_path)?;
+        file.write_all(
+            serde_json::to_string_pretty(&collection_meta)
+                .unwrap()
+                .as_bytes(),
+        )?;
+
+        Ok(())
     }
 }
 

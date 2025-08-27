@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::master::SlaveConnectionDescriptor;
+use crate::theme::Theme;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ServerInfo {
@@ -36,4 +37,28 @@ pub struct StdinInput {
     pub r#type: String,
     pub server_name: String,
     pub value: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GetThemesList {
+    pub r#type: String, // Should be "getThemesList"
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GetThemeCSS {
+    pub r#type: String, // Should be "getThemeCSS"
+    pub theme_name: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ThemesList {
+    pub r#type: String, // Will be "themesList"
+    pub themes: Vec<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ThemeCSS {
+    pub r#type: String, // Will be "themeCSS"
+    pub theme_name: String,
+    pub css: String,
 }
