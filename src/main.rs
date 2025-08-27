@@ -1,7 +1,7 @@
-mod AppState;
-mod ControlledProgram;
 mod ansi_to_html;
+mod app_state;
 mod configuration;
+mod controlled_program;
 mod files;
 mod macros;
 mod master;
@@ -32,7 +32,7 @@ async fn main() -> Result<(), String> {
         .without_time()
         .init();
     let (tx, _rx) = broadcast::channel(100);
-    let mut app_state = AppState::AppState::new(tx, config);
+    let mut app_state = app_state::AppState::new(tx, config);
     let handles: Vec<tokio::task::JoinHandle<()>>;
     if slave {
         handles = spawn_tasks!(app_state.clone(), start_servers, start_slave)

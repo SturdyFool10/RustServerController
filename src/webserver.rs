@@ -11,7 +11,7 @@ use axum_extra::response::*;
 use tower_http::services::ServeDir;
 use tracing::*;
 
-use crate::AppState::AppState;
+use crate::app_state::AppState;
 
 async fn js_serve(State(_state): State<AppState>) -> JavaScript<String> {
     JavaScript::from(include_str!("html_src/index.js").to_owned())

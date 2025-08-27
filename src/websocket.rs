@@ -11,8 +11,8 @@ use tokio::io::AsyncWriteExt;
 use tracing::*;
 
 use crate::{
-    configuration::Config, messages::*, servers::send_termination_message, AppState::AppState,
-    ControlledProgram::ControlledProgramDescriptor,
+    app_state::AppState, configuration::Config, controlled_program::ControlledProgramDescriptor,
+    master::SlaveConnection, messages::*, servers::send_termination_message,
 };
 #[no_mangle]
 pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -188,7 +188,7 @@ async fn process_message(text: String, state: AppState) {
                     for slave in slave_servers.iter_mut() {
                         info!(
                             "Writing to slave: {}",
-                            serde_json::to_string_pretty(slave).unwrap()
+                            serde_json::to_string_pretty::<SlaveConnection>(slave).unwrap()
                         );
                         let res = slave
                             .write_stdin(value.server_name.clone(), value.value.clone())

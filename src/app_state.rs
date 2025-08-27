@@ -2,8 +2,8 @@ use std::sync::{atomic::AtomicBool, Arc};
 use tokio::sync::Mutex;
 
 use crate::{
-    configuration::Config, master::SlaveConnection, messages::ServerInfo,
-    ControlledProgram::ControlledProgramInstance,
+    configuration::Config, controlled_program::ControlledProgramInstance, master::SlaveConnection,
+    messages::ServerInfo,
 };
 use tokio::sync::broadcast;
 #[derive(Clone)]

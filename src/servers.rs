@@ -1,5 +1,5 @@
 use crate::{
-    messages::ConsoleOutput, AppState::AppState, ControlledProgram::ControlledProgramDescriptor,
+    app_state::AppState, controlled_program::ControlledProgramDescriptor, messages::ConsoleOutput,
 };
 use tracing::*;
 
@@ -8,7 +8,7 @@ pub async fn send_termination_message(
     state: &AppState,
     server_name: String,
     exit_code: i32,
-    server_type: Option<crate::ControlledProgram::SpecializedServerTypes>,
+    server_type: Option<crate::controlled_program::SpecializedServerTypes>,
 ) {
     let termination_msg = ConsoleOutput {
         r#type: "ServerOutput".to_owned(),

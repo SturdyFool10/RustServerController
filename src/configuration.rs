@@ -8,7 +8,7 @@ use crate::master::SlaveConnectionDescriptor;
 pub struct Config {
     pub interface: String,
     pub port: String,
-    pub servers: Vec<crate::ControlledProgram::ControlledProgramDescriptor>,
+    pub servers: Vec<crate::controlled_program::ControlledProgramDescriptor>,
     pub slave: bool,
     pub slave_connections: Vec<SlaveConnectionDescriptor>,
 }

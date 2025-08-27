@@ -1,7 +1,7 @@
 use axum::{routing::get, Router};
 use tracing::info;
 
-use crate::{websocket::handle_ws_upgrade, AppState::AppState};
+use crate::{app_state::AppState, websocket::handle_ws_upgrade};
 
 async fn get_router(_state: AppState) -> Router<AppState> {
     let router: Router<AppState> = Router::new().route("/ws", get(handle_ws_upgrade));

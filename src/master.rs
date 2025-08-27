@@ -6,7 +6,7 @@ use tokio::{net::TcpStream, time};
 use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 use tracing::error;
 
-use crate::{configuration::Config, messages::*, AppState::AppState};
+use crate::{app_state::AppState, configuration::Config, messages::*};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SlaveConnectionDescriptor {

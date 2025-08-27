@@ -8,8 +8,8 @@ pub struct ServerInfo {
     pub output: String,
     pub active: bool,
     pub host: Option<SlaveConnectionDescriptor>,
-    pub specialization: Option<crate::ControlledProgram::SpecializedServerTypes>,
-    pub specialized_info: Option<crate::ControlledProgram::SpecializedServerInformation>,
+    pub specialization: Option<crate::controlled_program::SpecializedServerTypes>,
+    pub specialized_info: Option<crate::controlled_program::SpecializedServerInformation>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -17,7 +17,7 @@ pub struct ConsoleOutput {
     pub r#type: String,
     pub output: String,
     pub server_name: String,
-    pub server_type: Option<crate::ControlledProgram::SpecializedServerTypes>,
+    pub server_type: Option<crate::controlled_program::SpecializedServerTypes>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
