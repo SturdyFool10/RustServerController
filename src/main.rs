@@ -8,6 +8,7 @@ mod master;
 mod messages;
 mod servers;
 mod slave;
+mod theme;
 mod webserver;
 mod websocket;
 

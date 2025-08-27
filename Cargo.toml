@@ -10,6 +10,7 @@ ansi_escapers = "0.2.0"
 async-std = { version = "1.12.0", features = ["tokio03", "tokio02", "tokio1"] }
 axum = { version = "0.6.20", features = ["tracing", "ws", "macros", "headers"] }
 axum-extra = "0.7.7"
+colorlab = {git = "https://github.com/SturdyFool10/ColorLab.git"}
 crossterm = "0.27.0"
 futures = "0.3.28"
 futures-util = "0.3.28"
