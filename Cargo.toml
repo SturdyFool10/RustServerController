@@ -1,5 +1,5 @@
 [package]
-name = "server_host"
+name = "rust_server_controller"
 version = "0.1.0"
 edition = "2021"
 
