@@ -353,6 +353,7 @@ async fn process_message(text: String, state: AppState) {
             #[derive(Deserialize)]
             struct ConfigChangeMessage {
                 r#type: String,
+                #[serde(alias = "updatedConfig", alias = "updated_config")]
                 updated_config: Config,
             }
             let message: ConfigChangeMessage = serde_json::from_str(text.clone().as_str()).unwrap();
