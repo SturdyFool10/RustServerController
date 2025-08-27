@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::*;
 
 use crate::{
-    configuration::Config, messages::*, AppState::AppState,
+    configuration::Config, messages::*, servers::send_termination_message, AppState::AppState,
     ControlledProgram::ControlledProgramDescriptor,
 };
 #[no_mangle]
@@ -88,9 +88,6 @@ async fn process_message(text: String, state: AppState) {
                 .map(|value| -> String { value.as_str().unwrap().to_owned() })
                 .collect();
         }
-    }
-    if ev_type != "requestInfo" {
-        info!("Message: {}", text.clone());
     }
     match ev_type {
         "requestInfo" => {
@@ -224,10 +221,39 @@ async fn process_message(text: String, state: AppState) {
             }
         }
         "terminateServers" => {
-            let mut servers = state.servers.lock().await;
-            for server in servers.iter_mut() {
-                server.stop().await;
+            let global_cp_value = state
+                .global_crash_prevention
+                .load(std::sync::atomic::Ordering::SeqCst);
+            let need_global_cp = global_cp_value.clone();
+            if global_cp_value == true {
+                state
+                    .global_crash_prevention
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
             }
+            let mut servers = state.servers.lock().await;
+            // First set all servers to disable crash prevention
+
+            // Then stop all servers
+            for server in servers.iter_mut() {
+                if let Some(exit_code) = server.stop().await {
+                    // Send termination message to web console for each server
+                    send_termination_message(
+                        &state,
+                        server.name.clone(),
+                        exit_code,
+                        server.specialized_server_type.clone(),
+                    )
+                    .await;
+                }
+            }
+
+            if need_global_cp == true {
+                state
+                    .global_crash_prevention
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            servers.clear();
+            drop(servers);
         }
         "configChange" => {
             #[allow(unused)]
@@ -241,7 +267,16 @@ async fn process_message(text: String, state: AppState) {
             let mut config = state.config.lock().await;
 
             for server in servers.iter_mut() {
-                server.stop().await
+                if let Some(exit_code) = server.stop().await {
+                    // Send termination message to web console for each server
+                    send_termination_message(
+                        &state,
+                        server.name.clone(),
+                        exit_code,
+                        server.specialized_server_type.clone(),
+                    )
+                    .await;
+                }
             }
             servers.clear();
             config.change(message.updated_config);

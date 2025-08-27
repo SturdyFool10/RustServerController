@@ -27,6 +27,7 @@ pub struct ControlledProgramDescriptor {
     pub arguments: Vec<String>,
     pub working_dir: String,
     pub auto_start: bool,
+    pub crash_prevention: bool,
     //optional, do not use unless you need specialization, remove if unused then fix errors by removing lines
     pub specialized_server_type: Option<SpecializedServerTypes>,
     pub specialized_server_info: Option<SpecializedServerInformation>,
@@ -46,6 +47,7 @@ impl ControlledProgramDescriptor {
             arguments,
             working_dir,
             auto_start,
+            crash_prevention: true,
             specialized_server_type: None,
             specialized_server_info: None,
         }
@@ -57,6 +59,7 @@ impl ControlledProgramDescriptor {
             arguments,
             working_dir,
             auto_start: false,
+            crash_prevention: true,
             specialized_server_type: None,
             specialized_server_info: None,
         }
@@ -74,6 +77,7 @@ impl ControlledProgramDescriptor {
                 instance.set_specialization(value);
             }
         }
+        instance.crash_prevention = self.crash_prevention;
         instance
     }
     pub fn set_specialization(&mut self, spec: SpecializedServerTypes) {
@@ -88,6 +92,7 @@ impl Default for ControlledProgramDescriptor {
             arguments: vec![],
             working_dir: "".to_owned(),
             auto_start: false,
+            crash_prevention: true,
             specialized_server_type: None,
             specialized_server_info: None,
         }
@@ -104,6 +109,7 @@ pub struct ControlledProgramInstance {
     #[allow(unused)]
     pub last_log_lines: usize,
     pub curr_output_in_progress: String,
+    pub crash_prevention: bool,
     //optional, remove if unused then remove any references within this file
     pub specialized_server_type: Option<SpecializedServerTypes>,
     pub specialized_server_info: Option<SpecializedServerInformation>,
@@ -137,6 +143,7 @@ impl ControlledProgramInstance {
             working_dir,
             last_log_lines: 0,
             curr_output_in_progress: "".to_string(),
+            crash_prevention: true,
             specialized_server_type: None,
             specialized_server_info: None,
         }
@@ -333,7 +340,16 @@ impl ControlledProgramInstance {
             None => None,
         }
     }
-    pub async fn stop(&mut self) {
+    pub async fn stop(&mut self) -> Option<i32> {
+        // Disable crash prevention so the process won't be restarted when killed
+        self.crash_prevention = false;
         let _ = self.process.kill().await;
+
+        // Wait a moment for the process to terminate and get the exit code
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        match self.process.try_wait() {
+            Ok(Some(status)) => status.code(),
+            _ => None,
+        }
     }
 }

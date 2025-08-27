@@ -118,70 +118,72 @@ function addServerDropdown(serverName, inactive) {
 
   var numBack = 0;
   var input = dropdown.find(".STDInInput");
+
+  // Create a helper function to handle the console input consistently
+  function handleConsoleInput(inputValue) {
+    if (inputValue == "") return;
+
+    // Normalize start command - check if it's a start command (case insensitive and ignoring whitespace)
+    var isStartCommand = inputValue.trim().toLowerCase() === "start";
+
+    var obj = {
+      type: "stdinInput",
+      server_name: serverName,
+      value: isStartCommand ? "start" : inputValue,
+    };
+    socket.send(JSON.stringify(obj));
+
+    // Clear console output if starting an inactive server
+    if (isStartCommand && dropdown.hasClass("inactiveServer")) {
+      // Clear console output and add starting message
+      $("." + serverName + "Out").empty();
+      var startingMsg = $(
+        '<p class="STDOutMessage" style="color: #FFFF00;">Starting server, please wait...</p>',
+      );
+      $("." + serverName + "Out").append(startingMsg);
+    }
+
+    // Store command in history
+    if (commands.length > 25) {
+      var commandsTemp = [];
+      for (
+        var i = Math.max(0, commands.length - 25);
+        i < commands.length;
+        ++i
+      ) {
+        commandsTemp.push(commands[i]);
+      }
+      commands = commandsTemp;
+    }
+    commands.push(inputValue);
+    numBack = 0;
+  }
+
+  // Handle keyboard input
   input.keydown(function (e) {
     if (e.which === 13) {
-      //enter pressed
-      var input2 = $(this).val();
-      if (input2 == "") return;
+      // Enter key
+      var inputValue = $(this).val();
       $(this).val("");
-      var obj = {
-        type: "stdinInput",
-        server_name: serverName,
-        value: input2,
-      };
-
-      if (input2 == "start" && dropdow.hasClass("inactiveServer")) {
-        $("." + serverName + "Out")
-          .children()
-          .remove();
-      }
-      if (commands.length > 25) {
-        var commandsTemp = [];
-        for (
-          var i = Math.max(0, commands.length - 26);
-          i < commands.length;
-          ++i
-        ) {
-          commandsTemp.push(commands[i]);
-        }
-        commands = commandsTemp;
-      }
-      commands.push(input2);
-      numBack = 0;
-      socket.send(JSON.stringify(obj));
+      handleConsoleInput(inputValue);
     } else if (e.which === 40) {
-      //down arrow
+      // Down arrow
       numBack = Math.max(0, numBack - 1);
-      $(this).val(commands[commands.length - numBack]);
+      $(this).val(numBack > 0 ? commands[commands.length - numBack] : "");
     } else if (e.which === 38) {
-      //up arrow
+      // Up arrow
       numBack = Math.min(commands.length, numBack + 1);
       $(this).val(commands[commands.length - numBack]);
     }
   });
-  var commandsTemp = [];
+
+  // Handle submit button click
   dropdown.find(".STDInSubmit").click(function (e) {
     if (e.which === 1) {
-      var input2 = $(input).val();
-      if (input2 == "") return;
-      $(input).val("");
-      var obj = {
-        type: "stdinInput",
-        server_name: serverName,
-        value: input2,
-      };
-      socket.send(JSON.stringify(obj));
-      var commandsTemp = [];
-      window.commands = commandsTemp;
-      window.commands.push(input2);
-      for (
-        var i = Math.max(0, window.commands.length - 26);
-        i < window.commands.length;
-        ++i
-      ) {
-        commandsTemp.push(window.commands[i]);
-      }
-      numBack = 0;
+      // Left mouse button
+      var inputValue = input.val();
+      input.val("");
+      handleConsoleInput(inputValue);
     }
   });
   dropdown.find(".dropdownDrop").slideUp(1).hide();

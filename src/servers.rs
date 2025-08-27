@@ -2,6 +2,27 @@ use crate::{
     messages::ConsoleOutput, AppState::AppState, ControlledProgram::ControlledProgramDescriptor,
 };
 use tracing::*;
+
+// Helper function to send server termination message to web console
+pub async fn send_termination_message(
+    state: &AppState,
+    server_name: String,
+    exit_code: i32,
+    server_type: Option<crate::ControlledProgram::SpecializedServerTypes>,
+) {
+    let termination_msg = ConsoleOutput {
+        r#type: "ServerOutput".to_owned(),
+        output: format!(
+            "<span style=\"color: yellow;\">Program has stopped execution: StopCode: {}</span>",
+            exit_code
+        ),
+        server_name,
+        server_type,
+    };
+    let _ = state
+        .tx
+        .send(serde_json::to_string(&termination_msg).unwrap());
+}
 #[no_mangle]
 pub async fn start_servers(_state: AppState) {
     let mut config = _state.config.lock().await;
@@ -31,7 +52,15 @@ pub async fn process_stdout(state: AppState) {
                             "A child process has closed! index: {} ExitCode: {}",
                             index, exit_code
                         );
-                        if exit_code != 0 {
+                        // Send termination message to web console
+                        send_termination_message(
+                            &state,
+                            server.name.clone(),
+                            exit_code,
+                            server.specialized_server_type.clone(),
+                        )
+                        .await;
+                        if exit_code != 0 && server.crash_prevention {
                             info!("Server ID: {} has crashed, restarting it...", index);
                             let mut descriptor = ControlledProgramDescriptor::new(
                                 server.name.as_str(),
@@ -44,7 +73,20 @@ pub async fn process_stdout(state: AppState) {
                                     server.specialized_server_type.clone().unwrap(),
                                 );
                             }
+
+                            // Lookup the original crash_prevention setting from config to preserve it
+                            let config = state.config.lock().await;
+                            for server_config in config.servers.iter() {
+                                if server_config.name == server.name {
+                                    descriptor.crash_prevention = server_config.crash_prevention;
+                                    break;
+                                }
+                            }
+                            drop(config);
+
                             new_instances.push(descriptor);
+                        } else if exit_code != 0 {
+                            info!("Server ID: {} has crashed, but crash prevention is disabled. Not restarting.", index);
                         }
                         to_remove.push(index);
                     }

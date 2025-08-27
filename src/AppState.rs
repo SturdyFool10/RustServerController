@@ -14,6 +14,7 @@ pub struct AppState {
     pub config: Arc<Mutex<Config>>,
     pub slave_servers: Arc<Mutex<Vec<ServerInfo>>>,
     pub slave_connections: Arc<Mutex<Vec<SlaveConnection>>>,
+    pub global_crash_prevention: Arc<AtomicBool>,
 }
 impl AppState {
     pub fn new(tx: broadcast::Sender<String>, config: Config) -> Self {
@@ -24,6 +25,7 @@ impl AppState {
             config: Arc::new(Mutex::new(config)),
             slave_servers: Arc::new(Mutex::new(vec![])),
             slave_connections: Arc::new(Mutex::new(vec![])),
+            global_crash_prevention: Arc::new(AtomicBool::new(true)),
         }
     }
     pub fn stop(&mut self) {
