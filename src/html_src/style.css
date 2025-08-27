@@ -208,12 +208,18 @@ h1 {
     position: relative;
     left: 0px;
     top: 0px;
-    height: 5%;
+    /* Height = 2 * vertical padding + text height (font-size) when closed */
+    font-size: clamp(1rem, 2.5vw, 1.5rem);
+    padding-top: 0.5em;
+    padding-bottom: 0.5em;
+    height: calc(1em + 1em); /* 1em font-size + 2*0.5em padding */
+    min-height: 2em;
     width: 100%;
     border-bottom-width: 3px;
     border-bottom-color: var(--border);
     border-bottom-style: solid;
     transition: max-height 250ms linear;
+    box-sizing: content-box;
 }
 .CentralMenuDropdown.open {
     height: 48vh;
@@ -235,19 +241,37 @@ h1 {
     fill: var(--secondary);
 }
 .serverName {
-    position: absolute;
-    left: 2%;
-    line-height: 200%;
-    text-align: center;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    height: 100%;
+    left: 0;
+    line-height: normal;
+    text-align: left;
     color: var(--text);
     font-family: "Roboto", sans-serif;
+    font-size: clamp(1rem, 2.5vw, 1.5rem);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding-left: 2%;
 }
 .innerTopBarDropDown {
     position: absolute;
     left: 0px;
     top: 0px;
-    height: 5vh;
     width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* Height = 2 * vertical padding + text height (font-size) */
+    font-size: clamp(1rem, 2.5vw, 1.5rem);
+    padding-top: 0.5em;
+    padding-bottom: 0.5em;
+    height: calc(1em + 1em); /* 1em font-size + 2*0.5em padding */
+    min-height: 2em;
+    box-sizing: content-box;
 }
 .dropdownDrop {
     position: absolute;
@@ -270,6 +294,9 @@ h1 {
     margin-bottom: 0;
     z-index: 1;
     display: block;
+    margin-top: calc(
+        1em + 1em
+    ); /* Match the tab row height: 1em font-size + 2*0.5em padding */
 }
 .serverSTDIn {
     width: 100%;
