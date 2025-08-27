@@ -1,9 +1,25 @@
 :root {
-    --pageBG: #0e0e0e;
-    --textCol: #e5e5e5;
-    --menuBG: #1d1d1d;
-    --highlightCol: #a200ff;
-    --altHighlightCol: #00ffee;
+    --bg-dark: oklch(0.1 0.01 256);
+    --bg: oklch(0.15 0.01 256);
+    --bg-light: oklch(0.2 0.01 256);
+    --text: oklch(0.96 0.02 256);
+    --text-muted: oklch(0.76 0.02 256);
+    --highlight: oklch(0.5 0.02 256);
+    --border: oklch(0.4 0.02 256);
+    --border-muted: oklch(0.3 0.02 256);
+    --primary: oklch(0.76 0.2 256);
+    --secondary: oklch(0.76 0.2 76);
+    --danger: oklch(0.7 0.2 30);
+    --warning: oklch(0.7 0.2 100);
+    --success: oklch(0.7 0.2 160);
+    --info: oklch(0.7 0.2 260);
+
+    /* Legacy variable mapping for compatibility */
+    --pageBG: var(--bg-dark);
+    --textCol: var(--text);
+    --menuBG: var(--bg);
+    --highlightCol: var(--primary);
+    --altHighlightCol: var(--secondary);
 }
 body {
     margin: 0;
@@ -45,14 +61,16 @@ body {
     padding: 0;
     margin: 80px 0 0 0;
     text-align: center;
-    font-family: 'Roboto', sans-serif;
+    font-family: "Roboto", sans-serif;
 }
 .active {
     border-width: 0px;
-    box-shadow: 0 0 10px color-mix(in srgb, rgba(255, 255, 255, 1) 75%, var(--highlightCol)), 0 0 25px var(--highlightCol);
-    border-color: var(--highlightCol);
+    box-shadow:
+        0 0 10px color-mix(in srgb, rgba(255, 255, 255, 1) 75%, var(--primary)),
+        0 0 25px var(--primary);
+    border-color: var(--primary);
     border-style: solid none solid none;
-    text-shadow: #fff 0 0 5px;
+    text-shadow: var(--text) 0 0 5px;
 }
 .menu li {
     width: 100%;
@@ -60,7 +78,7 @@ body {
 }
 .menu a {
     text-decoration: none;
-    color: var(--textCol);
+    color: var(--text);
     font-size: 18px;
 }
 #main-content {
@@ -73,7 +91,12 @@ body {
 }
 #main-content.regular {
     transition: background-color 0.35s ease;
-    background: linear-gradient(90deg, var(--highlightCol) 0%, var(--pageBG) 0%, var(--pageBG) 100%);
+    background: linear-gradient(
+        90deg,
+        var(--primary) 0%,
+        var(--bg-dark) 0%,
+        var(--bg-dark) 100%
+    );
 }
 .shifted {
     transition: background-color 0.35s ease;
@@ -100,7 +123,7 @@ h1 {
     width: 75%;
     height: calc(100% - 2% - calc(70px + 2%));
     left: 12.5%;
-    background-color: var(--menuBG);
+    background-color: var(--bg);
     border-radius: 15px;
     top: calc(70px + 2%);
 }
@@ -124,7 +147,7 @@ h1 {
     left: 90px;
     top: 0px;
     border-bottom-left-radius: 20px;
-    background-color: var(--menuBG);
+    background-color: var(--bg);
     width: 100%;
     height: 70px;
 }
@@ -132,8 +155,8 @@ h1 {
     position: absolute;
     left: 0px;
     top: 0px;
-    background-color: var(--menuBG);
-    border-bottom-color: color-mix(in srgb, var(--menuBG) 90%, #fff 10%);
+    background-color: var(--bg);
+    border-bottom-color: var(--border-muted);
     border-bottom-width: 3px;
     border-bottom-style: solid;
     width: 100%;
@@ -148,17 +171,17 @@ h1 {
 }
 .addServerIcon {
     position: absolute;
-    color: var(--highlightCol);
-   /* Set the font color using the custom property */
+    color: var(--primary);
+    /* Set the font color using the custom property */
     text-decoration: none;
-   /* Remove the default underline style for links */
+    /* Remove the default underline style for links */
     left: 20px;
     top: 5px;
     bottom: 5px;
     aspect-ratio: 1;
 }
 .addServerIcon svg {
-    fill: color-mix(in srgb, var(--altHighlightCol) 50%, #fff);
+    fill: var(--secondary);
     width: 100%;
     height: 100%;
 }
@@ -170,7 +193,7 @@ h1 {
     aspect-ratio: 1;
 }
 .menuBTN1 svg {
-    fill: color-mix(in srgb, var(--altHighlightCol) 50%, #fff) 
+    fill: var(--danger);
 }
 .centerMenu {
     position: absolute;
@@ -188,7 +211,7 @@ h1 {
     height: 5%;
     width: 100%;
     border-bottom-width: 3px;
-    border-bottom-color: color-mix(in srgb, var(--menuBG) 80%, #fff 20%);
+    border-bottom-color: var(--border);
     border-bottom-style: solid;
     transition: max-height 250ms linear;
 }
@@ -209,15 +232,15 @@ h1 {
     top: 0px;
     width: 100%;
     height: 100%;
-    fill: var(--altHighlightCol);
+    fill: var(--secondary);
 }
 .serverName {
     position: absolute;
     left: 2%;
     line-height: 200%;
     text-align: center;
-    color: var(--textCol);
-    font-family: 'Roboto', sans-serif;
+    color: var(--text);
+    font-family: "Roboto", sans-serif;
 }
 .innerTopBarDropDown {
     position: absolute;
@@ -231,7 +254,7 @@ h1 {
     left: 0px;
     top: 5vh;
     width: 100%;
-    border-bottom-color: color-mix(in srgb, var(--menuBG) 70%, #fff 30%);
+    border-bottom-color: var(--border);
     border-bottom-width: 3px;
     border-bottom-style: solid;
 }
@@ -241,7 +264,7 @@ h1 {
     left: 0px;
     width: 100%;
     height: 40vh;
-    border-bottom-color: color-mix(in srgb, var(--menuBG) 80%, #fff 20%);
+    border-bottom-color: var(--border-muted);
     border-bottom-width: 3px;
     border-bottom-style: solid;
     overflow: auto;
@@ -254,38 +277,38 @@ h1 {
     height: 3vh;
 }
 .STDInInput {
-    background-color: var(--pageBG);
-    color:rgba(255, 255, 255, 1);
+    background-color: var(--bg-dark);
+    color: var(--text);
     padding-left: 2vw;
     position: relative;
     left: 0px;
     top: 0px;
     width: 90%;
     height: calc(100% - 6px);
-    font-family: 'Roboto', sans-serif;
+    font-family: "Roboto", sans-serif;
 }
 .STDInSubmit {
     left: calc(90% + 9px);
     display: flex;
     align-items: center;
-   /* Vertical alignment */
+    /* Vertical alignment */
     justify-content: center;
-   /* Horizontal alignment */
+    /* Horizontal alignment */
     text-decoration: none;
-   /* Remove underline */
-    background-color: var(--highlightCol);
-    color:rgba(255, 255, 255, 1);
+    /* Remove underline */
+    background-color: var(--primary);
+    color: var(--text);
     width: calc(10% - 9px);
-    font-family: 'Roboto', sans-serif;
+    font-family: "Roboto", sans-serif;
 }
 .STDInSubmit:hover {
-    background-color: color-mix(in srgb, var(--highlightCol) 80%, var(--menuBG) 20%);
+    background-color: color-mix(in srgb, var(--primary) 80%, var(--bg) 20%);
 }
 .STDOutMessage {
     position: relative;
     padding-left: 2%;
-    color:rgba(255, 255, 255, 1);
-    font-family: 'Roboto', sans-serif;
+    color: var(--text);
+    font-family: "Roboto", sans-serif;
 }
 .ConfigEditor {
     position: absolute;
@@ -302,16 +325,16 @@ h1 {
     top: 0px;
     height: 100%;
     width: calc(100% - 6px);
-    background-color: var(--pageBG);
-    font-family: 'Roboto', sans-serif;
-    color: var(--textCol);
+    background-color: var(--bg-dark);
+    font-family: "Roboto", sans-serif;
+    color: var(--text);
 }
 .saveSVG {
-    fill: var(--altHighlightCol);
+    fill: var(--secondary);
     position: absolute;
     width: 90%;
     height: 90%;
-    top: calc(70px * 0.1 / 2.0);
+    top: calc(70px * 0.1 / 2);
     aspect-ratio: 1;
 }
 .configSave {

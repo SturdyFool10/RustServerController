@@ -433,9 +433,80 @@ $(document).ready(function () {
   var canvas = $(
     '<canvas class="overlay" width=' + 800 + " height=" + 2 + "></canvas>",
   ).appendTo($(".grad"))[0];
-  var ctx = canvas.getContext("2d");
   var dropdownSelector = $(".centerMenu.CentralMenuDropdown");
   dropdownSelector.click();
+
+  // Convert OKLCH color to RGB - with fixed variable names to avoid redeclaration
+  function oklchToRgb(lightness, chroma, hue) {
+    // Convert OKLCH to OKLab
+    const L = lightness;
+    const C = chroma;
+    const h_rad = hue * (Math.PI / 180);
+    const a_lab = C * Math.cos(h_rad);
+    const b_lab = C * Math.sin(h_rad);
+
+    // Convert OKLab to linear RGB
+    const l_ = L + 0.3963377774 * a_lab + 0.2158037573 * b_lab;
+    const m_ = L - 0.1055613458 * a_lab - 0.0638541728 * b_lab;
+    const s_ = L - 0.0894841775 * a_lab - 1.291485548 * b_lab;
+
+    const l_cubed = l_ * l_ * l_;
+    const m_cubed = m_ * m_ * m_;
+    const s_cubed = s_ * s_ * s_;
+
+    // Convert to linear RGB
+    const r_linear =
+      +4.0767416621 * l_cubed - 3.3077115913 * m_cubed + 0.2309699292 * s_cubed;
+    const g_linear =
+      -1.2684380046 * l_cubed + 2.6097574011 * m_cubed - 0.3413193965 * s_cubed;
+    const b_linear =
+      -0.0041960863 * l_cubed - 0.7034186147 * m_cubed + 1.707614701 * s_cubed;
+
+    // Convert to sRGB
+    const r_srgb =
+      r_linear <= 0.0031308
+        ? 12.92 * r_linear
+        : 1.055 * Math.pow(r_linear, 1 / 2.4) - 0.055;
+    const g_srgb =
+      g_linear <= 0.0031308
+        ? 12.92 * g_linear
+        : 1.055 * Math.pow(g_linear, 1 / 2.4) - 0.055;
+    const b_srgb =
+      b_linear <= 0.0031308
+        ? 12.92 * b_linear
+        : 1.055 * Math.pow(b_linear, 1 / 2.4) - 0.055;
+
+    // Clamp values to valid RGB range and convert to 0-255
+    const r_255 = Math.max(0, Math.min(255, Math.round(r_srgb * 255)));
+    const g_255 = Math.max(0, Math.min(255, Math.round(g_srgb * 255)));
+    const b_255 = Math.max(0, Math.min(255, Math.round(b_srgb * 255)));
+
+    return [r_255, g_255, b_255];
+  }
+
+  // Parse OKLCH string like "oklch(0.1 0.01 256)" and return RGB values
+  function parseOklch(oklchStr) {
+    // If the string is empty or undefined, return default values
+    if (!oklchStr) return [30, 30, 50];
+
+    try {
+      // Use regex to extract the three OKLCH values
+      const regex = /oklch\s*\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)/;
+      const matchResult = oklchStr.match(regex);
+
+      if (matchResult) {
+        const l = parseFloat(matchResult[1]);
+        const c = parseFloat(matchResult[2]);
+        const h = parseFloat(matchResult[3]);
+        return oklchToRgb(l, c, h);
+      }
+      // Fallback values if regex doesn't match
+      return [30, 30, 50]; // Dark blue-gray
+    } catch (e) {
+      console.error("Error parsing OKLCH color:", e);
+      return [30, 30, 50]; // Dark blue-gray fallback
+    }
+  }
 
   function handleCanvas() {
     if (
@@ -450,15 +521,170 @@ $(document).ready(function () {
           window.innerHeight +
           "></canvas>",
       ).appendTo($(".grad"))[0];
-      ctx = canvas.getContext("2d");
-      var bg = "rgba(14, 14, 14, 0.85)";
-      var highlight = "rgba(162, 0, 255, 1)";
-      var grad = ctx.createLinearGradient(0, 0, canvas.width, 0);
-      grad.addColorStop(0, highlight);
-      grad.addColorStop(0.05, bg);
-      grad.addColorStop(1, bg);
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Get theme colors from CSS variables
+      const style = getComputedStyle(document.documentElement);
+      const bgDarkOklch = style.getPropertyValue("--bg-dark").trim();
+      const primaryOklch = style.getPropertyValue("--primary").trim();
+
+      // Convert OKLCH colors to RGB
+      const bgDarkRgb = parseOklch(bgDarkOklch);
+      const primaryRgb = parseOklch(primaryOklch);
+
+      // Initialize WebGL context
+      const gl =
+        canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+      if (!gl) {
+        console.error("WebGL not supported");
+        return;
+      }
+
+      // Create vertex shader - Simple fullscreen quad
+      const vertexShaderSource = `
+        attribute vec2 a_position;
+        void main() {
+          gl_Position = vec4(a_position, 0, 1);
+        }
+      `;
+
+      // Create fragment shader - Exponential gradient with film grain noise
+      const fragmentShaderSource = `
+        precision mediump float;
+
+        uniform vec3 u_primaryColor;
+        uniform vec3 u_bgColor;
+        uniform float u_decayRate;
+
+        // Simple pseudo-random function
+        float random(vec2 st) {
+          return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123);
+        }
+
+        void main() {
+          // X position from -1 to 1, normalize to 0 to 1
+          float x = (gl_FragCoord.x / ${window.innerWidth.toFixed(1)});
+
+          // Get pixel coordinates for noise generation
+          vec2 pixelPos = gl_FragCoord.xy;
+
+          // Generate subtle noise (film grain effect)
+          float noise = random(pixelPos) * 0.03 - 0.015; // ±1.5% noise
+
+          // Exponential falloff function
+          float falloff = exp(-u_decayRate * x);
+
+          // Apply noise to the falloff (more noticeable in gradient areas)
+          falloff = clamp(falloff + noise * (1.0 - falloff) * falloff * 3.0, 0.0, 1.0);
+
+          // Mix the colors based on the falloff
+          vec3 color = mix(u_bgColor / 255.0, u_primaryColor / 255.0, falloff);
+
+          // Add subtle noise to each color channel to break up banding
+          color.r += noise * 0.015;
+          color.g += noise * 0.015;
+          color.b += noise * 0.015;
+
+          // Ensure colors stay in valid range
+          color = clamp(color, vec3(0.0), vec3(1.0));
+
+          // Alpha is 0.85 (bg) to 1.0 (highlight)
+          float alpha = 0.85 + (0.15 * falloff);
+
+          gl_FragColor = vec4(color, alpha);
+        }
+      `;
+
+      // Create shader program
+      function createShader(gl, type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          console.error(
+            "Shader compilation failed:",
+            gl.getShaderInfoLog(shader),
+          );
+          gl.deleteShader(shader);
+          return null;
+        }
+        return shader;
+      }
+
+      // Create and link program
+      const vertexShader = createShader(
+        gl,
+        gl.VERTEX_SHADER,
+        vertexShaderSource,
+      );
+      const fragmentShader = createShader(
+        gl,
+        gl.FRAGMENT_SHADER,
+        fragmentShaderSource,
+      );
+
+      const program = gl.createProgram();
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error("Program linking failed:", gl.getProgramInfoLog(program));
+        return;
+      }
+
+      gl.useProgram(program);
+
+      // Set up geometry - just a simple full-screen quad
+      const positionBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      const positions = [-1, -1, 1, -1, -1, 1, 1, 1];
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array(positions),
+        gl.STATIC_DRAW,
+      );
+
+      // Set up attributes
+      const positionAttributeLocation = gl.getAttribLocation(
+        program,
+        "a_position",
+      );
+      gl.enableVertexAttribArray(positionAttributeLocation);
+      gl.vertexAttribPointer(
+        positionAttributeLocation,
+        2,
+        gl.FLOAT,
+        false,
+        0,
+        0,
+      );
+
+      // Set up uniforms
+      const primaryColorLocation = gl.getUniformLocation(
+        program,
+        "u_primaryColor",
+      );
+      const bgColorLocation = gl.getUniformLocation(program, "u_bgColor");
+      const decayRateLocation = gl.getUniformLocation(program, "u_decayRate");
+
+      // Set uniform values
+      gl.uniform3f(
+        primaryColorLocation,
+        primaryRgb[0],
+        primaryRgb[1],
+        primaryRgb[2],
+      );
+      gl.uniform3f(bgColorLocation, bgDarkRgb[0], bgDarkRgb[1], bgDarkRgb[2]);
+      gl.uniform1f(decayRateLocation, 50.0); // Adjust for desired falloff speed
+
+      // Set viewport and clear
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      // Draw the quad
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
     requestAnimationFrame(handleCanvas);
   }
