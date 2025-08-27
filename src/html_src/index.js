@@ -759,9 +759,7 @@ $(document).ready(function () {
     }
     menuOpen = false;
   });
-  var canvas = $(
-    '<canvas class="overlay" width=' + 800 + " height=" + 2 + "></canvas>",
-  ).appendTo($(".grad"))[0];
+  // canvas will be created and managed globally for WebGL overlay below
   var dropdownSelector = $(".centerMenu.CentralMenuDropdown");
   dropdownSelector.click();
 
@@ -837,19 +835,33 @@ $(document).ready(function () {
     }
   }
 
+  // Keep track of the previous WebGL context for cleanup
+  let prevGL = null;
+  // Global canvas and gl references
+  let canvas = null;
+  let gl = null;
+
   function handleCanvas() {
     if (
-      window.innerWidth != canvas.width ||
-      window.innerHeight != canvas.height
+      !canvas ||
+      window.innerWidth !== canvas.width ||
+      window.innerHeight !== canvas.height
     ) {
-      $(canvas).remove();
-      canvas = $(
-        ' <canvas class="overlay" width=' +
-          window.innerWidth +
-          " height=" +
-          window.innerHeight +
-          "></canvas>",
-      ).appendTo($(".grad"))[0];
+      // Clean up previous WebGL context if it exists
+      if (gl) {
+        const loseCtx = gl.getExtension("WEBGL_lose_context");
+        if (loseCtx) {
+          loseCtx.loseContext();
+        }
+        gl = null;
+      }
+      if (canvas) $(canvas).remove();
+
+      canvas = document.createElement("canvas");
+      canvas.className = "overlay";
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      document.querySelector(".grad").appendChild(canvas);
 
       // Get theme colors from CSS variables
       const style = getComputedStyle(document.documentElement);
@@ -861,7 +873,7 @@ $(document).ready(function () {
       const primaryRgb = parseOklch(primaryOklch);
 
       // Initialize WebGL context
-      const gl =
+      gl =
         canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
       if (!gl) {
         console.error("WebGL not supported");
