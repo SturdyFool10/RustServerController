@@ -9,6 +9,17 @@
         />
         <link rel="icon" type="image/x-icon" href="/favicon.ico" />
         <title>Sturdy's Web Server Controller</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap"
+            rel="stylesheet"
+        />
+        <link
+            rel="stylesheet"
+            data-name="vs/editor/editor.main"
+            href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.40.0/min/vs/editor/editor.main.min.css"
+        />
         <style>
             styles!();
         </style>
@@ -118,7 +129,11 @@
                         </a>
                     </div>
                     <div class="ConfigEditor">
-                        <textarea class="editorText"></textarea>
+                        <div id="jsonEditor" class="monacoEditor"></div>
+                        <textarea
+                            class="editorText"
+                            style="display: none"
+                        ></textarea>
                     </div>
                 </div>
                 <div class="rightBar"></div>
@@ -155,6 +170,17 @@
             </div>
         </div>
         <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+        <script>
+            // Load Monaco Editor
+            var require = {
+                paths: {
+                    vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.40.0/min/vs",
+                },
+            };
+        </script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.40.0/min/vs/loader.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.40.0/min/vs/editor/editor.main.nls.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.40.0/min/vs/editor/editor.main.min.js"></script>
         <script src="/index.js"></script>
     </body>
 </html>

@@ -336,7 +336,7 @@ $(document).ready(function () {
       }
     }
 
-    console.log(`Applied theme: ${themeName}`);
+    // Theme applied
 
     // Add a subtle transition effect when changing themes
     document.body.style.transition =
@@ -351,17 +351,17 @@ $(document).ready(function () {
     const themeCSS = localStorage.getItem("themeCSS");
 
     if (themeName && themeCSS) {
-      console.log("Loading theme from localStorage:", themeName);
+      // Loading theme from localStorage
       applyTheme(themeName, themeCSS);
       return themeName;
     }
-    console.log("No theme found in localStorage");
+    // No theme found in localStorage
     return null;
   }
 
   function requestThemesList() {
     if (socket && socket.readyState === WebSocket.OPEN) {
-      console.log("Requesting themes list from server");
+      // Requesting themes list from server
       const msg = {
         type: "getThemesList",
       };
@@ -373,7 +373,7 @@ $(document).ready(function () {
 
   function requestThemeCSS(themeName) {
     if (socket && socket.readyState === WebSocket.OPEN) {
-      console.log("Requesting theme CSS for:", themeName);
+      // Requesting theme CSS
       const msg = {
         type: "getThemeCSS",
         theme_name: themeName,
@@ -402,6 +402,69 @@ $(document).ready(function () {
   }
 
   var justStarted = true;
+  var editor; // Monaco editor instance
+
+  // Initialize Monaco Editor
+  function initMonacoEditor() {
+    if (typeof monaco !== "undefined") {
+      // Define custom theme to match the app's colors
+      monaco.editor.defineTheme("rustController", {
+        base: "vs-dark",
+        inherit: true,
+        rules: [
+          { token: "string", foreground: "50fa7b" },
+          { token: "number", foreground: "ff79c6" },
+          { token: "keyword", foreground: "bd93f9" },
+        ],
+        colors: {
+          "editor.background": "#1e1e1e",
+          "editor.foreground": "#f8f8f2",
+          "editor.lineHighlightBackground": "#282a36",
+          "editorLineNumber.foreground": "#6272a4",
+          "editorLineNumber.activeForeground": "#f8f8f2",
+          "editorCursor.foreground": "#f8f8f2",
+          "editor.selectionBackground": "#44475a",
+          "editor.inactiveSelectionBackground": "#44475a80",
+        },
+      });
+
+      // Create editor
+      editor = monaco.editor.create(document.getElementById("jsonEditor"), {
+        value: $(".editorText").val() || "{}",
+        language: "json",
+        theme: "rustController",
+        automaticLayout: true,
+        formatOnPaste: true,
+        formatOnType: true,
+        minimap: {
+          enabled: true,
+          maxColumn: 80,
+          renderCharacters: true,
+          scale: 1,
+          showSlider: "always",
+        },
+        scrollBeyondLastLine: false,
+        tabSize: 4,
+        insertSpaces: true,
+        wordWrap: "off",
+        lineNumbers: "on",
+        fontLigatures: true,
+        fontFamily:
+          "'Fira Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace",
+      });
+
+      // Sync editor with textarea
+      editor.onDidChangeModelContent(function () {
+        $(".editorText").val(editor.getValue());
+      });
+    }
+  }
+
+  // Wait for Monaco to be loaded
+  require(["vs/editor/editor.main"], function () {
+    initMonacoEditor();
+  });
+
   socket.onmessage = function (message) {
     var obj = JSON.parse(message.data);
     switch (obj.type) {
@@ -412,7 +475,11 @@ $(document).ready(function () {
           addDropdownNoDupe(serverName, !server.active);
           if (justStarted) {
             window.config = obj.config;
-            $(".editorText").val(JSON.stringify(obj.config, undefined, 4));
+            const jsonConfig = JSON.stringify(obj.config, undefined, 4);
+            $(".editorText").val(jsonConfig);
+            if (editor) {
+              editor.setValue(jsonConfig);
+            }
             justStarted = false;
             var lines = server.output.split("\r\n");
             for (linePos in lines) {
@@ -425,7 +492,11 @@ $(document).ready(function () {
           }
           if (JSON.stringify(window.config) != JSON.stringify(obj.config)) {
             //the config is out of sync, copy it to the config textarea
-            $(".editorText").val(JSON.stringify(obj.config, undefined, 4));
+            const jsonConfig = JSON.stringify(obj.config, undefined, 4);
+            $(".editorText").val(jsonConfig);
+            if (editor) {
+              editor.setValue(jsonConfig);
+            }
             window.config = obj.config;
           }
         }
@@ -448,7 +519,7 @@ $(document).ready(function () {
         }
         break;
       case "themesList":
-        console.log("Received themes list from server:", obj.themes);
+        // Received themes list from server
         // Handle received list of themes
         const themes = obj.themes;
         if (themes && Array.isArray(themes) && themes.length > 0) {
@@ -506,7 +577,7 @@ $(document).ready(function () {
         }
         break;
       case "themeCSS":
-        console.log("Received theme CSS for:", obj.theme_name);
+        // Received theme CSS
         // Apply received theme CSS
         applyTheme(obj.theme_name, obj.css);
         break;
@@ -514,15 +585,15 @@ $(document).ready(function () {
   };
 
   // Initialize theme system
-  console.log("Initializing theme system");
+  // Initializing theme system
 
   // First try to load from localStorage
   const loadedTheme = loadThemeFromStorage();
 
   if (loadedTheme) {
-    console.log("Theme loaded from localStorage:", loadedTheme);
+    // Theme loaded from localStorage
   } else {
-    console.log("No theme in localStorage, will request from server");
+    // No theme in localStorage, will request from server
   }
 
   // Server will send theme list after connection
@@ -534,12 +605,33 @@ $(document).ready(function () {
   $(".configSave").click(function (e) {
     if (e.which !== 1) return;
     if (saveTimeout !== undefined) clearTimeout(saveTimeout);
-    var newConfig = JSON.parse($(".editorText").val());
-    var obj = {
-      type: "configChange",
-      updatedConfig: newConfig,
-    };
-    socket.send(JSON.stringify(obj));
+
+    try {
+      // Get content from Monaco editor if available, otherwise from textarea
+      const jsonContent = editor ? editor.getValue() : $(".editorText").val();
+      var newConfig = JSON.parse(jsonContent);
+      var obj = {
+        type: "configChange",
+        updatedConfig: newConfig,
+      };
+      socket.send(JSON.stringify(obj));
+
+      // Format the JSON and update the editor
+      const formattedJson = JSON.stringify(newConfig, null, 4);
+      if (editor) {
+        editor.setValue(formattedJson);
+      } else {
+        $(".editorText").val(formattedJson);
+      }
+
+      // Visual feedback for save
+      $(this).find(".bloom").css("opacity", "1");
+      setTimeout(() => {
+        $(this).find(".bloom").css("opacity", "0");
+      }, 800);
+    } catch (error) {
+      alert("Invalid JSON: " + error.message);
+    }
   });
   window.socket = socket;
 
