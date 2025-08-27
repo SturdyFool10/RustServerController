@@ -2,3 +2,5 @@
 /Cargo.lock
 /config.json
 /.vs
+/themes
+config.json
