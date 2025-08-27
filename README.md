@@ -1,7 +1,7 @@
 
 # RustServerController Documentation
 
-## Current Project Status: 
+## Current Project Status:
 ### Main Branch:
 - Windows Build Status: [![Build Status for Windows](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_win.yml/badge.svg?branch=main)](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_win.yml)
 - Linux Build Status: [![Build Status for Linux](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_linux.yml/badge.svg)](https://github.com/SturdyFool10/RustServerController/actions/workflows/build_linux.yml)
@@ -53,3 +53,34 @@ The recent addition of a new feature enables a clustered setup with master and s
 ### Additional Information:
 - To edit a slave's configuration, use an external text editor (Notepad++ recommended).
 - While chaining master nodes is possible, it is not recommended due to potential latency issues. Support is not provided for setups with more than one layer of indirection. Assistance requests for multi-indirection setups will be the user's responsibility.
+---
+
+# Server Process JSON Structure
+
+A server process in RustServerController is described in the configuration file as a JSON object. This object defines how the controller should launch and manage the server. Below is an example of what a typical server process entry looks like in JSON:
+
+```json
+{
+  "name": "<namehereNOSPACES>",
+  "exe_path": "<binary_path_here>",
+  "arguments": ["insert", "args", "comma", "seperated"],
+  "working_dir": "<workingDirHere>",
+  "auto_start": true,
+  "crash_prevention": true,
+  "specialized_server_type": null
+}
+```
+
+## Field Descriptions
+
+- **name**: A friendly name for your server process. avoid using spaces in the name.
+- **exe_path**: The path to the executable or script to run (e.g., a `.exe` on windows or an executable on linux).
+- **arguments**: An array of command-line arguments to pass to the executable. these use json syntax and are expected to be strings(google it if you don't know it).
+- **working_dir**: The working directory from which the process will be launched. in the case of a minecraft server for example, this will be the folder where the server instance stores all of its files.
+- **auto_start**: If `true`, the server will start automatically when the controller launches.
+- **crash_prevention**: If `true`, the controller will attempt to restart the server if it crashes.
+- **specialized_server_type(Optional, Default: null)**: allows the user to specify what type of server they are running for extra features, Currently Supported Values: "Minecraft", "Terraria"(does nothing yet), null
+> **Note:**
+> Advanced fields like `specialized_server_info` are managed internally by RustServerController and should not be set or modified manually in your configuration. Most users will never need to use or change this field.
+
+You can add multiple server process objects to the `servers` array in your configuration file to manage several servers at once.
