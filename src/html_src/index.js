@@ -225,10 +225,9 @@ function updateServerInfoMCSpecialization() {
         )[0];
         if (serverElement) {
           if (server.active) {
-            const specializedInfo = server.specializedInfo["Minecraft"];
+            const specializedInfo = server.specialized_info["Minecraft"];
             const [playerCount, maxPlayers, isReady] = specializedInfo;
-            const statusText = isReady ? "Ready To Join" : "Starting up";
-            serverElement.textContent = `${server.name} (${playerCount}/${maxPlayers}) (${statusText})`;
+            serverElement.textContent = `${server.name} (${playerCount} / ${maxPlayers})`;
           } else {
             serverElement.textContent = `${server.name} (inactive)`;
           }
