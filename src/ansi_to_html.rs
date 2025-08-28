@@ -1,14 +1,20 @@
 use ansi_escapers::{interpreter::*, types::*};
 
 /// Escapes HTML special characters to prevent XSS attacks
-fn escape_html(s: &str) -> String {
+
+pub fn escape_html(s: &str) -> String {
     s.chars()
         .map(|c| match c {
             '&' => "&amp;".to_string(),
+
             '<' => "&lt;".to_string(),
+
             '>' => "&gt;".to_string(),
+
             '"' => "&quot;".to_string(),
+
             '\'' => "&#39;".to_string(),
+
             _ => c.to_string(),
         })
         .collect()

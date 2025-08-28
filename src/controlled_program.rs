@@ -214,7 +214,12 @@ impl ControlledProgramInstance {
                     };
                 if read > 0 && line < read {
                     let new_str = String::from_utf8_lossy(&buf[0..read]);
-                    out2.push_str(ansi_to_html(&new_str).as_str());
+                    // If Minecraft specialization, apply custom coloring
+                    if let Some(SpecializedServerTypes::Minecraft) = &self.specialized_server_type {
+                        out2.push_str(&Self::colorize_minecraft_log_lines(&new_str));
+                    } else {
+                        out2.push_str(ansi_to_html(&new_str).as_str());
+                    }
                     line = read;
                 }
 
@@ -351,5 +356,94 @@ impl ControlledProgramInstance {
             Ok(Some(status)) => status.code(),
             _ => None,
         }
+    }
+    /// Colorizes Minecraft log lines using theme variables and inline spans.
+    /// - First brackets (time): faded (opacity 0.5)
+    /// - Second brackets (type): theme variable color
+    /// - Third brackets: --success color
+    fn colorize_minecraft_log_lines(line: &str) -> String {
+        use regex::Regex;
+        // Regex to match up to three bracketed sections: [time] [type] [third] rest
+        // Example: [23:33:19.028] [main/INFO] [Launcher/MODLAUNCHER]: ModLauncher running...
+        let re = Regex::new(r#"^(\[[^\]]+\])(\s+\[[^\]]+\])?(\s+\[[^\]]+\])?([^\n]*)"#).unwrap();
+
+        // Theme variable mapping
+        fn type_to_var(typ: &str) -> &'static str {
+            if typ.contains("ERROR") {
+                "var(--danger)"
+            } else if typ.contains("WARN") {
+                "var(--warning)"
+            } else if typ.contains("INFO") {
+                "var(--info)"
+            } else {
+                "var(--success)"
+            }
+        }
+
+        let mut result = String::new();
+        for raw_line in line.split('\n') {
+            if let Some(caps) = re.captures(raw_line) {
+                // 1: [time], 2: [type], 3: [third], 4: rest
+                let time = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                let typ = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                let third = caps.get(3).map(|m| m.as_str()).unwrap_or("");
+                let rest = caps.get(4).map(|m| m.as_str()).unwrap_or("");
+
+                // Faded time
+                let faded_time = if !time.is_empty() {
+                    format!(
+                        "<span style=\"opacity:0.5;\">{}</span>",
+                        crate::ansi_to_html::escape_html(time)
+                    )
+                } else {
+                    "".to_string()
+                };
+
+                // Type coloring
+                let colored_type = if !typ.is_empty() {
+                    // Extract type (INFO/WARN/ERROR) from inside brackets
+                    let typ_caps = Regex::new(r"\[([^\]/]+/)?([A-Z]+)\]").unwrap();
+                    let typ_str = typ_caps
+                        .captures(typ)
+                        .and_then(|c| c.get(2))
+                        .map(|m| m.as_str())
+                        .unwrap_or("");
+                    let color = type_to_var(typ_str);
+                    format!(
+                        "<span style=\"color:{};\">{}</span>",
+                        color,
+                        crate::ansi_to_html::escape_html(typ)
+                    )
+                } else {
+                    "".to_string()
+                };
+
+                // Third bracket coloring (always --success)
+                let colored_third = if !third.is_empty() {
+                    format!(
+                        "<span style=\"color:var(--success);\">{}</span>",
+                        crate::ansi_to_html::escape_html(third)
+                    )
+                } else {
+                    "".to_string()
+                };
+
+                // Rest of line (escaped)
+                let rest_html = crate::ansi_to_html::escape_html(rest);
+
+                // Compose line
+                result.push_str(&format!(
+                    "{}{}{}{}<br>",
+                    faded_time, colored_type, colored_third, rest_html
+                ));
+            } else {
+                // Fallback: just escape and add <br>
+                result.push_str(&format!(
+                    "{}<br>",
+                    crate::ansi_to_html::escape_html(raw_line)
+                ));
+            }
+        }
+        result
     }
 }
