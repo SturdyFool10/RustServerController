@@ -68,11 +68,9 @@ pub async fn process_stdout(state: AppState) {
                                 server.command_line_args.clone(),
                                 server.working_dir.clone(),
                             );
-                            if server.specialized_server_type.is_some() {
-                                descriptor.set_specialization(
-                                    server.specialized_server_type.clone().unwrap(),
-                                );
-                            }
+                            // set_specialization removed; assign directly if needed
+                            descriptor.specialized_server_type =
+                                server.specialized_server_type.clone();
 
                             // Lookup the original crash_prevention setting from config to preserve it
                             let config = state.config.lock().await;

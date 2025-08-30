@@ -1,4 +1,3 @@
-use crate::configuration;
 use colorlab::colorspaces::{
     color::Color, colorspace::ColorSpace, hsl::Hsl, lch::Lch, oklab::Oklab, oklch::Oklch,
     srgb::Srgb,
@@ -95,10 +94,12 @@ fn oklch_to_color(l: f64, c: f64, h: f64, alpha: f64) -> Color {
 }
 
 // Helper function to convert Oklab values to a Color
+#[allow(unused)]
 fn oklab_to_color(l: f64, a: f64, b: f64, alpha: f64) -> Color {
     Oklab { l, a, b, alpha }.to_color()
 }
 
+#[allow(dead_code)]
 impl Theme {
     /// Creates a new theme with the specified name
     pub fn new(name: &str) -> Self {
@@ -428,6 +429,7 @@ impl Default for ThemeCollection {
     }
 }
 
+#[allow(dead_code)]
 impl ThemeCollection {
     /// Create a new theme collection
     pub fn new() -> Self {
@@ -579,6 +581,7 @@ impl ThemeCollection {
 }
 
 // Helper function to convert a Color to RGB hex string
+#[allow(unused)]
 pub fn color_to_hex(color: &Color) -> String {
     let srgb = Srgb::from_color(color);
     let r = (srgb.r * 255.0).round() as u8;
@@ -587,7 +590,7 @@ pub fn color_to_hex(color: &Color) -> String {
     format!("#{:02X}{:02X}{:02X}", r, g, b)
 }
 
-// Some convenience functions for creating colors in different color spaces
+#[allow(unused)]
 pub fn rgb(r: u8, g: u8, b: u8) -> Color {
     Srgb {
         r: r as f64 / 255.0,
@@ -598,6 +601,7 @@ pub fn rgb(r: u8, g: u8, b: u8) -> Color {
     .to_color()
 }
 
+#[allow(unused)]
 pub fn rgba(r: u8, g: u8, b: u8, a: f64) -> Color {
     Srgb {
         r: r as f64 / 255.0,
@@ -608,15 +612,17 @@ pub fn rgba(r: u8, g: u8, b: u8, a: f64) -> Color {
     .to_color()
 }
 
+#[allow(unused)]
 pub fn hsl(h: f64, s: f64, l: f64) -> Color {
     Hsl { h, s, l, a: 1.0 }.to_color()
 }
 
+#[allow(unused)]
 pub fn hsla(h: f64, s: f64, l: f64, a: f64) -> Color {
     Hsl { h, s, l, a }.to_color()
 }
 
-// Helper functions for creating colors in Oklab space
+#[allow(unused)]
 pub fn oklab(l: f64, a: f64, b: f64) -> Color {
     Oklab {
         l,
@@ -627,11 +633,12 @@ pub fn oklab(l: f64, a: f64, b: f64) -> Color {
     .to_color()
 }
 
+#[allow(unused)]
 pub fn oklaba(l: f64, a: f64, b: f64, alpha: f64) -> Color {
     Oklab { l, a, b, alpha }.to_color()
 }
 
-// Helper functions for creating colors in Oklch space
+#[allow(unused)]
 pub fn oklch(l: f64, c: f64, h: f64) -> Color {
     Oklch {
         l,
@@ -642,6 +649,7 @@ pub fn oklch(l: f64, c: f64, h: f64) -> Color {
     .to_color()
 }
 
+#[allow(unused)]
 pub fn oklcha(l: f64, c: f64, h: f64, alpha: f64) -> Color {
     Oklch { l, c, h, alpha }.to_color()
 }

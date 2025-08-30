@@ -87,9 +87,6 @@ impl ControlledProgramDescriptor {
 
         instance
     }
-    pub fn set_specialization(&mut self, spec: SpecializedServerTypes) {
-        self.specialized_server_type = Some(spec.clone())
-    }
 }
 impl Default for ControlledProgramDescriptor {
     fn default() -> Self {
@@ -172,10 +169,7 @@ impl ControlledProgramInstance {
             specialization_handler: None,
         }
     }
-    pub fn set_specialization(&mut self, spec: SpecializedServerTypes) {
-        self.specialized_server_type = Some(spec.clone());
-        // No-op: logic now handled by new specialization system
-    }
+
     pub async fn read_output(&mut self) -> Option<String> {
         let mut out = String::new();
         let mut line: usize = 0;

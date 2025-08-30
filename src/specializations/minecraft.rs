@@ -141,12 +141,10 @@ fn colorize_minecraft_log_line(line: &str) -> String {
     let mut chars = line.chars().peekable();
     let mut blocks = Vec::new();
     let mut current = String::new();
-    let mut in_bracket = false;
-    let mut bracket_count = 0;
+    let mut bracket_count;
 
     while let Some(&c) = chars.peek() {
         if c == '[' {
-            in_bracket = true;
             bracket_count = 1;
             current.push(c);
             chars.next();
@@ -172,7 +170,7 @@ fn colorize_minecraft_log_line(line: &str) -> String {
     }
 
     // After the last bracket, check for colon and message
-    let mut after_brackets = chars.collect::<String>();
+    let after_brackets = chars.collect::<String>();
     let (colon, message) = if let Some(idx) = after_brackets.find(':') {
         (":", &after_brackets[idx + 1..])
     } else {
