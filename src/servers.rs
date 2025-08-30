@@ -1,9 +1,20 @@
+/// Server management and process monitoring utilities.
+///
+/// Provides helpers for formatting exit messages, sending termination notifications,
+/// and starting and monitoring server processes.
 use crate::{
     app_state::AppState, controlled_program::ControlledProgramDescriptor, messages::ConsoleOutput,
 };
 use tracing::*;
 
 // Helper to format exit code message for web console
+/// Formats a server exit code as an HTML message for the web console.
+///
+/// # Arguments
+/// * `exit_code` - The exit code to display.
+///
+/// # Returns
+/// An HTML string with the exit code highlighted.
 pub fn format_exit_message(exit_code: impl std::fmt::Display) -> String {
     format!(
         "<span style=\"color: var(--warning, #FFA500);\">[Server exited with code {}]</span>",
@@ -12,6 +23,13 @@ pub fn format_exit_message(exit_code: impl std::fmt::Display) -> String {
 }
 
 // Helper function to send server termination message to web console
+/// Sends a server termination message to the web console.
+///
+/// # Arguments
+/// * `state` - The shared application state.
+/// * `server_name` - The name of the server that exited.
+/// * `exit_code` - The exit code of the server.
+/// * `server_type` - The specialized server type, if any.
 pub async fn send_termination_message(
     state: &AppState,
     server_name: String,
@@ -28,6 +46,12 @@ pub async fn send_termination_message(
         .tx
         .send(serde_json::to_string(&termination_msg).unwrap());
 }
+/// Starts all servers marked for auto-start in the configuration.
+///
+/// Spawns a background task to process server stdout.
+///
+/// # Arguments
+/// * `_state` - The shared application state.
 #[no_mangle]
 pub async fn start_servers(_state: AppState) {
     let mut config = _state.config.lock().await;
@@ -42,6 +66,13 @@ pub async fn start_servers(_state: AppState) {
     tokio::spawn(process_stdout(_state.clone()));
 }
 
+/// Monitors all running servers, handles process exits, restarts crashed servers if needed,
+/// and relays server output to the web console.
+///
+/// This function runs in a loop, checking server status and output at a fixed refresh rate.
+///
+/// # Arguments
+/// * `state` - The shared application state.
 pub async fn process_stdout(state: AppState) {
     loop {
         {

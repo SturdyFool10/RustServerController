@@ -8,12 +8,14 @@ use tracing::error;
 
 use crate::{app_state::AppState, configuration::Config, messages::*};
 
+/// Descriptor for a slave connection, including address and port.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SlaveConnectionDescriptor {
     pub address: String,
     pub port: String,
 }
 
+/// Represents a connection to a slave node, including the websocket stream.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SlaveConnection {
     pub address: String,
@@ -23,7 +25,7 @@ pub struct SlaveConnection {
 }
 
 impl SlaveConnection {
-    // New method to create a new SlaveConnection instance
+    /// Creates a new SlaveConnection instance with the given address and port.
     pub fn new(address: String, port: String) -> Self {
         Self {
             address,
@@ -32,13 +34,26 @@ impl SlaveConnection {
         }
     }
 
-    // Changed to async and return Result to handle connection success or failure
+    /// Attempts to establish a websocket connection to the slave node.
+    ///
+    /// # Returns
+    /// * `Ok(())` if the connection is successful.
+    /// * `Err` if the connection fails.
     pub async fn create_connection(&mut self) -> Result<(), Box<dyn Error>> {
         let addr = format!("ws://{}:{}/ws", self.address, self.port);
         let (ws_stream, _) = connect_async(addr).await?;
         self.stream = Some(ws_stream);
         Ok(())
     }
+
+    /// Requests server info from the slave node and updates the shared state.
+    ///
+    /// # Arguments
+    /// * `app_state` - The shared application state to update.
+    ///
+    /// # Returns
+    /// * `Ok(())` if the request and update succeed.
+    /// * `Err` if there is no active connection or another error occurs.
     pub async fn request_info(&mut self, app_state: AppState) -> Result<(), Box<dyn Error>> {
         if let Some(stream) = &mut self.stream {
             // Prepare your requestInfo message
@@ -138,6 +153,15 @@ impl SlaveConnection {
         }
     }
 
+    /// Sends stdin input to a server on the slave node.
+    ///
+    /// # Arguments
+    /// * `server_name` - The name of the server to send input to.
+    /// * `message` - The input message to send.
+    ///
+    /// # Returns
+    /// * `Ok(())` if the message is sent successfully.
+    /// * `Err` if there is a connection or protocol error.
     #[allow(dead_code)]
     pub async fn write_stdin(
         &mut self,
@@ -166,6 +190,11 @@ impl SlaveConnection {
     }
 }
 
+/// Creates and manages connections to all configured slave nodes.
+/// Polls each slave for server info at a fixed interval and updates shared state.
+///
+/// # Arguments
+/// * `state` - The shared application state.
 pub async fn create_slave_connections(state: AppState) {
     let mut slaves: Vec<SlaveConnection> = vec![];
     let conf = state.config.lock().await;
@@ -193,7 +222,7 @@ pub async fn create_slave_connections(state: AppState) {
             slaves_list.push(slave);
         }
     }
-    //create the polling loop at 4 polls per second
+    // Create the polling loop at 4 polls per second
     {
         let mut interval = time::interval(Duration::from_millis(250)); // 4 times per second
         loop {

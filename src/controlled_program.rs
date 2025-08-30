@@ -7,26 +7,47 @@ use tokio::{
 };
 
 use crate::ansi_to_html::ansi_to_html;
+
+/// Represents the types of specialized servers supported by the controller.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SpecializedServerTypes {
+    /// Minecraft server specialization.
     Minecraft,
+    /// Terraria server specialization.
     Terraria,
 }
 
+/// Configuration descriptor for a server or program to be controlled by the application.
+/// Used for configuration and instantiation of server processes.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ControlledProgramDescriptor {
+    /// Display name of the server/program.
     pub name: String,
+    /// Path to the executable.
     pub exe_path: String,
+    /// Command-line arguments for the process.
     pub arguments: Vec<String>,
+    /// Working directory for the process.
     pub working_dir: String,
+    /// Whether to auto-start this server on launch.
     pub auto_start: bool,
+    /// Whether to enable crash prevention (auto-restart).
     pub crash_prevention: bool,
-    //optional, do not use unless you need specialization, remove if unused then fix errors by removing lines
+    /// Optional specialized server type (e.g., Minecraft, Terraria).
     pub specialized_server_type: Option<SpecializedServerTypes>,
+    /// Optional extra info for specialized servers (not serialized).
     #[serde(skip)]
     pub specialized_server_info: Option<serde_json::Value>,
 }
 impl ControlledProgramDescriptor {
+    /// Creates a new descriptor with all fields specified.
+    ///
+    /// # Arguments
+    /// * `name` - The display name of the server/program.
+    /// * `exe_path` - Path to the executable.
+    /// * `arguments` - Command-line arguments.
+    /// * `working_dir` - Working directory for the process.
+    /// * `auto_start` - Whether to auto-start this server on launch.
     #[allow(unused)]
     pub fn new_as(
         name: &str,
@@ -46,6 +67,14 @@ impl ControlledProgramDescriptor {
             specialized_server_info: None,
         }
     }
+
+    /// Creates a new descriptor with auto_start set to false.
+    ///
+    /// # Arguments
+    /// * `name` - The display name of the server/program.
+    /// * `exe_path` - Path to the executable.
+    /// * `arguments` - Command-line arguments.
+    /// * `working_dir` - Working directory for the process.
     pub fn new(name: &str, exe_path: &str, arguments: Vec<String>, working_dir: String) -> Self {
         Self {
             name: name.to_owned(),
@@ -58,6 +87,13 @@ impl ControlledProgramDescriptor {
             specialized_server_info: None,
         }
     }
+
+    /// Converts this descriptor into a running [`ControlledProgramInstance`].
+    ///
+    /// Attaches a specialization handler if specified.
+    ///
+    /// # Arguments
+    /// * `registry` - The specialization registry to use for handler lookup.
     pub fn into_instance(
         self,
         registry: &crate::specializations::SpecializationRegistry,
@@ -89,6 +125,7 @@ impl ControlledProgramDescriptor {
     }
 }
 impl Default for ControlledProgramDescriptor {
+    /// Returns a default descriptor with empty fields and crash prevention enabled.
     fn default() -> Self {
         Self {
             name: "".to_owned(),
@@ -103,24 +140,37 @@ impl Default for ControlledProgramDescriptor {
     }
 }
 
+/// Represents a running server/program process controlled by the application.
 pub struct ControlledProgramInstance {
+    /// Display name of the server/program.
     pub name: String,
+    /// Path to the executable.
     pub executable_path: String,
+    /// Command-line arguments for the process.
     pub command_line_args: Vec<String>,
+    /// The running child process.
     pub process: Child,
+    /// Working directory for the process.
     pub working_dir: String,
+    /// Number of last log lines (unused).
     #[allow(unused)]
     pub last_log_lines: usize,
+    /// Current output in progress (buffered).
     pub curr_output_in_progress: String,
+    /// Whether crash prevention is enabled.
     pub crash_prevention: bool,
+    /// Whether the process is currently active.
     pub active: bool,
-    //optional, remove if unused then remove any references within this file
+    /// Optional specialized server type.
     pub specialized_server_type: Option<SpecializedServerTypes>,
+    /// Optional extra info for specialized servers.
     pub specialized_server_info: Option<serde_json::Value>,
+    /// Optional handler for server specialization logic.
     pub specialization_handler: Option<Box<dyn crate::specializations::ServerSpecialization>>,
 }
 
 impl Drop for ControlledProgramInstance {
+    /// Ensures the process is killed when the instance is dropped.
     fn drop(&mut self) {
         // Attempt to kill the process if it's still running
         if let Some(id) = self.process.id() {
@@ -136,6 +186,15 @@ impl Drop for ControlledProgramInstance {
 }
 
 impl ControlledProgramInstance {
+    /// Creates a new running instance of a controlled program/server.
+    ///
+    /// Ensures the working directory exists, sets up environment variables, and spawns the process.
+    ///
+    /// # Arguments
+    /// * `name` - The display name of the server/program.
+    /// * `exe_path` - Path to the executable.
+    /// * `arguments` - Command-line arguments.
+    /// * `working_dir` - Working directory for the process.
     pub fn new(name: &str, exe_path: &str, arguments: Vec<String>, working_dir: String) -> Self {
         use std::fs;
         use std::path::Path;
@@ -186,6 +245,10 @@ impl ControlledProgramInstance {
         }
     }
 
+    /// Reads and processes output from the server process.
+    ///
+    /// Uses the specialization handler if available, otherwise applies ANSI to HTML conversion.
+    /// Maintains a buffer of recent output lines.
     pub async fn read_output(&mut self) -> Option<String> {
         let mut out = String::new();
         let mut line: usize = 0;
@@ -220,7 +283,7 @@ impl ControlledProgramInstance {
                 line = read;
             }
 
-            if read < 10 {
+            if read < 1 {
                 has_more = false;
             }
         }
@@ -241,6 +304,10 @@ impl ControlledProgramInstance {
             Some(out)
         }
     }
+
+    /// Stops the running server/program process.
+    ///
+    /// Disables crash prevention, kills the process, and returns the exit code if available.
     pub async fn stop(&mut self) -> Option<i32> {
         // Disable crash prevention so the process won't be restarted when killed
         self.crash_prevention = false;

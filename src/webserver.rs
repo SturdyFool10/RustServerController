@@ -1,3 +1,7 @@
+/// Web server and HTTP API for the Rust Server Controller.
+///
+/// Provides routes for serving the web UI, static assets, and websocket upgrades.
+/// Uses [`AppState`] for shared application state.
 use crate::websocket::*;
 use axum::{
     body::Body,
@@ -14,10 +18,23 @@ use tracing::*;
 
 use crate::app_state::AppState;
 
+/// Serves the main JavaScript file for the web UI.
+///
+/// # Arguments
+/// * `_state` - The shared application state (unused).
 async fn js_serve(State(_state): State<AppState>) -> JavaScript<String> {
     JavaScript::from(include_str!("html_src/index.js").to_owned())
 }
 
+/// Builds the main Axum router for the web server.
+///
+/// Registers routes for the web UI, static assets, websocket, and favicon.
+///
+/// # Arguments
+/// * `_state` - The shared application state.
+///
+/// # Returns
+/// * `Router<AppState>` with all routes registered.
 async fn get_router(_state: AppState) -> Router<AppState> {
     let router: Router<AppState> = Router::new()
         .nest_service("/html", ServeDir::new("html_src"))
@@ -27,6 +44,10 @@ async fn get_router(_state: AppState) -> Router<AppState> {
         .route("/favicon.ico", get(handle_icon));
     router
 }
+/// Serves the favicon for the web UI.
+///
+/// # Arguments
+/// * `_state` - The shared application state (unused).
 async fn handle_icon(State(_state): State<AppState>) -> impl IntoResponse {
     let ico_bytes: &'static [u8] = include_bytes!("html_src/icon.ico");
     Response::builder()
@@ -35,6 +56,12 @@ async fn handle_icon(State(_state): State<AppState>) -> impl IntoResponse {
         .body(Body::from(ico_bytes))
         .unwrap()
 }
+/// Starts the Axum web server for the controller.
+///
+/// Binds to the configured address and serves the web UI and API.
+///
+/// # Arguments
+/// * `_state` - The shared application state.
 #[no_mangle]
 pub async fn start_web_server(_state: AppState) {
     use axum::serve;
@@ -53,6 +80,10 @@ pub async fn start_web_server(_state: AppState) {
         .await
         .unwrap();
 }
+/// Serves the main HTML page for the web UI, inlining the CSS.
+///
+/// # Arguments
+/// * `_state` - The shared application state (unused).
 #[no_mangle]
 async fn main_serve(State(_state): State<AppState>) -> Html<String> {
     Html(

@@ -1,3 +1,9 @@
+/// Spawns multiple async tasks, each receiving a clone of the provided state.
+///
+/// # Example
+/// ```
+/// spawn_tasks!(app_state.clone(), start_servers, start_slave)
+/// ```
 #[macro_export]
 macro_rules! spawn_tasks {
     ($state:expr, $($task:expr),*) => {
@@ -13,6 +19,12 @@ macro_rules! spawn_tasks {
     };
 }
 
+/// Creates an async listener future that waits for a specific key press and then calls `stop()` on the provided app.
+///
+/// # Example
+/// ```
+/// async_listener!("t", app_state)
+/// ```
 #[macro_export]
 macro_rules! async_listener {
     ($key:expr, $app:expr) => {{

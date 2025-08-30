@@ -1,3 +1,7 @@
+/// Websocket upgrade and message handling for the Rust Server Controller.
+///
+/// Provides websocket upgrade, message processing, and helpers for communication
+/// between the web UI and the backend using [`AppState`].
 use crate::servers::format_exit_message;
 use axum::{
     extract::{
@@ -11,12 +15,24 @@ use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tracing::*;
 
-/// Converts a String to Utf8Bytes for axum WebSocket messages.
+/// Converts a `String` to `Utf8Bytes` for axum WebSocket messages.
+///
+/// # Arguments
+/// * `s` - The string to convert.
+///
+/// # Returns
+/// * `Utf8Bytes` containing the UTF-8 encoded string.
 fn string_to_utf8bytes(s: String) -> Utf8Bytes {
     Utf8Bytes::from(s)
 }
 
-/// Converts Utf8Bytes to String for tungstenite compatibility.
+/// Converts `Utf8Bytes` to `String` for tungstenite compatibility.
+///
+/// # Arguments
+/// * `bytes` - The UTF-8 bytes to convert.
+///
+/// # Returns
+/// * `String` decoded from the bytes.
 fn utf8bytes_to_string(bytes: Utf8Bytes) -> String {
     bytes.to_string()
 }
@@ -29,11 +45,24 @@ use crate::{
     app_state::AppState, configuration::Config, controlled_program::ControlledProgramDescriptor,
     messages::*, theme::ThemeCollection,
 };
+/// Handles websocket upgrade requests from the web client.
+///
+/// # Arguments
+/// * `ws` - The websocket upgrade request.
+/// * `state` - The shared application state.
+///
+/// # Returns
+/// * `Response` that upgrades the connection to a websocket.
 #[no_mangle]
 pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
     // println!("Handling a socket...");
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
+/// Handles a websocket connection, spawning send and receive tasks.
+///
+/// # Arguments
+/// * `socket` - The websocket connection.
+/// * `state` - The shared application state.
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sender, mut reciever) = socket.split();
     let mut rx = state.tx.subscribe();
@@ -66,6 +95,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     };
 }
 
+/// Passes stdin input to a running server process.
+///
+/// # Arguments
+/// * `message` - The stdin input message.
+/// * `server_name` - The name of the server to send input to.
+/// * `state` - The shared application state.
 async fn pass_stdin(message: StdinInput, server_name: String, state: AppState) {
     let value = message.value + "\r\n";
     let mut servers = state.servers.lock().await;
@@ -84,6 +119,13 @@ async fn pass_stdin(message: StdinInput, server_name: String, state: AppState) {
     }
     drop(servers);
 }
+/// Processes a message received from the web client over websocket.
+///
+/// Handles requests for config, themes, server info, stdin input, config changes, and server termination.
+///
+/// # Arguments
+/// * `text` - The received message as a string.
+/// * `state` - The shared application state.
 async fn process_message(text: String, state: AppState) {
     // (No change to this function, but ensure that all .send(Message::Text(...)) in this file use Utf8Bytes::from(val) and all received Message::Text(text) are handled as Utf8Bytes and converted to String as needed.)
     // The main changes are in handle_socket above.

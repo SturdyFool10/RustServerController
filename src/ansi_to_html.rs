@@ -1,6 +1,10 @@
+/// Utilities for converting ANSI escape sequences to HTML for colored log output.
+/// Provides HTML escaping and color mapping for terminal output.
 use ansi_escapers::{interpreter::*, types::*};
 
-/// Escapes HTML special characters to prevent XSS attacks
+/// Escapes HTML special characters to prevent XSS attacks.
+///
+/// Converts &, <, >, ", and ' to their HTML entity equivalents.
 
 pub fn escape_html(s: &str) -> String {
     s.chars()
@@ -20,7 +24,7 @@ pub fn escape_html(s: &str) -> String {
         .collect()
 }
 
-// ANSI color constants
+// ANSI color constants for mapping terminal colors to HTML hex codes.
 const COLOR_BLACK: &str = "#000000";
 const COLOR_RED: &str = "#FF0000";
 const COLOR_GREEN: &str = "#00FF00";
@@ -39,6 +43,7 @@ const COLOR_BRIGHT_CYAN: &str = "#80FFFF";
 const COLOR_BRIGHT_WHITE: &str = "#FFFFFF";
 const COLOR_DEFAULT: &str = "#FFFFFF";
 
+/// Maps an ANSI color code to a CSS hex color string.
 fn get_color_from_code(col: &Color) -> String {
     let basic_color_catch = match col {
         Color::Black => COLOR_BLACK.to_string(),
@@ -85,6 +90,7 @@ fn get_color_from_code(col: &Color) -> String {
     basic_color_catch
 }
 
+/// Converts a vector of SGR attributes to a CSS style string.
 fn get_html_style(codes: Vec<SgrAttribute>) -> String {
     codes
         .iter()
@@ -115,6 +121,17 @@ fn get_html_style(codes: Vec<SgrAttribute>) -> String {
         .join(" ")
 }
 
+/// Converts a string containing ANSI escape sequences to HTML with inline styles.
+///
+/// Preserves newlines and applies color and style spans for terminal output.
+///
+/// # Arguments
+///
+/// * `inp` - The input string containing ANSI escape sequences.
+///
+/// # Returns
+///
+/// A `String` containing HTML with inline styles representing the original ANSI formatting.
 pub fn ansi_to_html(inp: &str) -> String {
     // Pre-process input to preserve newlines before ANSI parsing
     let inp = inp.replace("\n", "\\n").replace("\r", "\\r");

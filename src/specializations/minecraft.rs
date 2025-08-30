@@ -6,15 +6,20 @@ use regex::Regex;
 use serde_json::{json, Value};
 use std::path::Path;
 
-/// Minecraft specialization struct.
-
+/// Specialization for Minecraft servers.
+///
+/// Handles Minecraft-specific logic such as parsing player join/leave events,
+/// tracking readiness, and auto-accepting the EULA if needed.
 #[derive(Default)]
-
 pub struct MinecraftSpecialization {
     // No internal state needed; all info is stored in ControlledProgramInstance
 }
 
 impl ServerSpecialization for MinecraftSpecialization {
+    /// Initialize the Minecraft specialization for a server instance.
+    ///
+    /// Reads the `max-players` value from `server.properties` if available,
+    /// and sets up the initial specialized_server_info state.
     fn init(&mut self, instance: &mut ControlledProgramInstance) {
         // Try to read max-players from server.properties
         let mut path_str = instance.working_dir.clone();
@@ -24,7 +29,7 @@ impl ServerSpecialization for MinecraftSpecialization {
         path_str += "server.properties";
 
         let file_result = crate::files::read_file(path_str.as_str());
-        let mut max_players = 0;
+        let mut max_players = 20; // Minecraft's default
         if let Ok(val) = file_result {
             let regex = Regex::new(r"max-players=(\d+)").unwrap();
             if let Some(caps) = regex.captures(&val) {
@@ -43,6 +48,10 @@ impl ServerSpecialization for MinecraftSpecialization {
         }));
     }
 
+    /// Parses a single output line from the Minecraft server process.
+    ///
+    /// Updates player count, readiness, and player list in specialized_server_info.
+    /// Returns a colorized HTML string for the log line.
     fn parse_output(
         &mut self,
         line: String,
@@ -124,6 +133,9 @@ impl ServerSpecialization for MinecraftSpecialization {
         Some(colorize_minecraft_log_line(&line))
     }
 
+    /// Handles logic when the Minecraft server process exits.
+    ///
+    /// If the EULA was not accepted, automatically patches `eula.txt` and restarts the server.
     fn on_exit(
         &mut self,
         instance: &mut ControlledProgramInstance,
@@ -184,6 +196,9 @@ impl ServerSpecialization for MinecraftSpecialization {
         });
     }
 
+    /// Returns the current status for this specialization.
+    ///
+    /// For Minecraft, this is always `Null` as status is stored in the instance's specialized_server_info.
     fn get_status(&self) -> serde_json::Value {
         // This function is called on the handler, which is stateless.
         // The actual status is stored in the instance's specialized_server_info.
@@ -195,11 +210,25 @@ impl ServerSpecialization for MinecraftSpecialization {
 }
 
 /// Factory function for Minecraft specialization.
+///
+/// Returns a boxed instance of `MinecraftSpecialization`.
 pub fn factory() -> Box<dyn ServerSpecialization> {
     Box::new(MinecraftSpecialization::default())
 }
 
 /// Colorizes a single Minecraft log line using bracket counting.
+/// Colorizes a single Minecraft log line using bracket counting and HTML spans.
+///
+/// Applies faded color to the timestamp, semantic color to the log level,
+/// and green to the third bracketed block if present. The message is escaped for HTML.
+///
+/// # Arguments
+///
+/// * `line` - The log line to colorize.
+///
+/// # Returns
+///
+/// A `String` containing HTML representing the colorized log line.
 fn colorize_minecraft_log_line(line: &str) -> String {
     // Extract all bracketed blocks at the start
     let mut chars = line.chars().peekable();

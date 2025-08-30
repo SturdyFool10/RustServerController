@@ -1,3 +1,7 @@
+/// Main entry point and initialization logic for the Rust Server Controller.
+///
+/// This module sets up the application state, loads configuration, ensures the themes directory exists,
+/// and starts the appropriate async tasks for master or slave mode.
 mod ansi_to_html;
 mod app_state;
 mod configuration;
@@ -26,6 +30,11 @@ use crate::{
     webserver::start_web_server,
 };
 
+/// Main async entry point for the application.
+///
+/// Loads configuration, initializes logging, ensures the themes directory exists,
+/// and starts the appropriate async tasks for master or slave mode.
+/// Handles graceful shutdown on Ctrl+C or T key.
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let config = load_json("config.json");
@@ -109,7 +118,14 @@ async fn main() -> Result<(), String> {
     exit(0);
 }
 
-// Ensures that the themes directory exists and contains at least default themes
+// Ensures that the themes directory exists and contains at least default themes.
+/// Ensures that the themes directory exists and contains at least default themes.
+///
+/// If the directory does not exist or is empty, creates default dark, light, and high contrast themes,
+/// a README with instructions, and a sample custom theme.
+///
+/// # Arguments
+/// * `config` - The application configuration containing the themes folder path.
 fn ensure_themes_directory(config: &crate::configuration::Config) {
     let themes_dir = config
         .themes_folder

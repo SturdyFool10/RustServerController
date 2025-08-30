@@ -1,4 +1,8 @@
 //! Specialization trait and registry for built-in server specializations.
+//!
+//! This module defines the [`ServerSpecialization`] trait for implementing
+//! server-specific logic (such as Minecraft or Terraria), and provides a
+//! thread-safe registry for managing available specializations.
 
 pub mod minecraft;
 pub mod terraria;
@@ -7,17 +11,27 @@ use crate::controlled_program::ControlledProgramInstance;
 use dashmap::DashMap;
 use std::sync::Arc;
 
+/// Trait for implementing server-specific logic and output parsing.
+///
+/// Implement this trait for each supported server type (e.g., Minecraft, Terraria).
 pub trait ServerSpecialization: Send + Sync {
     /// Called when the specialization is first attached to a server instance.
+    ///
+    /// Use this to initialize any state or inspect the instance.
     fn init(&mut self, instance: &mut ControlledProgramInstance);
+
     /// Called for each output line from the server process.
-    /// Takes ownership of the log line. Return Some(String) to transform the line, None to omit it.
+    ///
+    /// Takes ownership of the log line. Return `Some(String)` to transform the line,
+    /// or `None` to omit it from output.
     fn parse_output(
         &mut self,
         line: String,
         instance: &mut ControlledProgramInstance,
     ) -> Option<String>;
+
     /// Called when the server process exits.
+    ///
     /// Allows the specialization to handle exit-specific logic (e.g., EULA patching, auto-restart).
     /// Default implementation does nothing.
     fn on_exit(
@@ -28,14 +42,19 @@ pub trait ServerSpecialization: Send + Sync {
     ) {
         // Default: do nothing
     }
+
     /// Returns the current status/info for this specialization.
+    ///
+    /// By convention, status is usually stored in the instance's `specialized_server_info`.
     #[allow(unused)]
     fn get_status(&self) -> serde_json::Value;
 }
 
 /// Factory type for creating new specialization instances.
+/// Factory type for creating new specialization instances.
 pub type SpecializationFactory = fn() -> Box<dyn ServerSpecialization>;
 
+/// Thread-safe registry for all available specializations.
 /// Thread-safe registry for all available specializations.
 pub struct SpecializationRegistry {
     map: DashMap<String, SpecializationFactory>,
@@ -65,18 +84,30 @@ impl SpecializationRegistry {
     }
 
     /// Register a specialization factory under a given name.
+    ///
+    /// # Arguments
+    /// * `name` - The specialization name (e.g., "Minecraft").
+    /// * `factory` - The factory function to create new instances.
     pub fn register(&self, name: &str, factory: SpecializationFactory) {
         self.map.insert(name.to_string(), factory);
     }
 
     /// Get a new instance of a specialization by name.
+    ///
+    /// # Arguments
+    /// * `name` - The specialization name.
+    ///
+    /// # Returns
+    /// * `Some(Box<dyn ServerSpecialization>)` if found, else `None`.
     pub fn get(&self, name: &str) -> Option<Box<dyn ServerSpecialization>> {
         self.map.get(name).map(|f| f())
     }
 }
 
 /// Helper to initialize the registry with built-in specializations.
-/// Call this at startup and store in AppState.
+/// Helper to initialize the registry with built-in specializations.
+///
+/// Registers "Minecraft" and "Terraria" specializations by default.
 pub fn init_builtin_registry() -> Arc<SpecializationRegistry> {
     let registry = Arc::new(SpecializationRegistry::new());
     registry.register("Minecraft", minecraft::factory);

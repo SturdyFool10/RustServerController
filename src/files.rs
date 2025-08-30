@@ -5,12 +5,29 @@ use tracing::*;
 use crate::configuration::{self, Config};
 use crate::specializations;
 
+/// Reads the contents of a file at the given path and returns it as a String.
+///
+/// # Arguments
+/// * `path` - The path to the file to read.
+///
+/// # Returns
+/// * `Ok(String)` containing the file contents if successful.
+/// * `Err` if the file cannot be read.
 #[no_mangle]
 pub fn read_file(path: &str) -> Result<String, Box<dyn std::error::Error>> {
     let data = std::fs::read_to_string(path)?;
     Ok(data)
 }
 
+/// Loads a JSON configuration file from the given path, validating specializations.
+///
+/// If the file does not exist or cannot be read, a default configuration is created and saved.
+///
+/// # Arguments
+/// * `path` - The path to the configuration file.
+///
+/// # Returns
+/// * `Config` struct loaded from the file or default if not found.
 #[no_mangle]
 pub fn load_json(path: &str) -> Config {
     let data = read_file(path);
