@@ -10,7 +10,7 @@ pub struct ServerInfo {
     pub active: bool,
     pub host: Option<SlaveConnectionDescriptor>,
     pub specialization: Option<crate::controlled_program::SpecializedServerTypes>,
-    pub specialized_info: Option<crate::controlled_program::SpecializedServerInformation>,
+    pub specialized_info: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

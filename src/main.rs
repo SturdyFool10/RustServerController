@@ -8,6 +8,7 @@ mod master;
 mod messages;
 mod servers;
 mod slave;
+mod specializations;
 mod theme;
 mod webserver;
 mod websocket;
@@ -39,7 +40,8 @@ async fn main() -> Result<(), String> {
     // Ensure themes directory exists with default themes
     ensure_themes_directory(&config);
     let (tx, _rx) = broadcast::channel(100);
-    let mut app_state = app_state::AppState::new(tx, config);
+    let specialization_registry = specializations::init_builtin_registry();
+    let mut app_state = app_state::AppState::new(tx, config, specialization_registry);
     let handles: Vec<tokio::task::JoinHandle<()>>;
     if slave {
         handles = spawn_tasks!(app_state.clone(), start_servers, start_slave)

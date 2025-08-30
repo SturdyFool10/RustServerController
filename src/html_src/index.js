@@ -225,9 +225,20 @@ function updateServerInfoMCSpecialization() {
         )[0];
         if (serverElement) {
           if (server.active) {
-            const specializedInfo = server.specialized_info["Minecraft"];
-            const [playerCount, maxPlayers, isReady] = specializedInfo;
-            serverElement.textContent = `${server.name} (${playerCount} / ${maxPlayers})`;
+            // Expect specialized_info to be an object with player_count, max_players, ready
+            let playerCount = 0;
+            let maxPlayers = 0;
+            let isReady = false;
+            if (
+              server.specialized_info &&
+              typeof server.specialized_info === "object"
+            ) {
+              playerCount = server.specialized_info.player_count ?? 0;
+              maxPlayers = server.specialized_info.max_players ?? 0;
+              isReady = server.specialized_info.ready ?? false;
+            }
+            let statusText = isReady ? "ready to join" : "starting";
+            serverElement.textContent = `${server.name} (${playerCount} / ${maxPlayers}) Status: ${statusText}`;
           } else {
             serverElement.textContent = `${server.name} (inactive)`;
           }
@@ -507,18 +518,18 @@ $(document).ready(function () {
         break;
       case "ServerOutput":
         var str = obj.output;
-        var lines = str.split("\r\n");
-        for (var i in lines) {
-          var line = lines[i];
-          if (line != "") {
-            var outDiv = $("." + obj.server_name + "Out")[0];
-            var shouldScroll = outDiv.scrollTop == outDiv.scrollHeight;
-            var p = $(' <p class="STDOutMessage"></p>').appendTo(outDiv)[0];
+        // Split on <br> (or <br/>), so each log line is its own <p>
+        var lines = str.split(/<br\s*\/?>/i);
+        var outDiv = $("." + obj.server_name + "Out")[0];
+        var shouldScroll = outDiv.scrollTop == outDiv.scrollHeight;
+        lines.forEach(function (line) {
+          if (line.trim() !== "") {
+            var p = $('<p class="STDOutMessage"></p>').appendTo(outDiv)[0];
             p.innerHTML = line;
-            if (true) {
-              outDiv.scrollTop = outDiv.scrollHeight;
-            }
           }
+        });
+        if (shouldScroll) {
+          outDiv.scrollTop = outDiv.scrollHeight;
         }
         break;
       case "themesList":

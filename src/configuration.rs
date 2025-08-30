@@ -3,6 +3,37 @@ use std::fs::{self, File};
 use std::io::Write;
 
 use crate::master::SlaveConnectionDescriptor;
+use crate::specializations::SpecializationRegistry;
+use serde_json::Value;
+
+/// Validate specialized_server_type values in a config JSON, warning on unknown types.
+/// Prints position (array index) and allowed values, and states defaulting to generic behavior.
+pub fn validate_specializations_in_config(config_json: &Value, registry: &SpecializationRegistry) {
+    let allowed: Vec<String> = registry
+        .allowed_names()
+        .into_iter()
+        .map(|name| format!("\"{}\"", name))
+        .collect();
+
+    if let Some(servers) = config_json.get("servers").and_then(|v| v.as_array()) {
+        for (i, server) in servers.iter().enumerate() {
+            if let Some(spec_type) = server
+                .get("specialized_server_type")
+                .and_then(|v| v.as_str())
+            {
+                if !spec_type.is_empty() && !registry.contains_key(spec_type) {
+                    let position = format!("at servers[{}]", i);
+                    eprintln!(
+                        "Warning: Server Specialization \"{}\" does not exist {}, allowed values: {}. Defaulting to generic, non-specialized behavior.",
+                        spec_type,
+                        position,
+                        allowed.join(", ")
+                    );
+                }
+            }
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {

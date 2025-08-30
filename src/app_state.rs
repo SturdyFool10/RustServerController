@@ -3,9 +3,10 @@ use tokio::sync::Mutex;
 
 use crate::{
     configuration::Config, controlled_program::ControlledProgramInstance, master::SlaveConnection,
-    messages::ServerInfo,
+    messages::ServerInfo, specializations::SpecializationRegistry,
 };
 use tokio::sync::broadcast;
+
 #[derive(Clone)]
 pub struct AppState {
     pub servers: Arc<Mutex<Vec<ControlledProgramInstance>>>,
@@ -15,9 +16,14 @@ pub struct AppState {
     pub slave_servers: Arc<Mutex<Vec<ServerInfo>>>,
     pub slave_connections: Arc<Mutex<Vec<SlaveConnection>>>,
     pub global_crash_prevention: Arc<AtomicBool>,
+    pub specialization_registry: Arc<SpecializationRegistry>,
 }
 impl AppState {
-    pub fn new(tx: broadcast::Sender<String>, config: Config) -> Self {
+    pub fn new(
+        tx: broadcast::Sender<String>,
+        config: Config,
+        specialization_registry: Arc<SpecializationRegistry>,
+    ) -> Self {
         Self {
             servers: Arc::new(Mutex::new(vec![])),
             tx,
@@ -26,6 +32,7 @@ impl AppState {
             slave_servers: Arc::new(Mutex::new(vec![])),
             slave_connections: Arc::new(Mutex::new(vec![])),
             global_crash_prevention: Arc::new(AtomicBool::new(true)),
+            specialization_registry,
         }
     }
     pub fn stop(&mut self) {

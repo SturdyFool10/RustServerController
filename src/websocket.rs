@@ -219,7 +219,7 @@ async fn process_message(text: String, state: AppState) {
                         }
                         if found {
                             let mut servers = state.servers.lock().await;
-                            servers.push(desc.into_instance());
+                            servers.push(desc.into_instance(&state.specialization_registry));
                             drop(servers);
                         }
                     }
@@ -379,7 +379,7 @@ async fn process_message(text: String, state: AppState) {
             for (index, desc) in config.servers.iter_mut().enumerate() {
                 if desc.auto_start {
                     let desc_clone = desc.clone();
-                    servers.push(desc_clone.into_instance());
+                    servers.push(desc_clone.into_instance(&state.specialization_registry));
                 }
             }
             // Broadcast ConfigInfo to all clients

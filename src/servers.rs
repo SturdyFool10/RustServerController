@@ -30,7 +30,7 @@ pub async fn start_servers(_state: AppState) {
         if server_desc.auto_start {
             let new_desc = server_desc.clone();
             let mut servers = _state.servers.lock().await;
-            servers.push(new_desc.into_instance());
+            servers.push(new_desc.into_instance(&_state.specialization_registry));
             drop(servers);
         }
     }
@@ -95,7 +95,7 @@ pub async fn process_stdout(state: AppState) {
                 }
             }
             for desc in new_instances {
-                servers.push(desc.into_instance());
+                servers.push(desc.into_instance(&state.specialization_registry));
             }
             for index in to_remove {
                 servers.remove(index);
