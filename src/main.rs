@@ -56,8 +56,53 @@ async fn main() -> Result<(), String> {
     {
         info!("Starting {} tasks", handles.len());
     }
+    // Spawn shutdown handler to kill all child processes on exit
+    let app_state_clone = app_state.clone();
+    let shutdown = async move |reason: &str| {
+        info!(
+            "Shutdown signal received ({}), terminating all child processes...",
+            reason
+        );
+        let mut servers = app_state_clone.servers.lock().await;
+        for server in servers.iter_mut() {
+            let _ = server.stop().await;
+        }
+        info!("All child processes terminated.");
+        std::process::exit(0);
+    };
+
+    // Ctrl+C handler
+    let app_state_clone_ctrlc = app_state.clone();
+    tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            use tokio::signal;
+            signal::ctrl_c().await.expect("Failed to listen for ctrl_c");
+            shutdown("ctrl_c").await;
+        }
+    });
+
+    // T key handler
+    let app_state_clone_t = app_state.clone();
+    tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            use crossterm::event::{poll, read, Event, KeyCode};
+            use tokio::task::yield_now;
+            loop {
+                yield_now().await;
+                if poll(std::time::Duration::from_millis(25)).expect("Failed to poll for events") {
+                    if let Event::Key(key_event) = read().expect("Failed to read event") {
+                        if key_event.code == KeyCode::Char('t') {
+                            shutdown("T key").await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     let _ = tokio::spawn(async_listener!("t", app_state)).await;
-    info!("Termination key pressed, closing the app.");
     exit(0);
 }
 

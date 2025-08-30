@@ -3,6 +3,14 @@ use crate::{
 };
 use tracing::*;
 
+// Helper to format exit code message for web console
+pub fn format_exit_message(exit_code: impl std::fmt::Display) -> String {
+    format!(
+        "<span style=\"color: var(--warning, #FFA500);\">[Server exited with code {}]</span>",
+        exit_code
+    )
+}
+
 // Helper function to send server termination message to web console
 pub async fn send_termination_message(
     state: &AppState,
@@ -12,10 +20,7 @@ pub async fn send_termination_message(
 ) {
     let termination_msg = ConsoleOutput {
         r#type: "ServerOutput".to_owned(),
-        output: format!(
-            "<span style=\"color: yellow;\">Program has stopped execution: StopCode: {}</span>",
-            exit_code
-        ),
+        output: format_exit_message(exit_code),
         server_name,
         server_type,
     };

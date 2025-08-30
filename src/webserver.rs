@@ -3,11 +3,12 @@ use axum::{
     body::Body,
     extract::State,
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing::get,
     Router,
 };
-use axum_extra::response::*;
+use axum_extra::response::JavaScript;
+
 use tower_http::services::ServeDir;
 use tracing::*;
 
@@ -38,7 +39,10 @@ async fn handle_icon(State(_state): State<AppState>) -> impl IntoResponse {
 }
 #[no_mangle]
 pub async fn start_web_server(_state: AppState) {
-    let router = get_router(_state.clone()).await; //.route("/ws", get(handle_socket))
+    use axum::serve;
+    use tokio::net::TcpListener;
+
+    let router = get_router(_state.clone()).await;
     let config = _state.config.lock().await;
     let mut address = config.interface.clone();
     address += (":".to_owned() + config.port.clone().as_str()).as_str();
@@ -46,14 +50,14 @@ pub async fn start_web_server(_state: AppState) {
     info!("Starting server on {}", address.replace("0.0.0.0", "*"));
 
     let stateful_router = router.with_state(_state);
-    axum::Server::bind(&address.parse().unwrap())
-        .serve(stateful_router.into_make_service())
+    let listener = TcpListener::bind(&address).await.unwrap();
+    serve(listener, stateful_router.into_make_service())
         .await
         .unwrap();
 }
 #[no_mangle]
 async fn main_serve(State(_state): State<AppState>) -> Html<String> {
-    Html::from(
+    Html(
         include_str!("html_src/index.html")
             .to_owned()
             .replace("styles!();", include_str!("html_src/style.css")),

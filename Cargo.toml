@@ -8,22 +8,23 @@ edition = "2021"
 [dependencies]
 ansi_escapers = "0.2.0"
 async-std = { version = "1.12.0", features = ["tokio03", "tokio02", "tokio1"] }
-axum = { version = "0.6.20", features = ["tracing", "ws", "macros", "headers"] }
-axum-extra = "0.7.7"
+axum = { version = "0.8.4", features = ["tracing", "ws", "macros"] }
+axum-extra = "0.10.1"
 colorlab = {git = "https://github.com/SturdyFool10/ColorLab.git"}
-crossterm = "0.27.0"
+crossterm = "0.29.0"
 futures = "0.3.28"
 futures-util = "0.3.28"
 regex = "1.10.2"
 serde = { version = "1.0.183", features = ["derive", "serde_derive"] }
 serde_json = { version = "1.0.105", features = ["float_roundtrip"] }
 tokio = { version = "1.31.0", features = ["full", "tracing"] }
-tokio-tungstenite = "0.20.0"
-tower = { version = "0.4.13", features = ["full", "tokio"] }
-tower-http = { version = "0.4.3", features = ["full", "trace"] }
+tokio-tungstenite = "0.27.0"
+tower = { version = "0.5.2", features = ["full", "tokio"] }
+tower-http = { version = "0.6.6", features = ["full", "trace"] }
 tracing = "0.1.37"
 tracing-subscriber = "0.3.17"
-dashmap = "5.5.3"
+dashmap = "6.1.0"
+hyper = "1.7.0"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winres = "0.1"

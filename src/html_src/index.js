@@ -1,3 +1,5 @@
+window.lastLogLineCount = window.lastLogLineCount || {};
+
 function closeMenu() {
   $("#menu").animate(
     {
@@ -502,17 +504,18 @@ $(document).ready(function () {
           var server = obj.servers[index];
           let serverName = server.name;
           addDropdownNoDupe(serverName, !server.active);
-          if (justStarted) {
-            // Do not update config here, wait for ConfigInfo
-            var lines = server.output.split("\r\n");
-            for (linePos in lines) {
-              var line = lines[linePos];
-              var p = $('<p class="STDOutMessage"></p>').appendTo(
-                "." + serverName + "Out",
-              )[0];
+          var outDiv = $("." + serverName + "Out");
+          var lines = server.output.split("\r\n");
+          var lastCount = window.lastLogLineCount[serverName] || 0;
+          // Only append new lines
+          for (let i = lastCount; i < lines.length; i++) {
+            var line = lines[i];
+            if (line.trim() !== "") {
+              var p = $('<p class="STDOutMessage"></p>').appendTo(outDiv)[0];
               p.innerHTML = line;
             }
           }
+          window.lastLogLineCount[serverName] = lines.length;
         }
         window.serverInfoObj = obj;
         break;
@@ -521,6 +524,10 @@ $(document).ready(function () {
         // Split on <br> (or <br/>), so each log line is its own <p>
         var lines = str.split(/<br\s*\/?>/i);
         var outDiv = $("." + obj.server_name + "Out")[0];
+        if (!outDiv) {
+          console.warn("Output div not found for server:", obj.server_name);
+          break;
+        }
         var shouldScroll = outDiv.scrollTop == outDiv.scrollHeight;
         lines.forEach(function (line) {
           if (line.trim() !== "") {

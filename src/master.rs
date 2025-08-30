@@ -48,7 +48,7 @@ impl SlaveConnection {
             };
             let messag = serde_json::to_string(&request_message).unwrap();
             // Send requestInfo message
-            let message = Message::Text(messag);
+            let message = tokio_tungstenite::tungstenite::Message::Text(messag.into());
             let _res = stream.send(message).await;
 
             // Read response
@@ -120,7 +120,7 @@ impl SlaveConnection {
                                             }
                                         }
                                         "ServerOutput" => {
-                                            let _ = app_state.tx.send(text.clone());
+                                            let _ = app_state.tx.send(text.to_string());
                                         }
                                         _ => {}
                                     }
@@ -152,7 +152,7 @@ impl SlaveConnection {
         let message = serde_json::to_string(&stdin_message).unwrap();
         // Send stdin message
         if let Some(stream) = &mut self.stream {
-            let message = Message::Text(message);
+            let message = tokio_tungstenite::tungstenite::Message::Text(message.into());
 
             let _ = tokio::time::timeout(Duration::from_secs_f64(1. / 1000.), stream.send(message))
                 .await;

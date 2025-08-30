@@ -17,8 +17,11 @@ pub async fn start_slave(_state: AppState) {
     info!("Starting server on {}", address.replace("0.0.0.0", "*"));
 
     let stateful_router = router.with_state(_state);
-    axum::Server::bind(&address.parse().unwrap())
-        .serve(stateful_router.into_make_service())
+    use axum::serve;
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind(&address).await.unwrap();
+    serve(listener, stateful_router.into_make_service())
         .await
         .unwrap();
 }

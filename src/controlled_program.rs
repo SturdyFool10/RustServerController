@@ -136,6 +136,20 @@ impl Drop for ControlledProgramInstance {
 
 impl ControlledProgramInstance {
     pub fn new(name: &str, exe_path: &str, arguments: Vec<String>, working_dir: String) -> Self {
+        use std::fs;
+        use std::path::Path;
+
+        // Ensure the working directory exists, create if it doesn't
+        let working_dir_path = Path::new(&working_dir);
+        if !working_dir_path.exists() {
+            if let Err(e) = fs::create_dir_all(&working_dir_path) {
+                panic!(
+                    "Failed to create working directory {:?}: {}",
+                    working_dir_path, e
+                );
+            }
+        }
+
         let mut process = Command::new(exe_path);
         let mut process = process //this line needs to be here to prevent dropped value error
             .stdin(Stdio::piped()) //pipe stdin
