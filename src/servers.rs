@@ -57,6 +57,8 @@ pub async fn process_stdout(state: AppState) {
                             "A child process has closed! index: {} ExitCode: {}",
                             index, exit_code
                         );
+                        // Mark as inactive
+                        server.active = false;
                         // Send termination message to web console
                         send_termination_message(
                             &state,
@@ -106,6 +108,8 @@ pub async fn process_stdout(state: AppState) {
             for desc in new_instances {
                 servers.push(desc.into_instance(&state.specialization_registry));
             }
+            // Remove servers in reverse order to avoid index shifting
+            to_remove.sort_unstable_by(|a, b| b.cmp(a));
             for index in to_remove {
                 servers.remove(index);
             }

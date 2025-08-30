@@ -222,7 +222,8 @@ h1 {
     box-sizing: content-box;
 }
 .CentralMenuDropdown.open {
-    height: 48vh;
+    height: auto;
+    min-height: 2em;
     transition: max-height 250ms linear;
 }
 .CentralMenuDropdown a {
@@ -274,9 +275,7 @@ h1 {
     box-sizing: content-box;
 }
 .dropdownDrop {
-    position: absolute;
-    left: 0px;
-    top: 5vh;
+    position: static;
     width: 100%;
     border-bottom-color: var(--border);
     border-bottom-width: 3px;

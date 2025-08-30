@@ -113,6 +113,7 @@ pub struct ControlledProgramInstance {
     pub last_log_lines: usize,
     pub curr_output_in_progress: String,
     pub crash_prevention: bool,
+    pub active: bool,
     //optional, remove if unused then remove any references within this file
     pub specialized_server_type: Option<SpecializedServerTypes>,
     pub specialized_server_info: Option<serde_json::Value>,
@@ -178,6 +179,7 @@ impl ControlledProgramInstance {
             last_log_lines: 0,
             curr_output_in_progress: "".to_string(),
             crash_prevention: true,
+            active: true,
             specialized_server_type: None,
             specialized_server_info: None,
             specialization_handler: None,
