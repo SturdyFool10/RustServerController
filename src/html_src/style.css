@@ -273,6 +273,16 @@ h1 {
     height: calc(1em + 1em); /* 1em font-size + 2*0.5em padding */
     min-height: 2em;
     box-sizing: content-box;
+    z-index: 10;
+    background: var(--bg);
+    border-bottom-color: var(--border);
+    border-bottom-width: 3px;
+    border-bottom-style: solid;
+    border-top-color: var(--border);
+    border-top-width: 3px;
+    border-top-style: solid;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
 }
 .dropdownDrop {
     position: static;
@@ -298,6 +308,8 @@ h1 {
         1em + 1em
     ); /* Match the tab row height: 1em font-size + 2*0.5em padding */
     white-space: nowrap;
+    position: relative;
+    padding-top: 0.75em;
 }
 .serverSTDIn {
     width: 100%;

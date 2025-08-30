@@ -53,21 +53,38 @@ function dropdownClick(event) {
   dropdown.toggleClass("open");
   var slider = dropdown.find(".dropdownDrop");
   var arrow = dropdown.find(".dropdownArrow");
+
+  // Exponential easing function for jQuery animate
+  $.easing.expoEaseInOut = function (x, t, b, c, d) {
+    if (t === 0) return b;
+    if (t === d) return b + c;
+    if ((t /= d / 2) < 1) return (c / 2) * Math.pow(2, 10 * (t - 1)) + b;
+    return (c / 2) * (-Math.pow(2, -10 * --t) + 2) + b;
+  };
+
   // Toggle the visibility of the ".dropdownDrop" content with a slide animation
   if (slider.hasClass("open")) {
     //close, then hide
     AnimateRotate(arrow.find("svg"), 0, 180, 100);
-    slider.slideUp(250, function () {
-      slider.hide();
-      //$(".CentralMenuDropdown").show();
+    slider.slideUp({
+      duration: 250,
+      easing: "expoEaseInOut",
+      complete: function () {
+        slider.hide();
+        //$(".CentralMenuDropdown").show();
+      },
     });
   } else {
     //show, then open
     //$(".CentralMenuDropdown").hide();
     //dropdown.show();
     AnimateRotate(arrow.find("svg"), 180, 0, 100);
-    slider.slideDown(250, function () {
-      slider.show();
+    slider.slideDown({
+      duration: 250,
+      easing: "expoEaseInOut",
+      complete: function () {
+        slider.show();
+      },
     });
   }
   slider.toggleClass("open");
