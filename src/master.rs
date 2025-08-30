@@ -65,9 +65,7 @@ impl SlaveConnection {
                             // Handle the message, e.g., if it's a text message
                             if let Message::Text(text) = msg {
                                 let js: Result<Value, _> = serde_json::from_str(&text);
-                                let js2: Value;
-                                if js.is_ok() {
-                                    js2 = js.unwrap();
+                                if let Ok(js2) = js {
                                     match js2["type"].as_str().unwrap() {
                                         "ServerInfo" => {
                                             let serde_res = serde_json::from_str(&text);
@@ -78,7 +76,8 @@ impl SlaveConnection {
                                                 let s_message =
                                                     serde_json::to_string(&_sinfo).unwrap();
                                                 let s_def = serde_json::to_string(&def).unwrap();
-                                                if s_message != s_def && _sinfo.servers.len() != 0 {
+                                                if s_message != s_def && !_sinfo.servers.is_empty()
+                                                {
                                                     for server_info in _sinfo.servers.iter() {
                                                         let new_info = ServerInfo {
                                                             name: server_info.name.clone(),
@@ -138,6 +137,8 @@ impl SlaveConnection {
             Err("No active connection".into())
         }
     }
+
+    #[allow(dead_code)]
     pub async fn write_stdin(
         &mut self,
         server_name: String,
@@ -164,6 +165,7 @@ impl SlaveConnection {
         Ok(())
     }
 }
+
 pub async fn create_slave_connections(state: AppState) {
     let mut slaves: Vec<SlaveConnection> = vec![];
     let conf = state.config.lock().await;

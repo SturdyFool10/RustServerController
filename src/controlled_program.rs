@@ -125,7 +125,7 @@ impl Drop for ControlledProgramInstance {
         // Attempt to kill the process if it's still running
         if let Some(id) = self.process.id() {
             // Try to kill the process gracefully
-            let _ = self.process.kill();
+            std::mem::drop(self.process.kill());
             tracing::info!(
                 "Terminated server process '{}' (PID {}) on drop.",
                 self.name,
@@ -143,7 +143,7 @@ impl ControlledProgramInstance {
         // Ensure the working directory exists, create if it doesn't
         let working_dir_path = Path::new(&working_dir);
         if !working_dir_path.exists() {
-            if let Err(e) = fs::create_dir_all(&working_dir_path) {
+            if let Err(e) = fs::create_dir_all(working_dir_path) {
                 panic!(
                     "Failed to create working directory {:?}: {}",
                     working_dir_path, e
@@ -232,7 +232,7 @@ impl ControlledProgramInstance {
         if inp < 150 {
             inp = 0;
         } else {
-            inp = inp - 150;
+            inp -= 150;
         }
         self.curr_output_in_progress = lines[std::cmp::max(0, inp)..lines.len()].join("\n");
         if out.is_empty() {

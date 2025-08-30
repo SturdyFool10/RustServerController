@@ -21,10 +21,13 @@ fn utf8bytes_to_string(bytes: Utf8Bytes) -> String {
     bytes.to_string()
 }
 
+#[allow(unused_imports)]
+use crate::master::SlaveConnection;
+#[allow(unused_imports)]
+use crate::servers::send_termination_message;
 use crate::{
     app_state::AppState, configuration::Config, controlled_program::ControlledProgramDescriptor,
-    master::SlaveConnection, messages::*, servers::send_termination_message,
-    theme::ThemeCollection,
+    messages::*, theme::ThemeCollection,
 };
 #[no_mangle]
 pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -127,10 +130,8 @@ async fn process_message(text: String, state: AppState) {
                 .unwrap_or_else(|| "themes".to_string());
             drop(config);
 
-            let theme_collection = match ThemeCollection::load_from_directory(&themes_folder) {
-                Ok(collection) => collection,
-                Err(_) => ThemeCollection::default(),
-            };
+            let theme_collection =
+                ThemeCollection::load_from_directory(&themes_folder).unwrap_or_default();
 
             let theme_names: Vec<String> = theme_collection
                 .themes
@@ -148,6 +149,7 @@ async fn process_message(text: String, state: AppState) {
         }
         "getThemeCSS" => {
             #[derive(Deserialize)]
+            #[allow(dead_code)]
             struct GetThemeCSSWeb {
                 r#type: String,
                 theme_name: String,
@@ -169,10 +171,8 @@ async fn process_message(text: String, state: AppState) {
                 .unwrap_or_else(|| "themes".to_string());
             drop(config);
 
-            let theme_collection = match ThemeCollection::load_from_directory(&themes_folder) {
-                Ok(collection) => collection,
-                Err(_) => ThemeCollection::default(),
-            };
+            let theme_collection =
+                ThemeCollection::load_from_directory(&themes_folder).unwrap_or_default();
 
             let css = if let Some(theme) = theme_collection
                 .themes
@@ -227,14 +227,14 @@ async fn process_message(text: String, state: AppState) {
                     specialized_info: server.specialized_server_info.clone(),
                     host: None,
                 };
-                if val.arguments.get(0).copied().unwrap_or(false) {
+                if val.arguments.first().copied().unwrap_or(false) {
                     let cl: String = server.curr_output_in_progress.clone();
                     let split: Vec<&str> = cl.split("\n").collect();
                     let mut inp = split.len();
                     if inp < 150 {
                         inp = 0;
                     } else {
-                        inp = inp - 150;
+                        inp -= 150;
                     }
                     s_info.output = split[inp..split.len()].join("\n");
                 }
@@ -283,7 +283,7 @@ async fn process_message(text: String, state: AppState) {
                     drop(servers);
                     let config = state.config.lock().await;
                     #[allow(unused)]
-                    let slave = config.slave.clone();
+                    let slave = config.slave;
                     drop(config);
                     // If not active, and value is "start", start the server
                     if !is_active_server && value.value == "start" {
@@ -311,6 +311,7 @@ async fn process_message(text: String, state: AppState) {
         }
         "configChange" => {
             #[derive(Deserialize)]
+            #[allow(dead_code)]
             struct ConfigChangeMessage {
                 r#type: String,
                 #[serde(alias = "updatedConfig", alias = "updated_config")]

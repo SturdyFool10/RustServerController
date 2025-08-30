@@ -115,29 +115,22 @@ pub async fn process_stdout(state: AppState) {
             }
             //all of our process are valid at this point, no need to even be careful about it
             for server in servers.iter_mut() {
-                let str = match tokio::time::timeout(
+                let str = tokio::time::timeout(
                     tokio::time::Duration::from_secs_f64(1. / 10.),
                     server.read_output(),
                 )
                 .await
-                {
-                    Ok(val) => val,
-                    _ => None,
-                };
-                match str {
-                    Some(val) => {
-                        if !val.is_empty() {
-                            let out = ConsoleOutput {
-                                r#type: "ServerOutput".to_owned(),
-                                output: val,
-                                server_name: server.name.clone(),
-                                server_type: server.specialized_server_type.clone(),
-                            };
-                            let _ = state.tx.send(serde_json::to_string(&out).unwrap());
-                        }
+                .unwrap_or_default();
+                if let Some(val) = str {
+                    if !val.is_empty() {
+                        let out = ConsoleOutput {
+                            r#type: "ServerOutput".to_owned(),
+                            output: val,
+                            server_name: server.name.clone(),
+                            server_type: server.specialized_server_type.clone(),
+                        };
+                        let _ = state.tx.send(serde_json::to_string(&out).unwrap());
                     }
-
-                    _ => {}
                 }
             }
             drop(servers);

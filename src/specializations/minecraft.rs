@@ -7,8 +7,9 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 /// Minecraft specialization struct.
-/// Holds any state needed for Minecraft-specific logic.
+
 #[derive(Default)]
+
 pub struct MinecraftSpecialization {
     // No internal state needed; all info is stored in ControlledProgramInstance
 }
@@ -57,6 +58,7 @@ impl ServerSpecialization for MinecraftSpecialization {
         // Ready regex
         let ready_pattern = Regex::new(r#"Done \(\d+\.\d+s\)! For help, type "help""#).unwrap();
 
+        #[allow(clippy::type_complexity)]
         let mut update_info =
             |f: &mut dyn FnMut(&mut usize, usize, &mut bool, &mut Vec<String>)| {
                 if let Some(Value::Object(ref mut obj)) = instance.specialized_server_info {

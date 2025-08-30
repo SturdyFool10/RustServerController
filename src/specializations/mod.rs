@@ -9,21 +9,14 @@ use std::sync::Arc;
 
 pub trait ServerSpecialization: Send + Sync {
     /// Called when the specialization is first attached to a server instance.
-
     fn init(&mut self, instance: &mut ControlledProgramInstance);
-
     /// Called for each output line from the server process.
-
     /// Takes ownership of the log line. Return Some(String) to transform the line, None to omit it.
-
     fn parse_output(
         &mut self,
-
         line: String,
-
         instance: &mut ControlledProgramInstance,
     ) -> Option<String>;
-
     /// Called when the server process exits.
     /// Allows the specialization to handle exit-specific logic (e.g., EULA patching, auto-restart).
     /// Default implementation does nothing.
@@ -35,11 +28,8 @@ pub trait ServerSpecialization: Send + Sync {
     ) {
         // Default: do nothing
     }
-
     /// Returns the current status/info for this specialization.
-
     #[allow(unused)]
-
     fn get_status(&self) -> serde_json::Value;
 }
 
@@ -93,7 +83,3 @@ pub fn init_builtin_registry() -> Arc<SpecializationRegistry> {
     registry.register("Terraria", terraria::factory);
     registry
 }
-
-// pub mod minecraft;
-// pub mod terraria;
-// (Uncomment and implement these modules as you migrate logic.)

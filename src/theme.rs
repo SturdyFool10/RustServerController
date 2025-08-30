@@ -9,8 +9,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 /// Represents the available color spaces that can be used for themes
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum ThemeColorSpace {
+    #[default]
     Oklch,
     Oklab,
     Lch,
@@ -24,12 +25,6 @@ pub enum ThemeColorSpace {
     Lab,
     Luv,
     Xyz,
-}
-
-impl Default for ThemeColorSpace {
-    fn default() -> Self {
-        ThemeColorSpace::Oklch // Default to Oklch as it's perceptually uniform and uses polar coordinates
-    }
 }
 
 /// A struct representing a complete theme for the application
@@ -103,9 +98,10 @@ fn oklab_to_color(l: f64, a: f64, b: f64, alpha: f64) -> Color {
 impl Theme {
     /// Creates a new theme with the specified name
     pub fn new(name: &str) -> Self {
-        let mut theme = Self::default();
-        theme.name = name.to_string();
-        theme
+        Self {
+            name: name.to_string(),
+            ..Self::default()
+        }
     }
 
     /// Create a light theme variant
@@ -309,7 +305,7 @@ impl Theme {
                 let path = entry.path();
 
                 // Only check JSON files
-                if path.extension().map_or(false, |ext| ext == "json") {
+                if path.extension().is_some_and(|ext| ext == "json") {
                     if let Ok(json) = fs::read_to_string(&path) {
                         if let Ok(theme) = serde_json::from_str::<Theme>(&json) {
                             if theme.name == theme_name {
@@ -506,7 +502,7 @@ impl ThemeCollection {
             let path = entry.path();
 
             // Only process JSON files
-            if path.extension().map_or(false, |ext| ext == "json") {
+            if path.extension().is_some_and(|ext| ext == "json") {
                 match Theme::load_from_file(&path) {
                     Ok(theme) => {
                         collection.add_theme(theme);

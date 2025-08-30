@@ -29,13 +29,11 @@ async fn get_router(_state: AppState) -> Router<AppState> {
 }
 async fn handle_icon(State(_state): State<AppState>) -> impl IntoResponse {
     let ico_bytes: &'static [u8] = include_bytes!("html_src/icon.ico");
-    let response = Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "image/x-icon")
         .body(Body::from(ico_bytes))
-        .unwrap();
-
-    response
+        .unwrap()
 }
 #[no_mangle]
 pub async fn start_web_server(_state: AppState) {

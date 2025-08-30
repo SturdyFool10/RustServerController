@@ -29,7 +29,7 @@ use crate::{
 #[tokio::main]
 async fn main() -> Result<(), String> {
     let config = load_json("config.json");
-    let slave: bool = config.slave.clone();
+    let slave: bool = config.slave;
     tracing_subscriber::FmtSubscriber::builder()
         .pretty()
         .with_line_number(false)
@@ -42,17 +42,16 @@ async fn main() -> Result<(), String> {
     let (tx, _rx) = broadcast::channel(100);
     let specialization_registry = specializations::init_builtin_registry();
     let mut app_state = app_state::AppState::new(tx, config, specialization_registry);
-    let handles: Vec<tokio::task::JoinHandle<()>>;
-    if slave {
-        handles = spawn_tasks!(app_state.clone(), start_servers, start_slave)
+    let handles: Vec<tokio::task::JoinHandle<()>> = if slave {
+        spawn_tasks!(app_state.clone(), start_servers, start_slave)
     } else {
-        handles = spawn_tasks!(
+        spawn_tasks!(
             app_state.clone(),
             start_web_server,
             start_servers,
             create_slave_connections
-        );
-    }
+        )
+    };
     {
         info!("Starting {} tasks", handles.len());
     }
@@ -72,7 +71,9 @@ async fn main() -> Result<(), String> {
     };
 
     // Ctrl+C handler
+    #[allow(unused_variables)]
     let app_state_clone_ctrlc = app_state.clone();
+    let _app_state_clone_ctrlc = app_state.clone();
     tokio::spawn({
         let shutdown = shutdown.clone();
         async move {
@@ -83,7 +84,9 @@ async fn main() -> Result<(), String> {
     });
 
     // T key handler
+    #[allow(unused_variables)]
     let app_state_clone_t = app_state.clone();
+    let _app_state_clone_t = app_state.clone();
     tokio::spawn({
         let shutdown = shutdown.clone();
         async move {
@@ -226,8 +229,10 @@ Theme files are JSON files that define colors for the UI. Each theme should have
         }
 
         // Create custom theme example (purple-based theme)
-        let mut custom_theme = Theme::default();
-        custom_theme.name = "Purple Dream".to_string();
+        let mut custom_theme = Theme {
+            name: "Purple Dream".to_string(),
+            ..Theme::default()
+        };
 
         // Use public oklch function to create colors
         custom_theme.primary = oklch(0.7, 0.25, 290.0); // Vibrant purple

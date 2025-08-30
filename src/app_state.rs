@@ -15,6 +15,7 @@ pub struct AppState {
     pub config: Arc<Mutex<Config>>,
     pub slave_servers: Arc<Mutex<Vec<ServerInfo>>>,
     pub slave_connections: Arc<Mutex<Vec<SlaveConnection>>>,
+    #[allow(dead_code)]
     pub global_crash_prevention: Arc<AtomicBool>,
     pub specialization_registry: Arc<SpecializationRegistry>,
 }
