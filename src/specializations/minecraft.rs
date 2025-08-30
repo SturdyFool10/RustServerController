@@ -1,8 +1,10 @@
 use super::ServerSpecialization;
 use crate::ansi_to_html::escape_html;
+use crate::app_state::AppState;
 use crate::controlled_program::ControlledProgramInstance;
 use regex::Regex;
 use serde_json::{json, Value};
+use std::path::Path;
 
 /// Minecraft specialization struct.
 /// Holds any state needed for Minecraft-specific logic.
@@ -118,6 +120,66 @@ impl ServerSpecialization for MinecraftSpecialization {
 
         // Colorize the line using bracket counting
         Some(colorize_minecraft_log_line(&line))
+    }
+
+    fn on_exit(
+        &mut self,
+        instance: &mut ControlledProgramInstance,
+        state: &AppState,
+        _exit_code: i32,
+    ) {
+        // Robust EULA auto-accept: check eula.txt for eula=false and patch/restart if needed
+        let state = state.clone();
+        let name = instance.name.clone();
+        let exe_path = instance.executable_path.clone();
+        let args = instance.command_line_args.clone();
+        let working_dir = instance.working_dir.clone();
+        let specialized_server_type = instance.specialized_server_type.clone();
+        let crash_prevention = instance.crash_prevention;
+        tokio::spawn(async move {
+            // Build eula.txt path
+            let mut eula_path = working_dir.clone();
+            if !(eula_path.ends_with('/') || eula_path.ends_with('\\')) {
+                eula_path += "/";
+            }
+            eula_path += "eula.txt";
+            let eula_file_path = Path::new(&eula_path);
+
+            // Check if eula.txt exists and contains eula=false
+            let needs_patch = match tokio::fs::read_to_string(&eula_file_path).await {
+                Ok(contents) => contents.lines().any(|l| l.trim() == "eula=false"),
+                Err(_) => false,
+            };
+
+            if needs_patch {
+                // Patch eula.txt to eula=true
+                let _ = tokio::fs::write(&eula_file_path, b"eula=true\n").await;
+
+                // Send message to UI
+                let msg = "<span style=\"color: var(--warning, #FFA500);\">[EULA was set to false. Automatically set eula=true and restarting the server.]</span>";
+                let eula_console_msg = crate::messages::ConsoleOutput {
+                    r#type: "ServerOutput".to_owned(),
+                    output: msg.to_string(),
+                    server_name: name.clone(),
+                    server_type: specialized_server_type.clone(),
+                };
+                let _ = state
+                    .tx
+                    .send(serde_json::to_string(&eula_console_msg).unwrap());
+
+                // Restart the server
+                let mut desc = crate::controlled_program::ControlledProgramDescriptor::new(
+                    &name,
+                    &exe_path,
+                    args,
+                    working_dir,
+                );
+                desc.specialized_server_type = specialized_server_type;
+                desc.crash_prevention = crash_prevention;
+                let mut servers = state.servers.lock().await;
+                servers.push(desc.into_instance(&state.specialization_registry));
+            }
+        });
     }
 
     fn get_status(&self) -> serde_json::Value {

@@ -33,6 +33,15 @@ impl ServerSpecialization for TerrariaSpecialization {
     fn get_status(&self) -> Value {
         Value::Null
     }
+
+    fn on_exit(
+        &mut self,
+        _instance: &mut crate::controlled_program::ControlledProgramInstance,
+        _state: &crate::app_state::AppState,
+        _exit_code: i32,
+    ) {
+        // Default: do nothing for Terraria
+    }
 }
 
 /// Factory function for Terraria specialization.

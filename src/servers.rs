@@ -65,6 +65,12 @@ pub async fn process_stdout(state: AppState) {
                             server.specialized_server_type.clone(),
                         )
                         .await;
+
+                        // Call specialization on_exit if present
+                        if let Some(mut handler) = server.specialization_handler.take() {
+                            handler.on_exit(server, &state, exit_code);
+                            server.specialization_handler = Some(handler);
+                        }
                         if exit_code != 0 && server.crash_prevention {
                             info!("Server ID: {} has crashed, restarting it...", index);
                             let mut descriptor = ControlledProgramDescriptor::new(
