@@ -209,7 +209,7 @@ function addServerDropdown(serverName, inactive) {
   if (inactive == true) {
     dropdown.toggleClass("inactiveServer");
   }
-  updateServerInfoMCSpecialization();
+  updateServerInfoSpecializations();
 }
 
 function addDropdownNoDupe(name, inactive) {
@@ -233,35 +233,59 @@ function checkAllServers() {
   var servers = $(".CentralMenuDropdown").toArray();
   //finish this, make sure serverInfo
 }
-function updateServerInfoMCSpecialization() {
+/**
+ * Specialization base class.
+ * Extend this for each server specialization.
+ */
+class ServerSpecialization {
+  updateUI(dropdownElement, server) {
+    // Default: do nothing
+  }
+}
+
+/**
+ * Minecraft specialization class.
+ */
+class MinecraftSpecialization extends ServerSpecialization {
+  updateUI(dropdownElement, server) {
+    const serverNameElem = dropdownElement.querySelector(".serverName");
+    if (serverNameElem) {
+      if (server.active) {
+        let playerCount = server.specialized_info?.player_count ?? 0;
+        let maxPlayers = server.specialized_info?.max_players ?? 0;
+        let isReady = server.specialized_info?.ready ?? false;
+        let statusText = isReady ? "ready to join" : "starting";
+        serverNameElem.textContent = `${server.name} (${playerCount} / ${maxPlayers}) Status: ${statusText}`;
+      } else {
+        serverNameElem.textContent = `${server.name} (inactive)`;
+      }
+    }
+  }
+}
+
+/**
+ * Specialization registry.
+ * Maps config string to specialization class instance.
+ */
+const specializationRegistry = {
+  Minecraft: new MinecraftSpecialization(),
+  // Add more: Rust: new RustSpecialization(), etc.
+};
+
+/**
+ * Generic update function for all specializations.
+ * Calls the appropriate specialization's updateUI for each server.
+ */
+function updateServerInfoSpecializations() {
   try {
     const serverInfo = window.serverInfoObj;
+    if (!serverInfo || !serverInfo.servers) return;
     serverInfo.servers.forEach((server) => {
-      if (server.specialization === "Minecraft") {
-        // Check if the specialization is Minecraft
-        const serverElement = $(`.${server.name}dropdown`).find(
-          ".serverName",
-        )[0];
-        if (serverElement) {
-          if (server.active) {
-            // Expect specialized_info to be an object with player_count, max_players, ready
-            let playerCount = 0;
-            let maxPlayers = 0;
-            let isReady = false;
-            if (
-              server.specialized_info &&
-              typeof server.specialized_info === "object"
-            ) {
-              playerCount = server.specialized_info.player_count ?? 0;
-              maxPlayers = server.specialized_info.max_players ?? 0;
-              isReady = server.specialized_info.ready ?? false;
-            }
-            let statusText = isReady ? "ready to join" : "starting";
-            serverElement.textContent = `${server.name} (${playerCount} / ${maxPlayers}) Status: ${statusText}`;
-          } else {
-            serverElement.textContent = `${server.name} (inactive)`;
-          }
-        }
+      const dropdownElement = document.querySelector(`.${server.name}dropdown`);
+      if (!dropdownElement) return;
+      const specialization = specializationRegistry[server.specialization];
+      if (specialization) {
+        specialization.updateUI(dropdownElement, server);
       }
     });
   } catch (e) {}
@@ -296,7 +320,7 @@ $(document).ready(function () {
     hotReloadWhenReady();
   };
   // Set interval to update server info every quarter second
-  setInterval(updateServerInfoMCSpecialization, 250);
+  setInterval(updateServerInfoSpecializations, 250);
 
   socket.onclose = function () {
     hotReloadWhenReady();

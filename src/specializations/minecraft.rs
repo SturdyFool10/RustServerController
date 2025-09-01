@@ -216,7 +216,6 @@ pub fn factory() -> Box<dyn ServerSpecialization> {
     Box::new(MinecraftSpecialization::default())
 }
 
-/// Colorizes a single Minecraft log line using bracket counting.
 /// Colorizes a single Minecraft log line using bracket counting and HTML spans.
 ///
 /// Applies faded color to the timestamp, semantic color to the log level,
@@ -272,7 +271,7 @@ fn colorize_minecraft_log_line(line: &str) -> String {
 
     // Theme variable mapping
     fn type_to_var(typ: &str) -> &'static str {
-        if typ.contains("ERROR") {
+        if typ.contains("ERROR") || typ.contains("FATAL") {
             "var(--danger)"
         } else if typ.contains("WARN") {
             "var(--warning)"

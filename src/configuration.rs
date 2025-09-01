@@ -17,7 +17,7 @@ use serde_json::Value;
 /// * `registry` - The specialization registry to check allowed types.
 pub fn validate_specializations_in_config(config_json: &Value, registry: &SpecializationRegistry) {
     let allowed: Vec<String> = registry
-        .allowed_names()
+        .existing_names()
         .into_iter()
         .map(|name| format!("\"{}\"", name))
         .collect();

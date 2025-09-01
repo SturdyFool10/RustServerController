@@ -51,10 +51,8 @@ pub trait ServerSpecialization: Send + Sync {
 }
 
 /// Factory type for creating new specialization instances.
-/// Factory type for creating new specialization instances.
 pub type SpecializationFactory = fn() -> Box<dyn ServerSpecialization>;
 
-/// Thread-safe registry for all available specializations.
 /// Thread-safe registry for all available specializations.
 pub struct SpecializationRegistry {
     map: DashMap<String, SpecializationFactory>,
@@ -62,7 +60,7 @@ pub struct SpecializationRegistry {
 
 impl SpecializationRegistry {
     /// Returns a Vec of allowed specialization names.
-    pub fn allowed_names(&self) -> Vec<String> {
+    pub fn existing_names(&self) -> Vec<String> {
         self.map
             .iter()
             .map(|entry| entry.key().to_string())
@@ -73,9 +71,6 @@ impl SpecializationRegistry {
     pub fn contains_key(&self, key: &str) -> bool {
         self.map.contains_key(key)
     }
-}
-
-impl SpecializationRegistry {
     /// Create a new, empty registry.
     pub fn new() -> Self {
         Self {
@@ -104,7 +99,6 @@ impl SpecializationRegistry {
     }
 }
 
-/// Helper to initialize the registry with built-in specializations.
 /// Helper to initialize the registry with built-in specializations.
 ///
 /// Registers "Minecraft" and "Terraria" specializations by default.
