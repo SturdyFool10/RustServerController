@@ -34,7 +34,7 @@ pub async fn send_termination_message(
     state: &AppState,
     server_name: String,
     exit_code: i32,
-    server_type: Option<crate::controlled_program::SpecializedServerTypes>,
+    server_type: Option<String>,
 ) {
     let termination_msg = ConsoleOutput {
         r#type: "ServerOutput".to_owned(),

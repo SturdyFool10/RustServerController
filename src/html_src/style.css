@@ -6,6 +6,15 @@
     --text-muted: oklch(0.76 0.02 256);
     --highlight: oklch(0.5 0.02 256);
     --border: oklch(0.4 0.02 256);
+
+    /* Standard log level colors for all games/themes */
+    --info: oklch(0.7 0.2 260);
+    --debug: oklch(0.76 0.2 76);
+    --event: oklch(0.7 0.2 160);
+    --warning: oklch(0.7 0.2 100);
+    --danger: oklch(0.7 0.2 30);
+    --success: oklch(0.7 0.2 160);
+    --text: oklch(0.96 0.02 256);
     --border-muted: oklch(0.3 0.02 256);
     --primary: oklch(0.76 0.2 256);
     --secondary: oklch(0.76 0.2 76);

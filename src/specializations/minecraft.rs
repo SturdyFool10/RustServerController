@@ -3,35 +3,58 @@ use crate::ansi_to_html::escape_html;
 use crate::app_state::AppState;
 use crate::controlled_program::ControlledProgramInstance;
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::path::Path;
 
 /// Specialization for Minecraft servers.
 ///
 /// Handles Minecraft-specific logic such as parsing player join/leave events,
 /// tracking readiness, and auto-accepting the EULA if needed.
+
 #[derive(Default)]
+
 pub struct MinecraftSpecialization {
-    // No internal state needed; all info is stored in ControlledProgramInstance
+    player_count: usize,
+    max_players: usize,
+    ready: bool,
+    player_list: Vec<String>,
 }
 
 impl ServerSpecialization for MinecraftSpecialization {
+    fn pre_init(
+        &mut self,
+        _env: &mut std::collections::HashMap<String, String>,
+        _descriptor: &crate::controlled_program::ControlledProgramDescriptor,
+    ) {
+        // Default: do nothing for Minecraft
+    }
+
     /// Initialize the Minecraft specialization for a server instance.
+
     ///
+
     /// Reads the `max-players` value from `server.properties` if available,
+
     /// and sets up the initial specialized_server_info state.
+
     fn init(&mut self, instance: &mut ControlledProgramInstance) {
         // Try to read max-players from server.properties
+
         let mut path_str = instance.working_dir.clone();
+
         if !(path_str.ends_with("/") || path_str.ends_with("\\")) {
             path_str += "/";
         }
+
         path_str += "server.properties";
 
         let file_result = crate::files::read_file(path_str.as_str());
+
         let mut max_players = 20; // Minecraft's default
+
         if let Ok(val) = file_result {
             let regex = Regex::new(r"max-players=(\d+)").unwrap();
+
             if let Some(caps) = regex.captures(&val) {
                 if let Some(mp) = caps.get(1) {
                     if let Ok(mp) = mp.as_str().parse::<usize>() {
@@ -40,96 +63,65 @@ impl ServerSpecialization for MinecraftSpecialization {
                 }
             }
         }
-        instance.specialized_server_info = Some(json!({
-            "player_count": 0,
-            "max_players": max_players,
-            "ready": false,
-            "player_list": [],
-        }));
+
+        self.player_count = 0;
+        self.max_players = max_players;
+        self.ready = false;
+        self.player_list = Vec::new();
     }
 
     /// Parses a single output line from the Minecraft server process.
     ///
     /// Updates player count, readiness, and player list in specialized_server_info.
     /// Returns a colorized HTML string for the log line.
+
     fn parse_output(
         &mut self,
+
         line: String,
-        instance: &mut ControlledProgramInstance,
+
+        _instance: &mut ControlledProgramInstance,
     ) -> Option<String> {
         // Player join regex
+
         let join_pattern = Regex::new(
             r"(\w+)\[/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+\] logged in with entity id",
         )
         .unwrap();
+
         // Player leave regex
+
         let leave_pattern = Regex::new(r"\]: (\w+) lost connection").unwrap();
+
         // Ready regex
+
         let ready_pattern = Regex::new(r#"Done \(\d+\.\d+s\)! For help, type "help""#).unwrap();
-
-        #[allow(clippy::type_complexity)]
-        let mut update_info =
-            |f: &mut dyn FnMut(&mut usize, usize, &mut bool, &mut Vec<String>)| {
-                if let Some(Value::Object(ref mut obj)) = instance.specialized_server_info {
-                    let current_players_count =
-                        obj.get("player_count").and_then(Value::as_u64).unwrap_or(0) as usize;
-                    let max_player_count =
-                        obj.get("max_players").and_then(Value::as_u64).unwrap_or(0) as usize;
-                    let ready = obj.get("ready").and_then(Value::as_bool).unwrap_or(false);
-                    let mut player_list: Vec<String> = obj
-                        .get("player_list")
-                        .and_then(Value::as_array)
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(Value::as_str)
-                                .map(|s| s.to_string())
-                                .collect()
-                        })
-                        .unwrap_or_else(Vec::new);
-
-                    let mut ready_mut = ready;
-                    let mut current_players_count_mut = current_players_count;
-                    f(
-                        &mut current_players_count_mut,
-                        max_player_count,
-                        &mut ready_mut,
-                        &mut player_list,
-                    );
-
-                    obj.insert("player_count".to_string(), json!(current_players_count_mut));
-                    obj.insert("ready".to_string(), json!(ready_mut));
-                    obj.insert("player_list".to_string(), json!(player_list));
-                }
-            };
 
         // Player join
         if let Some(caps) = join_pattern.captures(&line) {
             let player_name = &caps[1];
-            update_info(&mut |current_players_count, _max, _ready, player_list| {
-                *current_players_count += 1;
-                player_list.push(player_name.to_string());
-            });
+            self.player_count += 1;
+            self.player_list.push(player_name.to_string());
         }
 
         // Player leave
         if let Some(caps) = leave_pattern.captures(&line) {
             let player_name = &caps[1];
-            update_info(&mut |current_players_count, _max, _ready, player_list| {
-                if *current_players_count > 0 {
-                    *current_players_count -= 1;
-                }
-                player_list.retain(|n| n != player_name);
-            });
+
+            if self.player_count > 0 {
+                self.player_count -= 1;
+            }
+            self.player_list.retain(|n| n != player_name);
         }
 
         // Server ready
+
         if ready_pattern.is_match(&line) {
-            update_info(&mut |_c, _m, ready, _pl| {
-                *ready = true;
-            });
+            self.ready = true;
         }
 
         // Colorize the line using bracket counting
+
         Some(colorize_minecraft_log_line(&line))
     }
 
@@ -198,14 +190,16 @@ impl ServerSpecialization for MinecraftSpecialization {
 
     /// Returns the current status for this specialization.
     ///
-    /// For Minecraft, this is always `Null` as status is stored in the instance's specialized_server_info.
+    /// For Minecraft, this should return the current specialized_server_info if available.
+    /// Returns the instance's specialized_server_info, or Null if not present.
+
     fn get_status(&self) -> serde_json::Value {
-        // This function is called on the handler, which is stateless.
-        // The actual status is stored in the instance's specialized_server_info.
-        // So, this function should not be used directly for Minecraft.
-        // Instead, status should be read from the instance's specialized_server_info in the UI layer.
-        // Returning Null here for compatibility.
-        serde_json::Value::Null
+        json!({
+            "player_count": self.player_count,
+            "max_players": self.max_players,
+            "ready": self.ready,
+            "player_list": self.player_list,
+        })
     }
 }
 
@@ -277,8 +271,14 @@ fn colorize_minecraft_log_line(line: &str) -> String {
             "var(--warning)"
         } else if typ.contains("INFO") {
             "var(--info)"
-        } else {
+        } else if typ.contains("SUCCESS") {
             "var(--success)"
+        } else if typ.contains("DEBUG") {
+            "var(--debug)"
+        } else if typ.contains("EVENT") {
+            "var(--event)"
+        } else {
+            "var(--text)"
         }
     }
 
@@ -291,14 +291,18 @@ fn colorize_minecraft_log_line(line: &str) -> String {
     } else {
         "".to_string()
     };
-    let colored_type = if blocks.len() > 1 {
-        // Extract type (INFO/WARN/ERROR) from inside brackets
+    // Extract type (INFO/WARN/ERROR) from inside brackets for both colored_type and colored_third
+    let typ_str = if blocks.len() > 1 {
         let typ_caps = Regex::new(r"\[([^\]/]+/)?([A-Z]+)\]").unwrap();
-        let typ_str = typ_caps
+        typ_caps
             .captures(&blocks[1])
             .and_then(|c| c.get(2))
             .map(|m| m.as_str())
-            .unwrap_or("");
+            .unwrap_or("")
+    } else {
+        ""
+    };
+    let colored_type = if blocks.len() > 1 {
         let color = type_to_var(typ_str);
         format!(
             "<span style=\"color:{};\">{}</span>",
@@ -310,7 +314,8 @@ fn colorize_minecraft_log_line(line: &str) -> String {
     };
     let colored_third = if blocks.len() > 2 {
         format!(
-            "<span style=\"color:var(--success);\">{}</span>",
+            "<span style=\"color:{};\">{}</span>",
+            type_to_var(typ_str),
             escape_html(&blocks[2])
         )
     } else {

@@ -10,6 +10,14 @@ use serde_json::{json, Value};
 pub struct TerrariaSpecialization {}
 
 impl ServerSpecialization for TerrariaSpecialization {
+    fn pre_init(
+        &mut self,
+        _env: &mut std::collections::HashMap<String, String>,
+        _descriptor: &crate::controlled_program::ControlledProgramDescriptor,
+    ) {
+        // Default: do nothing for Terraria
+    }
+
     /// Initialize the Terraria specialization for a server instance.
     ///
     /// Sets up the initial specialized_server_info state for player tracking.

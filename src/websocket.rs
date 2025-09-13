@@ -261,12 +261,27 @@ async fn process_message(text: String, state: AppState) {
             let mut used_names: Vec<String> = vec![];
             for server in servers.iter() {
                 used_names.push(server.name.clone());
+                // Always call get_status on the specialization handler if present
+                let specialized_info = if let Some(handler) = server.specialization_handler.as_ref()
+                {
+                    handler.get_status()
+                } else {
+                    server
+                        .specialized_server_info
+                        .clone()
+                        .unwrap_or(serde_json::Value::Null)
+                };
+                trace!(
+                    "Websocket: Sending specialized_info for server '{}': {:?}",
+                    server.name,
+                    specialized_info
+                );
                 let mut s_info = ServerInfo {
                     name: server.name.clone(),
                     output: "".to_owned(),
                     active: true,
                     specialization: server.specialized_server_type.clone(),
-                    specialized_info: server.specialized_server_info.clone(),
+                    specialized_info: Some(specialized_info),
                     host: None,
                 };
                 if val.arguments.first().copied().unwrap_or(false) {

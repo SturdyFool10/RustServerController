@@ -16,6 +16,18 @@ use std::sync::Arc;
 ///
 /// Implement this trait for each supported server type (e.g., Minecraft, Terraria).
 pub trait ServerSpecialization: Send + Sync {
+    /// Called before the server process is spawned, allowing environment variables to be customized.
+    ///
+    /// Use this to modify the environment variables for the server process.
+    /// The default implementation does nothing.
+    fn pre_init(
+        &mut self,
+        _env: &mut std::collections::HashMap<String, String>,
+        _descriptor: &crate::controlled_program::ControlledProgramDescriptor,
+    ) {
+        // Default: do nothing
+    }
+
     /// Called when the specialization is first attached to a server instance.
     ///
     /// Use this to initialize any state or inspect the instance.
@@ -107,5 +119,6 @@ pub fn init_builtin_registry() -> Arc<SpecializationRegistry> {
     let registry = Arc::new(SpecializationRegistry::new());
     registry.register("Minecraft", minecraft::factory);
     registry.register("Terraria", terraria::factory);
+    registry.register("VintageStory", vintage_story::vintage_story_factory);
     registry
 }

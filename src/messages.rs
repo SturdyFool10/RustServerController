@@ -18,7 +18,7 @@ pub struct ServerInfo {
     /// Optional host information if this server is on a slave node.
     pub host: Option<SlaveConnectionDescriptor>,
     /// Optional specialized server type.
-    pub specialization: Option<crate::controlled_program::SpecializedServerTypes>,
+    pub specialization: Option<String>,
     /// Optional extra info for specialized servers.
     pub specialized_info: Option<serde_json::Value>,
 }
@@ -33,7 +33,7 @@ pub struct ConsoleOutput {
     /// The name of the server this output is for.
     pub server_name: String,
     /// The specialized server type, if any.
-    pub server_type: Option<crate::controlled_program::SpecializedServerTypes>,
+    pub server_type: Option<String>,
 }
 
 /// Message containing a list of servers and the current configuration.

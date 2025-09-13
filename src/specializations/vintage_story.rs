@@ -1,101 +1,175 @@
-use std::path::Path;
-use tracing::{error, warn};
-
 use crate::{controlled_program::ControlledProgramInstance, specializations::ServerSpecialization};
-use futures::future::join_all;
-use std::fs::read_dir;
-use tracing::info;
+use std::env;
+use std::path::{Path, PathBuf};
 
-pub struct VintageStoryServerSpecialization;
+pub fn vintagestory_data_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(appdata) = env::var("APPDATA") {
+            return Path::new(&appdata).join("VintagestoryData");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(home) = env::var("HOME") {
+            return Path::new(&home).join(".config").join("VintagestoryData");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = env::var("HOME") {
+            return Path::new(&home)
+                .join("Library")
+                .join("Application Support")
+                .join("VintagestoryData");
+        }
+    }
+
+    // fallback: current directory
+    PathBuf::from("./VintagestoryData")
+}
+#[derive(Default)]
+pub struct VintageStoryServerSpecialization {
+    server_name: String,
+    max_players: usize,
+    player_count: i32,
+    calendar_paused: bool,
+    config_found: bool,
+}
+
+// Colorize a single Vintage Story log line using theme colors
+fn colorize_vs_log_line(line: &str) -> String {
+    // Map log type to color and match the full [Server {type}] for coloring
+    let log_types = [
+        ("Notification", "var(--info)"),
+        ("Debug", "var(--debug)"),
+        ("Event", "var(--event)"),
+        ("ERROR", "var(--danger)"),
+        ("FATAL", "var(--danger)"),
+        ("WARN", "var(--warning)"),
+        ("SUCCESS", "var(--success)"),
+        ("INFO", "var(--info)"),
+    ];
+
+    if let Some(start) = line.find("[Server ") {
+        if let Some(end) = line[start..].find(']') {
+            let end = start + end + 1;
+            let before = &line[..start];
+            let bracketed = &line[start..end];
+            let rest = &line[end..];
+
+            // Find which log type matches
+            let mut found_color = "var(--text)";
+            for (ty, color) in &log_types {
+                if bracketed.contains(ty) {
+                    found_color = color;
+                    break;
+                }
+            }
+
+            format!(
+                "{}{}{}",
+                before,
+                format!(
+                    "<span style=\"color:{};font-weight:bold;\">{}</span>",
+                    found_color, bracketed
+                ),
+                rest
+            )
+        } else {
+            format!("<span style=\"color:var(--text);\">{}</span>", line)
+        }
+    } else {
+        format!("<span style=\"color:var(--text);\">{}</span>", line)
+    }
+}
 
 impl ServerSpecialization for VintageStoryServerSpecialization {
-    fn init(&mut self, instance: &mut ControlledProgramInstance) {
-        let exe_path = Path::new(instance.executable_path.as_str());
-        let parent_dir = match exe_path.parent() {
-            Some(dir) => dir.to_path_buf(),
-            None => {
-                error!(
-                    "Failed to get parent directory of executable: {}",
-                    instance.executable_path
-                );
-                return;
-            }
-        };
-        let working_dir = Path::new(instance.working_dir.as_str());
-        //vintage story folders contain some dlls, which are required for the game to run, and are located in the same directory as the executable.
-        // walk the parent dir for dlls, create a list of parent relative paths to dlls so we can copy them in paralell using tokio tasks
-        let mut dlls: Vec<String> = Vec::new();
-        let mut dirs = Vec::new();
-        //use iterators to recursively search for dlls, we also need their relative path so we can recreate the folder structure in the server instance folder
-        dirs.push(parent_dir.clone());
-        while let Some(dir) = dirs.pop() {
-            let entries = match read_dir(&dir) {
-                Ok(e) => e,
-                Err(e) => {
-                    error!("Failed to read directory {:?}: {}", dir, e);
-                    continue;
+    fn pre_init(
+        &mut self,
+        _env: &mut std::collections::HashMap<String, String>,
+        _descriptor: &crate::controlled_program::ControlledProgramDescriptor,
+    ) {
+        // Default: do nothing for VintageStory
+    }
+
+    fn init(&mut self, _instance: &mut ControlledProgramInstance) {
+        // On init, try to read config and set fields
+        let data_path = vintagestory_data_path();
+        let config_path = data_path.join("serverconfig.json");
+        self.server_name = "Vintage Story Server".to_string();
+        self.max_players = 0;
+        self.config_found = false;
+        if let Ok(config_str) = std::fs::read_to_string(&config_path) {
+            if let Ok(config_json) = serde_json::from_str::<serde_json::Value>(&config_str) {
+                if let Some(name) = config_json.get("ServerName").and_then(|v| v.as_str()) {
+                    self.server_name = name.to_string();
                 }
-            };
-            for entry_result in entries {
-                let entry = match entry_result {
-                    Ok(e) => e,
-                    Err(e) => {
-                        warn!("Failed to read directory entry in {:?}: {}", dir, e);
-                        continue;
-                    }
-                };
-                let path = entry.path();
-                if path.is_dir() {
-                    dirs.push(path);
-                } else if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext == "dll" {
-                            match path.strip_prefix(&parent_dir) {
-                                Ok(rel_path) => match rel_path.to_str() {
-                                    Some(s) => dlls.push(s.to_string()),
-                                    None => {
-                                        warn!("Failed to convert path {:?} to string", rel_path)
-                                    }
-                                },
-                                Err(e) => {
-                                    warn!("Failed to get relative path for {:?}: {}", path, e)
-                                }
-                            }
-                        }
-                    }
+                if let Some(max) = config_json.get("MaxClients").and_then(|v| v.as_u64()) {
+                    self.max_players = max as usize;
                 }
+                self.config_found = true;
             }
         }
-
-        // Prepare async copy tasks for all DLLs, ensuring directories exist and logging results
-        let copy_futures = dlls.iter().map(|dll_rel| {
-            let source_path = parent_dir.join(dll_rel);
-            let dest_path = working_dir.join(dll_rel);
-            let dest_dir = dest_path.parent().map(|p| p.to_path_buf());
-            async move {
-                if let Some(dir) = dest_dir {
-                    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-                        error!("Failed to create directory {:?}: {}", dir, e);
-                        return;
-                    }
-                }
-                match tokio::fs::copy(&source_path, &dest_path).await {
-                    Ok(_) => info!("Copied {:?} to {:?}", source_path, dest_path),
-                    Err(e) => error!("Failed to copy {:?} to {:?}: {}", source_path, dest_path, e),
-                }
-            }
-        });
-        // Await all copy tasks to ensure completion before proceeding
-        tokio::runtime::Handle::current().block_on(join_all(copy_futures));
+        self.player_count = 0;
+        self.calendar_paused = false;
     }
+
     fn parse_output(
         &mut self,
         line: String,
-        instance: &mut ControlledProgramInstance,
+        _instance: &mut ControlledProgramInstance,
     ) -> Option<String> {
-        Some(line)
+        // Update player count and calendar paused state from log lines
+        let join_re = regex::Regex::new(r"\[Server Event\].*joins\.").unwrap();
+        let disconnect_re = regex::Regex::new(r"\[Server Event\].*disconnected\.").unwrap();
+        let pause_re = regex::Regex::new(
+            r"\[Server Notification\] All clients disconnected, pausing game calendar\.",
+        )
+        .unwrap();
+        let resume_re = regex::Regex::new(
+            r"\[Server Notification\] A client reconnected, resuming game calendar\.",
+        )
+        .unwrap();
+
+        for l in line.lines() {
+            if join_re.is_match(l) {
+                self.player_count += 1;
+            }
+            if disconnect_re.is_match(l) {
+                self.player_count -= 1;
+                if self.player_count < 0 {
+                    self.player_count = 0;
+                }
+            }
+            if pause_re.is_match(l) {
+                self.calendar_paused = true;
+            }
+            if resume_re.is_match(l) {
+                self.calendar_paused = false;
+            }
+        }
+
+        // Split multi-line output and colorize each line
+        let colored_lines: Vec<String> = line.lines().map(|l| colorize_vs_log_line(l)).collect();
+        Some(colored_lines.join("<br>"))
     }
+
     fn get_status(&self) -> serde_json::Value {
-        serde_json::json!({})
+        serde_json::json!({
+            "server_name": self.server_name,
+            "max_players": self.max_players,
+            "player_count": self.player_count,
+            "calendar_paused": self.calendar_paused,
+            "config_found": self.config_found
+        })
     }
+}
+
+// Colorize a single Vintage Story log line using theme colors
+
+pub fn vintage_story_factory() -> Box<dyn ServerSpecialization> {
+    Box::new(VintageStoryServerSpecialization::default())
 }

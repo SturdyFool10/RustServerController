@@ -98,14 +98,46 @@ impl tracing_subscriber::fmt::time::FormatTime for Custom12HourTimer {
 
 pub fn init_logging() {
     // Set warn for all dependencies by default
-    let filter = EnvFilter::builder().with_default_directive(tracing::Level::WARN.into());
+    // Only allow trace for the local crate, block trace for all external crates
+    let mut filter = EnvFilter::builder()
+        .with_default_directive(tracing::Level::WARN.into())
+        .from_env_lossy();
 
-    // Allow trace for all crates in debug, info in release (use just "trace" or "info" for global)
+    // Only allow trace for the local crate (assume crate name is "rust_server_controller")
+    // You may need to adjust the crate name if it differs
     #[cfg(debug_assertions)]
-    let filter = filter.parse_lossy("trace");
+    {
+        filter = filter
+            .add_directive("rust_server_controller=trace".parse().unwrap())
+            .add_directive("tokio=warn".parse().unwrap())
+            .add_directive("hyper=warn".parse().unwrap())
+            .add_directive("tracing=warn".parse().unwrap())
+            .add_directive("tower=warn".parse().unwrap())
+            .add_directive("warp=warn".parse().unwrap())
+            .add_directive("serde=warn".parse().unwrap())
+            .add_directive("reqwest=warn".parse().unwrap())
+            .add_directive("axum=warn".parse().unwrap())
+            .add_directive("sqlx=warn".parse().unwrap())
+            .add_directive("mio=warn".parse().unwrap())
+            .add_directive("tokio_util=warn".parse().unwrap());
+    }
 
     #[cfg(not(debug_assertions))]
-    let filter = filter.parse_lossy("info");
+    {
+        filter = filter
+            .add_directive("rust_server_controller=info".parse().unwrap())
+            .add_directive("tokio=warn".parse().unwrap())
+            .add_directive("hyper=warn".parse().unwrap())
+            .add_directive("tracing=warn".parse().unwrap())
+            .add_directive("tower=warn".parse().unwrap())
+            .add_directive("warp=warn".parse().unwrap())
+            .add_directive("serde=warn".parse().unwrap())
+            .add_directive("reqwest=warn".parse().unwrap())
+            .add_directive("axum=warn".parse().unwrap())
+            .add_directive("sqlx=warn".parse().unwrap())
+            .add_directive("mio=warn".parse().unwrap())
+            .add_directive("tokio_util=warn".parse().unwrap());
+    }
 
     // Use only the subcrate name as the log file name, with .log extension.
     // Get the current date and time at initialization
@@ -229,10 +261,11 @@ pub fn init_logging() {
 }
 
 /// Function to deliberately cause a panic for testing the panic hook and logging.
+#[allow(dead_code)]
 pub fn test_panic() {
     panic!("This is a test panic from logging::test_panic()");
 }
-
+#[allow(dead_code)]
 pub fn cleanup_old_logs<P: AsRef<Path>>(logs_dir: P, keep_for: std::time::Duration) {
     let logs_dir = logs_dir.as_ref();
     let now = Local::now();

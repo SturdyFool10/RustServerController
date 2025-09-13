@@ -267,8 +267,23 @@ class MinecraftSpecialization extends ServerSpecialization {
  * Specialization registry.
  * Maps config string to specialization class instance.
  */
+class VintageStorySpecialization extends ServerSpecialization {
+  updateUI(dropdownElement, server) {
+    const serverNameElem = dropdownElement.querySelector(".serverName");
+    if (serverNameElem) {
+      // Use specialized_info for player count, max_players, calendar_paused
+      let playerCount = server.specialized_info?.player_count ?? 0;
+      let maxPlayers = server.specialized_info?.max_players ?? 0;
+      let calendarPaused = server.specialized_info?.calendar_paused ?? false;
+      // Always use the RustServerController config's name field
+      serverNameElem.textContent = `${server.name} (${playerCount} / ${maxPlayers}) Calendar Paused: ${calendarPaused}`;
+    }
+  }
+}
+
 const specializationRegistry = {
   Minecraft: new MinecraftSpecialization(),
+  VintageStory: new VintageStorySpecialization(),
 };
 
 /**

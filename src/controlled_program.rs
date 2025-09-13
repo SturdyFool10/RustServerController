@@ -8,14 +8,7 @@ use tokio::{
 
 use crate::ansi_to_html::ansi_to_html;
 
-/// Represents the types of specialized servers supported by the controller.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SpecializedServerTypes {
-    /// Minecraft server specialization.
-    Minecraft,
-    /// Terraria server specialization.
-    Terraria,
-}
+// SpecializedServerTypes enum removed; use String for specialization type.
 
 /// Configuration descriptor for a server or program to be controlled by the application.
 /// Used for configuration and instantiation of server processes.
@@ -33,11 +26,14 @@ pub struct ControlledProgramDescriptor {
     pub auto_start: bool,
     /// Whether to enable crash prevention (auto-restart).
     pub crash_prevention: bool,
-    /// Optional specialized server type (e.g., Minecraft, Terraria).
-    pub specialized_server_type: Option<SpecializedServerTypes>,
+
+    /// Optional specialized server type (e.g., "Minecraft", "Terraria", "VintageStory").
+    pub specialized_server_type: Option<String>,
     /// Optional extra info for specialized servers (not serialized).
     #[serde(skip)]
     pub specialized_server_info: Option<serde_json::Value>,
+    /// Optional specialization options for specializations to use (serialized).
+    pub specialization_options: Option<serde_json::Value>,
 }
 impl ControlledProgramDescriptor {
     /// Creates a new descriptor with all fields specified.
@@ -65,6 +61,7 @@ impl ControlledProgramDescriptor {
             crash_prevention: true,
             specialized_server_type: None,
             specialized_server_info: None,
+            specialization_options: None,
         }
     }
 
@@ -85,6 +82,7 @@ impl ControlledProgramDescriptor {
             crash_prevention: true,
             specialized_server_type: None,
             specialized_server_info: None,
+            specialization_options: None,
         }
     }
 
@@ -98,27 +96,57 @@ impl ControlledProgramDescriptor {
         self,
         registry: &crate::specializations::SpecializationRegistry,
     ) -> ControlledProgramInstance {
+        use std::collections::HashMap;
+
+        // Prepare default environment variables
+        let mut envs: HashMap<String, String> = HashMap::new();
+        envs.insert("TERM".to_string(), "xterm-256color".to_string());
+        envs.insert("COLORTERM".to_string(), "truecolor".to_string());
+        envs.insert("COLUMNS".to_string(), "120".to_string());
+        envs.insert("LINES".to_string(), "30".to_string());
+        envs.insert(
+            "TERM_PROGRAM".to_string(),
+            "RustServerController".to_string(),
+        );
+        envs.insert("FORCE_COLOR".to_string(), "1".to_string());
+
+        let mut specialization_handler = None;
+        let mut specialized_server_type = self.specialized_server_type.clone();
+        let mut crash_prevention = self.crash_prevention;
+
+        // If specialization exists, allow it to modify envs before process spawn
+        if let Some(ref typ) = self.specialized_server_type {
+            tracing::trace!("Attempting to get specialization handler for type: {}", typ);
+            if let Some(mut handler) = registry.get(typ) {
+                tracing::trace!("Calling pre_init for specialization: {}", typ);
+                handler.pre_init(&mut envs, &self);
+                tracing::trace!("pre_init complete for specialization: {}", typ);
+                specialization_handler = Some(handler);
+            } else {
+                eprintln!(
+                    "Warning: Server specialization \"{}\" does not exist in the registry. Your configuration file will NOT be changed, but this server will be treated as unspecialized (generic) behavior.",
+                    typ
+                );
+                specialized_server_type = None;
+            }
+        }
+
         let mut instance = ControlledProgramInstance::new(
             self.name.as_str(),
             self.exe_path.as_str(),
             self.arguments,
             self.working_dir,
+            envs,
         );
-        instance.specialized_server_type = self.specialized_server_type.clone();
-        instance.crash_prevention = self.crash_prevention;
+        instance.specialized_server_type = specialized_server_type;
+        instance.crash_prevention = crash_prevention;
 
-        // Attach specialization handler if type is present
-        if let Some(ref typ) = instance.specialized_server_type {
-            let type_name = match typ {
-                SpecializedServerTypes::Minecraft => "Minecraft",
-                SpecializedServerTypes::Terraria => "Terraria",
-            };
-            // Build the handler first, then assign
-            let mut handler = registry.get(type_name);
-            if let Some(ref mut h) = handler {
-                h.init(&mut instance);
-            }
-            instance.specialization_handler = handler;
+        // If a specialization handler was attached, call init before assigning to instance
+        if let Some(mut handler) = specialization_handler {
+            handler.init(&mut instance);
+            instance.specialization_handler = Some(handler);
+        } else {
+            instance.specialization_handler = None;
         }
 
         instance
@@ -136,6 +164,7 @@ impl Default for ControlledProgramDescriptor {
             crash_prevention: true,
             specialized_server_type: None,
             specialized_server_info: None,
+            specialization_options: None,
         }
     }
 }
@@ -162,7 +191,7 @@ pub struct ControlledProgramInstance {
     /// Whether the process is currently active.
     pub active: bool,
     /// Optional specialized server type.
-    pub specialized_server_type: Option<SpecializedServerTypes>,
+    pub specialized_server_type: Option<String>,
     /// Optional extra info for specialized servers.
     pub specialized_server_info: Option<serde_json::Value>,
     /// Optional handler for server specialization logic.
@@ -176,7 +205,7 @@ impl Drop for ControlledProgramInstance {
         if let Some(id) = self.process.id() {
             // Try to kill the process gracefully
             std::mem::drop(self.process.kill());
-            tracing::info!(
+            tracing::trace!(
                 "Terminated server process '{}' (PID {}) on drop.",
                 self.name,
                 id
@@ -195,7 +224,13 @@ impl ControlledProgramInstance {
     /// * `exe_path` - Path to the executable.
     /// * `arguments` - Command-line arguments.
     /// * `working_dir` - Working directory for the process.
-    pub fn new(name: &str, exe_path: &str, arguments: Vec<String>, working_dir: String) -> Self {
+    pub fn new(
+        name: &str,
+        exe_path: &str,
+        arguments: Vec<String>,
+        working_dir: String,
+        envs: std::collections::HashMap<String, String>,
+    ) -> Self {
         use std::fs;
         use std::path::Path;
 
@@ -211,17 +246,15 @@ impl ControlledProgramInstance {
         }
 
         let mut process = Command::new(exe_path);
-        let mut process = process //this line needs to be here to prevent dropped value error
-            .stdin(Stdio::piped()) //pipe stdin
-            .stdout(Stdio::piped()) //pipe stdout
-            .current_dir(working_dir.clone()) //set the working directory, makes the app think that its being run from within working_dir
-            // Set environment variables to simulate a full terminal
-            .env("TERM", "xterm-256color") // Standard terminal type with 256 colors
-            .env("COLORTERM", "truecolor") // Indicate 24-bit color support
-            .env("COLUMNS", "120") // Default terminal width
-            .env("LINES", "30") // Default terminal height
-            .env("TERM_PROGRAM", "RustServerController") // Terminal program name
-            .env("FORCE_COLOR", "1"); // Force colored output in many applications
+        let mut process = process
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .current_dir(working_dir.clone());
+
+        // Set environment variables from the provided map
+        for (key, value) in envs.iter() {
+            process = process.env(key, value);
+        }
 
         for arg in arguments.iter() {
             process = process.arg(arg.replace("\\\\", "\\").replace('\"', ""));
@@ -269,16 +302,24 @@ impl ControlledProgramInstance {
                     let mut handler = self.specialization_handler.take();
                     if let Some(ref mut handler_inner) = handler {
                         for log_line in new_str.lines() {
-                            if let Some(transformed) =
-                                handler_inner.parse_output(log_line.to_string(), self)
+                            // Enforce: only a single line (no embedded newlines) is passed to parse_output
+                            let single_line = log_line.replace('\r', "").replace('\n', "");
+                            if let Some(transformed) = handler_inner.parse_output(single_line, self)
                             {
-                                out.push_str(&transformed);
+                                // If parse_output returns multi-line output, respect each line
+                                for output_line in transformed.lines() {
+                                    out.push_str(output_line);
+                                    out.push('\n');
+                                }
                             }
                         }
                     }
                     self.specialization_handler = handler;
                 } else {
-                    out.push_str(ansi_to_html(&new_str).as_str());
+                    for log_line in new_str.lines() {
+                        out.push_str(ansi_to_html(log_line).as_str());
+                        out.push('\n');
+                    }
                 }
                 line = read;
             }
