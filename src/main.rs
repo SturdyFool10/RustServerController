@@ -7,6 +7,7 @@ mod app_state;
 mod configuration;
 mod controlled_program;
 mod files;
+mod logging;
 mod macros;
 mod master;
 mod messages;
@@ -39,12 +40,7 @@ use crate::{
 async fn main() -> Result<(), String> {
     let config = load_json("config.json");
     let slave: bool = config.slave;
-    tracing_subscriber::FmtSubscriber::builder()
-        .pretty()
-        .with_line_number(false)
-        .with_file(false)
-        .without_time()
-        .init();
+    logging::init_logging();
 
     // Ensure themes directory exists with default themes
     ensure_themes_directory(&config);

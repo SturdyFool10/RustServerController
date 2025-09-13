@@ -170,7 +170,7 @@ impl ServerSpecialization for MinecraftSpecialization {
                 let _ = tokio::fs::write(&eula_file_path, b"eula=true\n").await;
 
                 // Send message to UI
-                let msg = "<span style=\"color: var(--warning, #FFA500);\">[EULA was set to false. Automatically set eula=true and restarting the server.]</span>";
+                let msg = "<span style=\"color: var(--warning, #FFA500);\">[EULA was set to false. Automatically set eula=true and restarting the server.\nby continuing, you are agreeing to Mojang's EULA]</span>";
                 let eula_console_msg = crate::messages::ConsoleOutput {
                     r#type: "ServerOutput".to_owned(),
                     output: msg.to_string(),

@@ -6,6 +6,7 @@
 
 pub mod minecraft;
 pub mod terraria;
+pub mod vintage_story;
 
 use crate::controlled_program::ControlledProgramInstance;
 use dashmap::DashMap;

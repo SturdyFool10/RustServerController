@@ -269,7 +269,6 @@ class MinecraftSpecialization extends ServerSpecialization {
  */
 const specializationRegistry = {
   Minecraft: new MinecraftSpecialization(),
-  // Add more: Rust: new RustSpecialization(), etc.
 };
 
 /**
