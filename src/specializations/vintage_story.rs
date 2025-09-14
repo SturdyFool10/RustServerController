@@ -141,8 +141,8 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         .unwrap();
 
         let mut status_update = false;
-        let mut player_count_before = self.player_count;
-        let mut calendar_paused_before = self.calendar_paused;
+        let player_count_before = self.player_count;
+        let calendar_paused_before = self.calendar_paused;
 
         for l in line.lines() {
             if join_re.is_match(l) {

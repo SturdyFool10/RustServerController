@@ -63,8 +63,6 @@ pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppStat
 /// # Arguments
 /// * `socket` - The websocket connection.
 /// * `state` - The shared application state.
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
     use std::sync::Arc;
@@ -288,7 +286,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                                                 .to_string(),
                                                         )))
                                                         .await;
-                                                    handled = true;
+
                                                     continue;
                                                 }
                                             };
@@ -509,7 +507,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                                         Ok(msg) => msg,
                                                         Err(_) => {
                                                             let _ = sender.lock().await.send(Message::Text(string_to_utf8bytes("Error parsing GetThemeCSS message".to_string()))).await;
-                                                            handled = true;
+
                                                             continue;
                                                         }
                                                     };
