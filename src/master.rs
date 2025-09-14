@@ -1,7 +1,7 @@
+use crate::{app_state::AppState, configuration::Config, messages::*};
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
-
 use rmp_serde::{from_slice, to_vec};
+use serde::{Deserialize, Serialize};
 use std::{error::Error, time::Duration};
 use tokio::{net::TcpStream, time};
 use tokio_tungstenite::{
@@ -10,8 +10,6 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 use tracing::error;
-
-use crate::{app_state::AppState, configuration::Config, messages::*};
 
 /// Descriptor for a slave connection, including address and port.
 #[derive(Clone, Serialize, Deserialize, Debug)]

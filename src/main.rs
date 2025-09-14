@@ -1,28 +1,3 @@
-/// Main entry point and initialization logic for the Rust Server Controller.
-///
-/// This module sets up the application state, loads configuration, ensures the themes directory exists,
-/// and starts the appropriate async tasks for master or slave mode.
-mod ansi_to_html;
-mod app_state;
-mod configuration;
-mod controlled_program;
-mod files;
-mod logging;
-mod macros;
-mod master;
-mod messages;
-mod servers;
-mod slave;
-mod specializations;
-mod theme;
-mod webserver;
-mod websocket;
-
-use files::*;
-use std::{fs, path::Path, process::exit};
-use tokio::{spawn, sync::broadcast};
-use tracing::*;
-
 use crate::{
     master::create_slave_connections,
     servers::start_servers,
@@ -30,6 +5,47 @@ use crate::{
     theme::{oklch, Theme},
     webserver::start_web_server,
 };
+use files::*;
+use std::{fs, path::Path, process::exit};
+use tokio::{spawn, sync::broadcast};
+use tracing::*;
+
+/// Main entry point and initialization logic for the Rust Server Controller.
+
+///
+
+/// This module sets up the application state, loads configuration, ensures the themes directory exists,
+
+/// and starts the appropriate async tasks for master or slave mode.
+mod ansi_to_html;
+
+mod app_state;
+
+mod configuration;
+
+mod controlled_program;
+
+mod files;
+
+mod logging;
+
+mod macros;
+
+mod master;
+
+mod messages;
+
+mod servers;
+
+mod slave;
+
+mod specializations;
+
+mod theme;
+
+mod webserver;
+
+mod websocket;
 
 /// Main async entry point for the application.
 ///

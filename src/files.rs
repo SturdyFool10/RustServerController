@@ -3,6 +3,7 @@ use std::{fs::File, io::Write};
 use tracing::*;
 
 use crate::configuration::{self, Config};
+
 use crate::specializations;
 
 /// Reads the contents of a file at the given path and returns it as a String.

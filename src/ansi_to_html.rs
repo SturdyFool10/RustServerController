@@ -1,8 +1,10 @@
-/// Utilities for converting ANSI escape sequences to HTML for colored log output.
-/// Provides HTML escaping and color mapping for terminal output.
 use ansi_escapers::{interpreter::*, types::*};
 
+/// Utilities for converting ANSI escape sequences to HTML for colored log output.
+/// Provides HTML escaping and color mapping for terminal output.
+
 /// Escapes HTML special characters to prevent XSS attacks.
+
 ///
 /// Converts &, <, >, ", and ' to their HTML entity equivalents.
 

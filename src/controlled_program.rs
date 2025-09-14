@@ -1,3 +1,4 @@
+use crate::ansi_to_html::ansi_to_html;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use tokio::{
@@ -5,10 +6,6 @@ use tokio::{
     process::*,
     time::{Duration, *},
 };
-
-use crate::ansi_to_html::ansi_to_html;
-
-// SpecializedServerTypes enum removed; use String for specialization type.
 
 /// Configuration descriptor for a server or program to be controlled by the application.
 /// Used for configuration and instantiation of server processes.

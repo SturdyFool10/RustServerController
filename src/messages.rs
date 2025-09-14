@@ -1,10 +1,10 @@
+use crate::master::SlaveConnectionDescriptor;
+use serde::{Deserialize, Serialize};
+
 /// Message types and data structures for server communication and web API.
 ///
 /// This module defines the types used for exchanging information between the
 /// controller, slave nodes, and web clients.
-use serde::{Deserialize, Serialize};
-
-use crate::master::SlaveConnectionDescriptor;
 
 /// Information about a server instance, including its name, output, status, and specialization.
 #[derive(Clone, Serialize, Deserialize)]

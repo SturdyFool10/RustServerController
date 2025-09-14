@@ -1,10 +1,10 @@
+use crate::{
+    app_state::AppState, controlled_program::ControlledProgramDescriptor, messages::ConsoleOutput,
+};
 /// Server management and process monitoring utilities.
 ///
 /// Provides helpers for formatting exit messages, sending termination notifications,
 /// and starting and monitoring server processes.
-use crate::{
-    app_state::AppState, controlled_program::ControlledProgramDescriptor, messages::ConsoleOutput,
-};
 use tracing::*;
 
 // Helper to format exit code message for web console

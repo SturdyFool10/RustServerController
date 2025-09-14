@@ -1,11 +1,10 @@
 use std::sync::{atomic::AtomicBool, Arc};
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 use crate::{
     configuration::Config, controlled_program::ControlledProgramInstance, master::SlaveConnection,
     messages::ServerInfo, specializations::SpecializationRegistry,
 };
-use tokio::sync::broadcast;
 
 /// Shared application state for the server controller.
 ///

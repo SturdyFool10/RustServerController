@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs::{self, File};
 use std::io::Write;
 
 use crate::master::SlaveConnectionDescriptor;
 use crate::specializations::SpecializationRegistry;
-use serde_json::Value;
 
 /// Validates `specialized_server_type` values in a config JSON, warning on unknown types.
 
