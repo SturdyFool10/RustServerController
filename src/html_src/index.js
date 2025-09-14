@@ -365,32 +365,7 @@ $(document).ready(function () {
     socket.send(createEvent("requestInfo", [true]));
     requestThemesList(); // Request themes when connection is established
   });
-  setInterval(function () {
-    try {
-      socket.send(createEvent("requestInfo", [true]));
-      for (var index in window.serverInfoObj.servers) {
-        var server = window.serverInfoObj.servers[index];
-        var name = server.name;
-        var dropdown = $("." + name + "dropdown");
-        var title = dropdown.find(".serverName");
-        var titleText = title[0].textContent;
-        if (
-          server.active == false &&
-          titleText.endsWith(" (inactive)") == false
-        ) {
-          title[0].textContent += " (inactive)";
-          dropdown.toggleClass("inactiveServer");
-        }
-        if (dropdown.hasClass("inactiveServer") && server.active) {
-          title[0].textContent = title[0].textContent
-            .split(" (inactive)")
-            .join("");
-          dropdown.toggleClass("inactiveServer");
-        }
-      }
-      checkAllServers();
-    } catch (e) {}
-  }, 200);
+  // Removed polling for requestInfo; now event-driven from server only
   window.config = {
     state: "NotInit",
   };
@@ -564,13 +539,48 @@ $(document).ready(function () {
   });
 
   socket.onmessage = function (message) {
-    let obj;
+    // Log all messages received from the WebSocket as hex and try to decode as MessagePack
     if (typeof message.data === "string") {
+      // Log as UTF-8 string and hex
+      const encoder = new TextEncoder();
+      const hex = Array.from(encoder.encode(message.data))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(" ");
+      console.log("[WebSocket] Received message (string):", message.data);
+      console.log("[WebSocket] Hex:", hex);
+      try {
+        const parsed = JSON.parse(message.data);
+        console.log("[WebSocket] Parsed JSON:", parsed);
+      } catch (e) {
+        console.log("[WebSocket] Could not parse as JSON:", e);
+      }
       obj = JSON.parse(message.data);
     } else if (message.data instanceof ArrayBuffer) {
-      obj = window.MessagePack.decode(new Uint8Array(message.data));
+      const binArr = new Uint8Array(message.data);
+      const hex = Array.from(binArr)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(" ");
+      console.log("[WebSocket] Received message (binary, hex):", hex);
+      try {
+        const decoded = window.MessagePack.decode(binArr);
+        console.log("[WebSocket] Decoded MessagePack:", decoded);
+        try {
+          const jsonString = JSON.stringify(decoded, null, 2);
+          console.log("[WebSocket] Decoded MessagePack as JSON:", jsonString);
+        } catch (jsonErr) {
+          console.log(
+            "[WebSocket] Could not stringify decoded MessagePack:",
+            jsonErr,
+          );
+        }
+        obj = decoded;
+      } catch (e) {
+        console.log("[WebSocket] Could not decode as MessagePack:", e);
+        obj = null;
+      }
     } else {
       // fallback
+      console.log("[WebSocket] Received unknown message type:", message);
       return;
     }
     switch (obj.type) {
@@ -589,40 +599,32 @@ $(document).ready(function () {
           var server = obj.servers[index];
           let serverName = server.name;
           addDropdownNoDupe(serverName, !server.active);
-          var outDiv = $("." + serverName + "Out");
-          var lines = server.output.split("\r\n");
-          var lastCount = window.lastLogLineCount[serverName] || 0;
-          // Only append new lines
-          for (let i = lastCount; i < lines.length; i++) {
-            var line = lines[i];
-            if (line.trim() !== "") {
-              var p = $('<p class="STDOutMessage"></p>').appendTo(outDiv)[0];
-              p.innerHTML = line;
-            }
-          }
-          window.lastLogLineCount[serverName] = lines.length;
+          processServerLogLines(serverName, server.output, true);
         }
         window.serverInfoObj = obj;
         break;
+      case "ServerSpecializationInfoUpdate":
+        // Update the specialization info for the relevant server and refresh UI
+        if (window.serverInfoObj && window.serverInfoObj.servers) {
+          let found = false;
+          for (let i = 0; i < window.serverInfoObj.servers.length; i++) {
+            let server = window.serverInfoObj.servers[i];
+            if (server.name === obj.server_name) {
+              server.specialized_info = obj.info;
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            // If not found, optionally add a new server entry (or ignore)
+            // window.serverInfoObj.servers.push({ name: obj.server_name, specialized_info: obj.info });
+          }
+          updateServerInfoSpecializations();
+        }
+        break;
       case "ServerOutput":
         var str = obj.output;
-        // Split on <br> (or <br/>), so each log line is its own <p>
-        var lines = str.split(/<br\s*\/?>/i);
-        var outDiv = $("." + obj.server_name + "Out")[0];
-        if (!outDiv) {
-          console.warn("Output div not found for server:", obj.server_name);
-          break;
-        }
-        var shouldScroll = outDiv.scrollTop == outDiv.scrollHeight;
-        lines.forEach(function (line) {
-          if (line.trim() !== "") {
-            var p = $('<p class="STDOutMessage"></p>').appendTo(outDiv)[0];
-            p.innerHTML = line;
-          }
-        });
-        if (shouldScroll) {
-          outDiv.scrollTop = outDiv.scrollHeight;
-        }
+        processServerLogLines(obj.server_name, str, false);
         break;
       case "themesList":
         // Received themes list from server
@@ -700,6 +702,37 @@ $(document).ready(function () {
     // Theme loaded from localStorage
   } else {
     // No theme in localStorage, will request from server
+  }
+
+  // DRY function to process and append server log lines, both for bulk and live updates
+  // If isBulk is true, only append new lines (for ServerInfo bulk updates)
+  function processServerLogLines(serverName, logString, isBulk) {
+    var outDiv = $("." + serverName + "Out")[0];
+    if (!outDiv) {
+      console.warn("Output div not found for server:", serverName);
+      return;
+    }
+    // Accept both <br> and \r\n or \n as line breaks
+    var lines = logString
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/\r\n/g, "\n")
+      .split("\n");
+    var lastCount = window.lastLogLineCount[serverName] || 0;
+    var startIdx = isBulk ? lastCount : 0;
+    var shouldScroll = outDiv.scrollTop == outDiv.scrollHeight;
+    for (let i = startIdx; i < lines.length; i++) {
+      var line = lines[i];
+      if (line.trim() !== "") {
+        var p = $('<p class="STDOutMessage"></p>').appendTo(outDiv)[0];
+        p.innerHTML = line;
+      }
+    }
+    if (shouldScroll) {
+      outDiv.scrollTop = outDiv.scrollHeight;
+    }
+    if (isBulk) {
+      window.lastLogLineCount[serverName] = lines.length;
+    }
   }
 
   // Server will send theme list after connection

@@ -284,7 +284,6 @@ impl ControlledProgramInstance {
     /// Maintains a buffer of recent output lines.
     pub async fn read_output(&mut self) -> Option<String> {
         let mut out = String::new();
-        let mut line: usize = 0;
         let mut has_more = true;
 
         while has_more {
@@ -295,16 +294,16 @@ impl ControlledProgramInstance {
                 Ok(val) => val.unwrap(),
                 Err(_) => 0,
             };
-            if read > 0 && line < read {
+            if read > 0 {
                 let new_str = String::from_utf8_lossy(&buf[0..read]);
-                // Use specialization handler if available, avoiding double mutable borrow
-                if self.specialization_handler.is_some() {
-                    let mut handler = self.specialization_handler.take();
-                    if let Some(ref mut handler_inner) = handler {
-                        for log_line in new_str.lines() {
-                            // Enforce: only a single line (no embedded newlines) is passed to parse_output
-                            let single_line = log_line.replace('\r', "").replace('\n', "");
-                            if let Some(transformed) = handler_inner.parse_output(single_line, self)
+                // Always split into lines and process one at a time
+                for log_line in new_str.lines() {
+                    let single_line = log_line.replace('\r', "").replace('\n', "");
+                    if self.specialization_handler.is_some() {
+                        let mut handler = self.specialization_handler.take();
+                        if let Some(ref mut handler_inner) = handler {
+                            if let Some(transformed) =
+                                handler_inner.parse_output(single_line.clone(), self)
                             {
                                 // If parse_output returns multi-line output, respect each line
                                 for output_line in transformed.lines() {
@@ -313,15 +312,12 @@ impl ControlledProgramInstance {
                                 }
                             }
                         }
-                    }
-                    self.specialization_handler = handler;
-                } else {
-                    for log_line in new_str.lines() {
-                        out.push_str(ansi_to_html(log_line).as_str());
+                        self.specialization_handler = handler;
+                    } else {
+                        out.push_str(ansi_to_html(&single_line).as_str());
                         out.push('\n');
                     }
                 }
-                line = read;
             }
 
             if read < 1 {

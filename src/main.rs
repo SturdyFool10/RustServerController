@@ -63,15 +63,20 @@ async fn main() -> Result<(), String> {
     // Spawn shutdown handler to kill all child processes on exit
     let app_state_clone = app_state.clone();
     let shutdown = async move |reason: &str| {
+        use tokio::time::{timeout, Duration};
         info!(
             "Shutdown signal received ({}), terminating all child processes...",
             reason
         );
         let mut servers = app_state_clone.servers.lock().await;
-        for server in servers.iter_mut() {
-            let _ = server.stop().await;
-        }
-        info!("All child processes terminated.");
+        let shutdown_fut = async {
+            for server in servers.iter_mut() {
+                let _ = server.stop().await;
+            }
+        };
+        // Give all shutdown tasks a maximum of 2 seconds
+        let _ = timeout(Duration::from_secs(2), shutdown_fut).await;
+        info!("All child processes terminated (or timeout reached).");
         std::process::exit(0);
     };
 

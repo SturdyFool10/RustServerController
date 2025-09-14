@@ -162,6 +162,19 @@ pub async fn process_stdout(state: AppState) {
                         };
                         let _ = state.tx.send(serde_json::to_string(&out).unwrap());
                     }
+                    // Emit ServerSpecializationInfoUpdate only if specialization handler says there is an update
+                    if let Some(handler) = server.specialization_handler.as_mut() {
+                        if handler.has_status_update() {
+                            let info = handler.get_status();
+                            let update = crate::messages::ServerSpecializationInfoUpdate {
+                                r#type: "ServerSpecializationInfoUpdate".to_owned(),
+                                server_name: server.name.clone(),
+                                info,
+                            };
+                            let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+                            handler.set_status_update_sent();
+                        }
+                    }
                 }
             }
             drop(servers);

@@ -45,10 +45,19 @@ impl ServerSpecialization for TerrariaSpecialization {
     }
 
     /// Returns the current status for this specialization.
+
     ///
+
     /// For Terraria, this is always `Null` as status is stored in the instance's specialized_server_info.
+
     fn get_status(&self) -> Value {
         Value::Null
+    }
+
+    /// Returns true if the last processed log line resulted in a status update.
+    /// Terraria stub: always false.
+    fn has_status_update(&self) -> bool {
+        false
     }
 
     /// Handles logic when the Terraria server process exits.
@@ -61,6 +70,11 @@ impl ServerSpecialization for TerrariaSpecialization {
         _exit_code: i32,
     ) {
         // Default: do nothing for Terraria
+    }
+
+    /// Sets the status update flag to false after an update has been sent.
+    fn set_status_update_sent(&mut self) {
+        // Terraria stub: nothing to do
     }
 }
 

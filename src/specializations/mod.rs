@@ -28,6 +28,17 @@ pub trait ServerSpecialization: Send + Sync {
         // Default: do nothing
     }
 
+    /// Returns true if the last processed log line resulted in a status update (e.g., player count changed).
+    /// Should be set to true only for meaningful status changes.
+    fn has_status_update(&self) -> bool {
+        false
+    }
+
+    /// Sets the status update flag to false after an update has been sent.
+    fn set_status_update_sent(&mut self) {
+        // Default: do nothing
+    }
+
     /// Called when the specialization is first attached to a server instance.
     ///
     /// Use this to initialize any state or inspect the instance.

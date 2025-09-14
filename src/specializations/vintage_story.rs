@@ -37,6 +37,9 @@ pub struct VintageStoryServerSpecialization {
     player_count: i32,
     calendar_paused: bool,
     config_found: bool,
+    last_status_update: bool,
+    last_player_count: i32,
+    last_calendar_paused: bool,
 }
 
 // Colorize a single Vintage Story log line using theme colors
@@ -115,6 +118,9 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         }
         self.player_count = 0;
         self.calendar_paused = false;
+        self.last_status_update = false;
+        self.last_player_count = self.player_count;
+        self.last_calendar_paused = self.calendar_paused;
     }
 
     fn parse_output(
@@ -134,6 +140,10 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         )
         .unwrap();
 
+        let mut status_update = false;
+        let mut player_count_before = self.player_count;
+        let mut calendar_paused_before = self.calendar_paused;
+
         for l in line.lines() {
             if join_re.is_match(l) {
                 self.player_count += 1;
@@ -152,6 +162,15 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
             }
         }
 
+        if self.player_count != player_count_before
+            || self.calendar_paused != calendar_paused_before
+        {
+            status_update = true;
+        }
+        self.last_status_update = status_update;
+        self.last_player_count = self.player_count;
+        self.last_calendar_paused = self.calendar_paused;
+
         // Split multi-line output and colorize each line
         let colored_lines: Vec<String> = line.lines().map(|l| colorize_vs_log_line(l)).collect();
         Some(colored_lines.join("<br>"))
@@ -165,6 +184,14 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
             "calendar_paused": self.calendar_paused,
             "config_found": self.config_found
         })
+    }
+
+    fn has_status_update(&self) -> bool {
+        self.last_status_update
+    }
+
+    fn set_status_update_sent(&mut self) {
+        self.last_status_update = false;
     }
 }
 

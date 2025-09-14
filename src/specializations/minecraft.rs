@@ -15,18 +15,34 @@ use std::path::Path;
 
 pub struct MinecraftSpecialization {
     player_count: usize,
+
     max_players: usize,
+
     ready: bool,
+
     player_list: Vec<String>,
+
+    last_status_update: bool,
 }
 
 impl ServerSpecialization for MinecraftSpecialization {
     fn pre_init(
         &mut self,
+
         _env: &mut std::collections::HashMap<String, String>,
+
         _descriptor: &crate::controlled_program::ControlledProgramDescriptor,
     ) {
+
         // Default: do nothing for Minecraft
+    }
+
+    fn has_status_update(&self) -> bool {
+        self.last_status_update
+    }
+
+    fn set_status_update_sent(&mut self) {
+        self.last_status_update = false;
     }
 
     /// Initialize the Minecraft specialization for a server instance.
@@ -65,9 +81,14 @@ impl ServerSpecialization for MinecraftSpecialization {
         }
 
         self.player_count = 0;
+
         self.max_players = max_players;
+
         self.ready = false;
+
         self.player_list = Vec::new();
+
+        self.last_status_update = false;
     }
 
     /// Parses a single output line from the Minecraft server process.
@@ -97,19 +118,30 @@ impl ServerSpecialization for MinecraftSpecialization {
 
         let ready_pattern = Regex::new(r#"Done \(\d+\.\d+s\)! For help, type "help""#).unwrap();
 
+        // Track if status update occurs
+        let mut status_update = false;
+
         // Player join
+
         if let Some(caps) = join_pattern.captures(&line) {
             let player_name = &caps[1];
+
             self.player_count += 1;
+
             self.player_list.push(player_name.to_string());
+
+            status_update = true;
         }
 
         // Player leave
+
         if let Some(caps) = leave_pattern.captures(&line) {
             let player_name = &caps[1];
 
             if self.player_count > 0 {
                 self.player_count -= 1;
+
+                status_update = true;
             }
             self.player_list.retain(|n| n != player_name);
         }
@@ -117,8 +149,14 @@ impl ServerSpecialization for MinecraftSpecialization {
         // Server ready
 
         if ready_pattern.is_match(&line) {
-            self.ready = true;
+            if !self.ready {
+                self.ready = true;
+
+                status_update = true;
+            }
         }
+
+        self.last_status_update = status_update;
 
         // Colorize the line using bracket counting
 

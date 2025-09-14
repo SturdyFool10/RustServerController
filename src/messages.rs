@@ -36,6 +36,18 @@ pub struct ConsoleOutput {
     pub server_type: Option<String>,
 }
 
+/// Message sent when a server specialization has a status/info update.
+/// Sent as MessagePack, contains the server's unique name and the info object.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct ServerSpecializationInfoUpdate {
+    /// The type of message (should be "ServerSpecializationInfoUpdate").
+    pub r#type: String,
+    /// The unique name of the server this update is for.
+    pub server_name: String,
+    /// The specialization info object (arbitrary structure).
+    pub info: serde_json::Value,
+}
+
 /// Message containing a list of servers and the current configuration.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ServerInfoMessage {
