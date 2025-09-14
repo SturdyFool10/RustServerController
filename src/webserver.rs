@@ -40,6 +40,7 @@ async fn get_router(_state: AppState) -> Router<AppState> {
         .nest_service("/html", ServeDir::new("html_src"))
         .route("/", get(main_serve))
         .route("/index.js", get(js_serve))
+        .route("/msgpack.min.js", get(msgpack_serve))
         .route("/ws", get(handle_ws_upgrade))
         .route("/favicon.ico", get(handle_icon));
     router
@@ -54,6 +55,16 @@ async fn handle_icon(State(_state): State<AppState>) -> impl IntoResponse {
         .status(StatusCode::OK)
         .header("Content-Type", "image/x-icon")
         .body(Body::from(ico_bytes))
+        .unwrap()
+}
+
+/// Serves the msgpack.min.js file for the web UI.
+async fn msgpack_serve(State(_state): State<AppState>) -> Response {
+    let js_bytes: &'static [u8] = include_bytes!("html_src/msgpack.min.js");
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/javascript")
+        .body(Body::from(js_bytes))
         .unwrap()
 }
 /// Starts the Axum web server for the controller.

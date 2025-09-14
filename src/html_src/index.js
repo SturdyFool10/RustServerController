@@ -1,5 +1,23 @@
 window.lastLogLineCount = window.lastLogLineCount || {};
 
+// --- Raw WebSocket Message Log UI ---
+$(document).ready(function () {
+  // Add a raw message log panel to the body
+  const rawLogPanel = $(`
+    <div id="rawMessageLogPanel" style="position:fixed;bottom:0;right:0;width:420px;height:200px;z-index:9999;background:rgba(20,20,20,0.97);color:#eee;font-family:monospace;font-size:12px;overflow:auto;border-top-left-radius:8px;border:1px solid #444;box-shadow:0 0 8px #000;">
+      <div style="padding:2px 8px;background:#222;border-top-left-radius:8px;border-bottom:1px solid #444;display:flex;align-items:center;">
+        <span style="flex:1;">Raw WebSocket Log</span>
+        <button id="clearRawLog" style="background:#444;color:#eee;border:none;border-radius:4px;padding:2px 8px;cursor:pointer;">Clear</button>
+      </div>
+      <div id="rawMessageLog" style="height:170px;overflow:auto;padding:4px;"></div>
+    </div>
+  `);
+  $("body").append(rawLogPanel);
+  $("#clearRawLog").click(function () {
+    $("#rawMessageLog").empty();
+  });
+});
+
 function closeMenu() {
   $("#menu").animate(
     {
@@ -150,7 +168,18 @@ function addServerDropdown(serverName, inactive) {
       server_name: serverName,
       value: isStartCommand ? "start" : inputValue,
     };
-    socket.send(JSON.stringify(obj));
+    // Send config as JSON, everything else as MessagePack
+    if (
+      obj.type === "requestConfig" ||
+      obj.type === "getConfig" ||
+      obj.type === "ConfigInfo" ||
+      obj.type === "ConfigChange" ||
+      obj.type === "configChange"
+    ) {
+      socket.send(JSON.stringify(obj));
+    } else {
+      socket.send(window.MessagePack.encode(obj));
+    }
 
     // Clear console output if starting an inactive server
     if (isStartCommand && dropdown.hasClass("inactiveServer")) {
@@ -224,7 +253,17 @@ function createEvent(type, arguments) {
     type: type ?? [],
     arguments: arguments ?? [],
   };
-  return JSON.stringify(obj);
+  if (
+    obj.type === "requestConfig" ||
+    obj.type === "getConfig" ||
+    obj.type === "ConfigInfo" ||
+    obj.type === "ConfigChange" ||
+    obj.type === "configChange"
+  ) {
+    return JSON.stringify(obj);
+  } else {
+    return window.MessagePack.encode(obj);
+  }
 }
 function getClassList(element) {
   return $(element).attr("class").split("/\s+/").join(" ").split(" ");
@@ -330,6 +369,7 @@ async function hashPasswordWithSalt(password, salt) {
 $(document).ready(function () {
   var socket;
   socket = new WebSocket(get_ws_addr());
+  socket.binaryType = "arraybuffer";
   socket.onerror = function () {
     hotReloadWhenReady();
   };
@@ -542,7 +582,35 @@ $(document).ready(function () {
   });
 
   socket.onmessage = function (message) {
-    var obj = JSON.parse(message.data);
+    // Log the raw message for debugging
+    if (typeof message.data === "string") {
+      console.log("[WS RAW] (text):", message.data);
+    } else if (message.data instanceof ArrayBuffer) {
+      // Show as hex and as decoded MessagePack (if possible)
+      const arr = new Uint8Array(message.data);
+      const hex = Array.from(arr)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(" ");
+      console.log("[WS RAW] (binary, hex):", hex);
+      try {
+        const decoded = window.MessagePack.decode(arr);
+        console.log("[WS RAW] (MessagePack decoded):", decoded);
+      } catch (e) {
+        console.log("[WS RAW] (MessagePack decode error):", e);
+      }
+    } else {
+      console.log("[WS RAW] (unknown type):", message.data);
+    }
+
+    let obj;
+    if (typeof message.data === "string") {
+      obj = JSON.parse(message.data);
+    } else if (message.data instanceof ArrayBuffer) {
+      obj = window.MessagePack.decode(new Uint8Array(message.data));
+    } else {
+      // fallback
+      return;
+    }
     switch (obj.type) {
       case "ConfigInfo":
         // Always update config editor with received config

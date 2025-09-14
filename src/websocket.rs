@@ -67,19 +67,55 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sender, mut reciever) = socket.split();
     let mut rx = state.tx.subscribe();
 
-    // Send task: axum expects Utf8Bytes for Message::Text
+    // Send task: send MessagePack binary for all except config (which is JSON/text)
     let send_task_handle = async move {
         while let Ok(val) = rx.recv().await {
-            let _out = sender.send(Message::Text(string_to_utf8bytes(val))).await;
+            // If this is a config message, send as text (JSON), else as MessagePack binary
+            if val.trim_start().starts_with('{') && val.contains("\"type\":\"ConfigInfo\"") {
+                let _out = sender.send(Message::Text(string_to_utf8bytes(val))).await;
+            } else {
+                // Try to encode as MessagePack binary (treat val as JSON string, so first parse to Value)
+                match serde_json::from_str::<serde_json::Value>(&val) {
+                    Ok(json_val) => match rmp_serde::to_vec_named(&json_val) {
+                        Ok(bin) => {
+                            let _out = sender.send(Message::Binary(bin.into())).await;
+                        }
+                        Err(_) => {
+                            // Fallback: send as text if serialization fails
+                            let _out = sender.send(Message::Text(string_to_utf8bytes(val))).await;
+                        }
+                    },
+                    Err(_) => {
+                        // Fallback: send as text if JSON parsing fails
+                        let _out = sender.send(Message::Text(string_to_utf8bytes(val))).await;
+                    }
+                }
+            }
         }
     };
     let rc_state = state.clone();
-    // Listen task: convert Utf8Bytes to String for logic
+    // Listen task: handle both MessagePack binary and JSON text
     let listen_task_handle = async move {
         let mut val = reciever.next().await;
-        while let Some(Ok(Message::Text(text))) = val {
-            let text_str = utf8bytes_to_string(text);
-            tokio::spawn(process_message(text_str, rc_state.clone()));
+        while let Some(msg) = val {
+            match msg {
+                Ok(Message::Text(text)) => {
+                    let text_str = utf8bytes_to_string(text);
+                    tokio::spawn(process_message(text_str, rc_state.clone()));
+                }
+                Ok(Message::Binary(bin)) => {
+                    // Try to decode as MessagePack Value, then to string for process_message
+                    if let Ok(val) = rmp_serde::from_slice::<serde_json::Value>(&bin) {
+                        if let Ok(decoded) = serde_json::to_string(&val) {
+                            tokio::spawn(process_message(decoded, rc_state.clone()));
+                        }
+                    } else if let Ok(decoded) = std::str::from_utf8(&bin) {
+                        // Fallback: treat as UTF-8 string
+                        tokio::spawn(process_message(decoded.to_string(), rc_state.clone()));
+                    }
+                }
+                _ => {}
+            }
             val = reciever.next().await;
         }
     };
@@ -131,6 +167,7 @@ async fn process_message(text: String, state: AppState) {
     // The main changes are in handle_socket above.
     // If you need to propagate Utf8Bytes usage deeper, do so in the master.rs file as well.
     // (Function body unchanged here.)
+    // Always parse as JSON, since process_message is always called with a JSON string now
     let json: serde_json::Value = serde_json::from_str(&text.clone()).unwrap();
     let ev_type = match json["type"].as_str() {
         None => {
