@@ -112,7 +112,7 @@ impl ControlledProgramDescriptor {
 
         let mut specialization_handler = None;
         let mut specialized_server_type = self.specialized_server_type.clone();
-        let mut crash_prevention = self.crash_prevention;
+        let crash_prevention = self.crash_prevention;
 
         // If specialization exists, allow it to modify envs before process spawn
         if let Some(ref typ) = self.specialized_server_type {
