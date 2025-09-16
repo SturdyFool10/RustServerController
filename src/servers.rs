@@ -104,6 +104,17 @@ pub async fn process_stdout(state: AppState) {
                             handler.on_exit(server, &state, exit_code);
                             server.specialization_handler = Some(handler);
                         }
+
+                        // Always send specialization info update when server goes inactive
+                        if let Some(handler) = server.specialization_handler.as_mut() {
+                            let info = handler.get_status();
+                            let update = crate::messages::ServerSpecializationInfoUpdate {
+                                r#type: "ServerSpecializationInfoUpdate".to_owned(),
+                                server_name: server.name.clone(),
+                                info,
+                            };
+                            let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+                        }
                         if exit_code != 0 && server.crash_prevention {
                             info!("Server ID: {} has crashed, restarting it...", index);
                             let mut descriptor = ControlledProgramDescriptor::new(
@@ -137,7 +148,18 @@ pub async fn process_stdout(state: AppState) {
                 }
             }
             for desc in new_instances {
-                servers.push(desc.into_instance(&state.specialization_registry));
+                let instance = desc.into_instance(&state.specialization_registry);
+                // After starting a new server, send specialization info update
+                if let Some(handler) = instance.specialization_handler.as_ref() {
+                    let info = handler.get_status();
+                    let update = crate::messages::ServerSpecializationInfoUpdate {
+                        r#type: "ServerSpecializationInfoUpdate".to_owned(),
+                        server_name: instance.name.clone(),
+                        info,
+                    };
+                    let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+                }
+                servers.push(instance);
             }
             // Remove servers in reverse order to avoid index shifting
             to_remove.sort_unstable_by(|a, b| b.cmp(a));
