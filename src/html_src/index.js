@@ -633,6 +633,7 @@ $(document).ready(function () {
           processServerLogLines(serverName, server.output, true);
         }
         window.serverInfoObj = obj;
+        updateServerInfoSpecializations();
         break;
       case "ServerSpecializationInfoUpdate":
         // Robustly handle specialization info updates and log for debugging
