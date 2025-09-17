@@ -118,7 +118,7 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         }
         self.player_count = 0;
         self.calendar_paused = false;
-        self.last_status_update = false;
+        self.last_status_update = true;
         self.last_player_count = self.player_count;
         self.last_calendar_paused = self.calendar_paused;
     }

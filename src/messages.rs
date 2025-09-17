@@ -46,6 +46,10 @@ pub struct ServerSpecializationInfoUpdate {
     pub server_name: String,
     /// The specialization info object (arbitrary structure).
     pub info: serde_json::Value,
+    /// The specialization type string (e.g., "Minecraft", "VintageStory").
+    pub specialization: String,
+    /// Whether the server is currently active.
+    pub active: bool,
 }
 
 /// Message containing a list of servers and the current configuration.

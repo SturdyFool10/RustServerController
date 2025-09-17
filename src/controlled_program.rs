@@ -193,6 +193,8 @@ pub struct ControlledProgramInstance {
     pub specialized_server_info: Option<serde_json::Value>,
     /// Optional handler for server specialization logic.
     pub specialization_handler: Option<Box<dyn crate::specializations::ServerSpecialization>>,
+    /// Tracks if the first specialization info update has been sent after spawn.
+    pub specialization_info_sent: bool,
 }
 
 impl Drop for ControlledProgramInstance {
@@ -272,6 +274,7 @@ impl ControlledProgramInstance {
             specialized_server_type: None,
             specialized_server_info: None,
             specialization_handler: None,
+            specialization_info_sent: false,
         }
     }
 

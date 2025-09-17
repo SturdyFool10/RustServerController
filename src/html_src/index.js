@@ -270,16 +270,29 @@ class ServerSpecialization {
 class MinecraftSpecialization extends ServerSpecialization {
   updateUI(dropdownElement, server) {
     const serverNameElem = dropdownElement.querySelector(".serverName");
+    console.log(
+      "MinecraftSpecialization.updateUI called for",
+      server.name,
+      "serverNameElem:",
+      serverNameElem,
+      "server:",
+      server,
+    );
     if (serverNameElem) {
       if (server.active) {
         let playerCount = server.specialized_info?.player_count ?? 0;
         let maxPlayers = server.specialized_info?.max_players ?? 0;
         let isReady = server.specialized_info?.ready ?? false;
         let statusText = isReady ? "ready to join" : "starting";
+        // Force DOM update
+        serverNameElem.textContent = "";
         serverNameElem.textContent = `${server.name} (${playerCount} / ${maxPlayers}) Status: ${statusText}`;
       } else {
+        serverNameElem.textContent = "";
         serverNameElem.textContent = `${server.name} (inactive)`;
       }
+    } else {
+      console.warn("Could not find .serverName element for", server.name);
     }
   }
 }
@@ -291,13 +304,27 @@ class MinecraftSpecialization extends ServerSpecialization {
 class VintageStorySpecialization extends ServerSpecialization {
   updateUI(dropdownElement, server) {
     const serverNameElem = dropdownElement.querySelector(".serverName");
+    console.log(
+      "VintageStorySpecialization.updateUI called for",
+      server.name,
+      "serverNameElem:",
+      serverNameElem,
+      "server:",
+      server,
+    );
     if (serverNameElem) {
-      // Use specialized_info for player count, max_players, calendar_paused
       let playerCount = server.specialized_info?.player_count ?? 0;
       let maxPlayers = server.specialized_info?.max_players ?? 0;
       let calendarPaused = server.specialized_info?.calendar_paused ?? false;
-      // Always use the RustServerController config's name field
-      serverNameElem.textContent = `${server.name} (${playerCount} / ${maxPlayers}) Calendar Paused: ${calendarPaused}`;
+      if (server.active) {
+        serverNameElem.textContent = "";
+        serverNameElem.textContent = `${server.name} (${playerCount} / ${maxPlayers}) Calendar Paused: ${calendarPaused}`;
+      } else {
+        serverNameElem.textContent = "";
+        serverNameElem.textContent = `${server.name} (inactive)`;
+      }
+    } else {
+      console.warn("Could not find .serverName element for", server.name);
     }
   }
 }
@@ -316,6 +343,8 @@ function updateServerInfoSpecializations() {
     const serverInfo = window.serverInfoObj;
     if (!serverInfo || !serverInfo.servers) return;
     serverInfo.servers.forEach((server) => {
+      // Ensure dropdown exists before updating UI
+      addDropdownNoDupe(server.name, !server.active);
       const dropdownElement = document.querySelector(`.${server.name}dropdown`);
       if (!dropdownElement) return;
       const specialization = specializationRegistry[server.specialization];
@@ -323,7 +352,9 @@ function updateServerInfoSpecializations() {
         specialization.updateUI(dropdownElement, server);
       }
     });
-  } catch (e) {}
+  } catch (e) {
+    console.error("Error updating specialization UIs:", e);
+  }
 }
 function generateSecureSalt(lengthInBytes) {
   lengthInBytes = lengthInBytes / 2;
@@ -355,8 +386,8 @@ $(document).ready(function () {
   socket.onerror = function () {
     hotReloadWhenReady();
   };
-  // Set interval to update server info every quarter second
-  setInterval(updateServerInfoSpecializations, 250);
+  // Removed polling interval for updateServerInfoSpecializations; now event-driven only
+  // setInterval(updateServerInfoSpecializations, 250);
 
   socket.onclose = function () {
     hotReloadWhenReady();
@@ -604,21 +635,60 @@ $(document).ready(function () {
         window.serverInfoObj = obj;
         break;
       case "ServerSpecializationInfoUpdate":
-        // Update the specialization info for the relevant server and refresh UI
+        // Robustly handle specialization info updates and log for debugging
+        console.log(
+          "[WebSocket] Received ServerSpecializationInfoUpdate:",
+          obj,
+        );
         if (window.serverInfoObj && window.serverInfoObj.servers) {
           let found = false;
           for (let i = 0; i < window.serverInfoObj.servers.length; i++) {
             let server = window.serverInfoObj.servers[i];
             if (server.name === obj.server_name) {
               server.specialized_info = obj.info;
+              // Ensure specialization field is set
+              if (obj.specialization) {
+                server.specialization = obj.specialization;
+              }
+              if (typeof obj.active !== "undefined") {
+                server.active = obj.active;
+              }
               found = true;
               break;
             }
           }
           if (!found) {
-            // If not found, optionally add a new server entry (or ignore)
-            // window.serverInfoObj.servers.push({ name: obj.server_name, specialized_info: obj.info });
+            // Fallback: add a new server entry if missing
+            window.serverInfoObj.servers.push({
+              name: obj.server_name,
+              specialized_info: obj.info,
+              active: typeof obj.active !== "undefined" ? obj.active : false,
+              output: "",
+              specialization: obj.specialization || "",
+            });
+            console.warn(
+              "[WebSocket] Added missing server entry for specialization info update:",
+              obj.server_name,
+            );
           }
+          updateServerInfoSpecializations();
+        } else {
+          // Fallback: create serverInfoObj if missing
+          window.serverInfoObj = {
+            servers: [
+              {
+                name: obj.server_name,
+                specialized_info: obj.info,
+                active: typeof obj.active !== "undefined" ? obj.active : false,
+                output: "",
+                specialization: obj.specialization || "",
+              },
+            ],
+          };
+          console.warn(
+            "[WebSocket] Created window.serverInfoObj for specialization info update:",
+            obj.server_name,
+          );
           updateServerInfoSpecializations();
         }
         break;

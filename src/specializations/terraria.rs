@@ -7,7 +7,9 @@ use serde_json::{json, Value};
 /// Handles Terraria-specific logic such as parsing output and tracking player state.
 /// Currently a stub for demonstration and extension.
 #[derive(Default)]
-pub struct TerrariaSpecialization {}
+pub struct TerrariaSpecialization {
+    last_status_update: bool,
+}
 
 impl ServerSpecialization for TerrariaSpecialization {
     fn pre_init(
@@ -28,6 +30,7 @@ impl ServerSpecialization for TerrariaSpecialization {
             "player_count": 0,
             "max_players": 0
         }));
+        self.last_status_update = true;
     }
 
     /// Parses a single output line from the Terraria server process.
@@ -44,6 +47,14 @@ impl ServerSpecialization for TerrariaSpecialization {
         Some(line)
     }
 
+    fn has_status_update(&self) -> bool {
+        self.last_status_update
+    }
+
+    fn set_status_update_sent(&mut self) {
+        self.last_status_update = false;
+    }
+
     /// Returns the current status for this specialization.
 
     ///
@@ -52,12 +63,6 @@ impl ServerSpecialization for TerrariaSpecialization {
 
     fn get_status(&self) -> Value {
         Value::Null
-    }
-
-    /// Returns true if the last processed log line resulted in a status update.
-    /// Terraria stub: always false.
-    fn has_status_update(&self) -> bool {
-        false
     }
 
     /// Handles logic when the Terraria server process exits.
@@ -70,11 +75,6 @@ impl ServerSpecialization for TerrariaSpecialization {
         _exit_code: i32,
     ) {
         // Default: do nothing for Terraria
-    }
-
-    /// Sets the status update flag to false after an update has been sent.
-    fn set_status_update_sent(&mut self) {
-        // Terraria stub: nothing to do
     }
 }
 

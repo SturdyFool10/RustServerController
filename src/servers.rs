@@ -53,17 +53,30 @@ pub async fn send_termination_message(
 /// # Arguments
 /// * `_state` - The shared application state.
 #[no_mangle]
-pub async fn start_servers(_state: AppState) {
-    let mut config = _state.config.lock().await;
+pub async fn start_servers(state: AppState) {
+    let mut config = state.config.lock().await;
     for server_desc in config.servers.iter_mut() {
         if server_desc.auto_start {
             let new_desc = server_desc.clone();
-            let mut servers = _state.servers.lock().await;
-            servers.push(new_desc.into_instance(&_state.specialization_registry));
+            let mut servers = state.servers.lock().await;
+            let instance = new_desc.into_instance(&state.specialization_registry);
+            // After starting a new server, send specialization info update
+            if let Some(handler) = instance.specialization_handler.as_ref() {
+                let info = handler.get_status();
+                let update = crate::messages::ServerSpecializationInfoUpdate {
+                    r#type: "ServerSpecializationInfoUpdate".to_owned(),
+                    server_name: instance.name.clone(),
+                    info,
+                    specialization: instance.specialized_server_type.clone().unwrap_or_default(),
+                    active: instance.active,
+                };
+                let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+            }
+            servers.push(instance);
             drop(servers);
         }
     }
-    tokio::spawn(process_stdout(_state.clone()));
+    tokio::spawn(process_stdout(state.clone()));
 }
 
 /// Monitors all running servers, handles process exits, restarts crashed servers if needed,
@@ -112,6 +125,11 @@ pub async fn process_stdout(state: AppState) {
                                 r#type: "ServerSpecializationInfoUpdate".to_owned(),
                                 server_name: server.name.clone(),
                                 info,
+                                specialization: server
+                                    .specialized_server_type
+                                    .clone()
+                                    .unwrap_or_default(),
+                                active: server.active,
                             };
                             let _ = state.tx.send(serde_json::to_string(&update).unwrap());
                         }
@@ -156,6 +174,11 @@ pub async fn process_stdout(state: AppState) {
                         r#type: "ServerSpecializationInfoUpdate".to_owned(),
                         server_name: instance.name.clone(),
                         info,
+                        specialization: instance
+                            .specialized_server_type
+                            .clone()
+                            .unwrap_or_default(),
+                        active: instance.active,
                     };
                     let _ = state.tx.send(serde_json::to_string(&update).unwrap());
                 }
@@ -184,14 +207,34 @@ pub async fn process_stdout(state: AppState) {
                         };
                         let _ = state.tx.send(serde_json::to_string(&out).unwrap());
                     }
-                    // Emit ServerSpecializationInfoUpdate only if specialization handler says there is an update
+                    // Send specialization info update only after first output after spawn
                     if let Some(handler) = server.specialization_handler.as_mut() {
-                        if handler.has_status_update() {
+                        if !server.specialization_info_sent {
                             let info = handler.get_status();
                             let update = crate::messages::ServerSpecializationInfoUpdate {
                                 r#type: "ServerSpecializationInfoUpdate".to_owned(),
                                 server_name: server.name.clone(),
                                 info,
+                                specialization: server
+                                    .specialized_server_type
+                                    .clone()
+                                    .unwrap_or_default(),
+                                active: server.active,
+                            };
+                            let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+                            handler.set_status_update_sent();
+                            server.specialization_info_sent = true;
+                        } else if handler.has_status_update() {
+                            let info = handler.get_status();
+                            let update = crate::messages::ServerSpecializationInfoUpdate {
+                                r#type: "ServerSpecializationInfoUpdate".to_owned(),
+                                server_name: server.name.clone(),
+                                info,
+                                specialization: server
+                                    .specialized_server_type
+                                    .clone()
+                                    .unwrap_or_default(),
+                                active: server.active,
                             };
                             let _ = state.tx.send(serde_json::to_string(&update).unwrap());
                             handler.set_status_update_sent();

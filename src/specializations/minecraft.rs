@@ -88,7 +88,7 @@ impl ServerSpecialization for MinecraftSpecialization {
 
         self.player_list = Vec::new();
 
-        self.last_status_update = false;
+        self.last_status_update = true;
     }
 
     /// Parses a single output line from the Minecraft server process.
