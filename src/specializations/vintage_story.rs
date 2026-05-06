@@ -167,7 +167,7 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         {
             status_update = true;
         }
-        self.last_status_update = status_update;
+        self.last_status_update |= status_update;
         self.last_player_count = self.player_count;
         self.last_calendar_paused = self.calendar_paused;
 

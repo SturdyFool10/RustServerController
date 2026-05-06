@@ -47,6 +47,8 @@ mod webserver;
 
 mod websocket;
 
+mod websocket_protocol;
+
 /// Main async entry point for the application.
 ///
 /// Loads configuration, initializes logging, ensures the themes directory exists,

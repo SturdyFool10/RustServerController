@@ -2,7 +2,7 @@
 ///
 /// Provides websocket upgrade, message processing, and helpers for communication
 /// between the web UI and the backend using [`AppState`].
-use crate::servers::format_exit_message;
+use crate::{servers::send_termination_message, websocket_protocol::handle_client_request};
 use axum::{
     extract::{
         ws::{Message, Utf8Bytes, WebSocket},
@@ -12,7 +12,9 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex;
 use tracing::*;
 
 /// Converts a `String` to `Utf8Bytes` for axum WebSocket messages.
@@ -39,12 +41,7 @@ fn utf8bytes_to_string(bytes: Utf8Bytes) -> String {
 
 #[allow(unused_imports)]
 use crate::master::SlaveConnection;
-#[allow(unused_imports)]
-use crate::servers::send_termination_message;
-use crate::{
-    app_state::AppState, configuration::Config, controlled_program::ControlledProgramDescriptor,
-    messages::*, theme::ThemeCollection,
-};
+use crate::{app_state::AppState, configuration::Config, messages::*};
 /// Handles websocket upgrade requests from the web client.
 ///
 /// # Arguments
@@ -58,6 +55,7 @@ pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppStat
     // println!("Handling a socket...");
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
+
 /// Handles a websocket connection, spawning send and receive tasks.
 ///
 /// # Arguments
@@ -65,9 +63,6 @@ pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppStat
 /// * `state` - The shared application state.
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-
     let (sender, mut reciever) = socket.split();
     let sender = Arc::new(Mutex::new(sender));
     let mut rx = state.tx.subscribe();
@@ -125,209 +120,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         let text_str = utf8bytes_to_string(text);
                         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text_str) {
                             if let Some(ev_type) = json.get("type").and_then(|v| v.as_str()) {
-                                match ev_type {
-                                    "requestInfo" => {
-                                        // Compose ServerInfoMessage for this client only
-                                        let servers = state.servers.lock().await;
-                                        let val = if let Ok(v) =
-                                            serde_json::from_str::<SInfoRequestMessage>(&text_str)
-                                        {
-                                            v
-                                        } else {
-                                            SInfoRequestMessage {
-                                                r#type: "requestInfo".to_owned(),
-                                                arguments: vec![true],
-                                            }
-                                        };
-                                        let config = state.config.lock().await;
-                                        let mut info = ServerInfoMessage {
-                                            r#type: "ServerInfo".to_owned(),
-                                            servers: vec![],
-                                            config: config.clone(),
-                                        };
-                                        drop(config);
-                                        let mut used_names: Vec<String> = vec![];
-                                        for server in servers.iter() {
-                                            used_names.push(server.name.clone());
-                                            let specialized_info = if let Some(handler) =
-                                                server.specialization_handler.as_ref()
-                                            {
-                                                handler.get_status()
-                                            } else {
-                                                server
-                                                    .specialized_server_info
-                                                    .clone()
-                                                    .unwrap_or(serde_json::Value::Null)
-                                            };
-                                            let mut s_info = ServerInfo {
-                                                name: server.name.clone(),
-                                                output: "".to_owned(),
-                                                active: true,
-                                                specialization: server
-                                                    .specialized_server_type
-                                                    .clone(),
-                                                specialized_info: Some(specialized_info),
-                                                host: None,
-                                            };
-                                            if val.arguments.first().copied().unwrap_or(false) {
-                                                let cl: String =
-                                                    server.curr_output_in_progress.clone();
-                                                let split: Vec<&str> = cl.split("\n").collect();
-                                                let mut inp = split.len();
-                                                if inp < 150 {
-                                                    inp = 0;
-                                                } else {
-                                                    inp -= 150;
-                                                }
-                                                s_info.output = split[inp..split.len()].join("\n");
-                                            }
-                                            info.servers.push(s_info);
-                                        }
-                                        drop(servers);
-                                        let config = state.config.lock().await;
-                                        for server_config in config.servers.iter() {
-                                            if !used_names.contains(&server_config.name) {
-                                                info.servers.push(ServerInfo {
-                                                    name: server_config.name.clone(),
-                                                    output: "".to_owned(),
-                                                    active: false,
-                                                    specialization: server_config
-                                                        .specialized_server_type
-                                                        .clone(),
-                                                    specialized_info: server_config
-                                                        .specialized_server_info
-                                                        .clone(),
-                                                    host: None,
-                                                })
-                                            }
-                                        }
-                                        drop(config);
-                                        let msg = serde_json::to_string(&info).unwrap();
-                                        let _ = sender
-                                            .lock()
-                                            .await
-                                            .send(Message::Text(string_to_utf8bytes(msg)))
-                                            .await;
-                                        handled = true;
-                                    }
-                                    "getConfig" => {
-                                        // Per-client config info response
-                                        let config = state.config.lock().await;
-                                        let config_info = ConfigInfo {
-                                            r#type: "ConfigInfo".to_owned(),
-                                            config: config.clone(),
-                                        };
-                                        let msg = serde_json::to_string(&config_info).unwrap();
-                                        let _ = sender
-                                            .lock()
-                                            .await
-                                            .send(Message::Text(string_to_utf8bytes(msg)))
-                                            .await;
-                                        handled = true;
-                                    }
-                                    "requestConfig" => {
-                                        // Per-client config info response for requestConfig
-                                        let config = state.config.lock().await;
-                                        let config_info = ConfigInfo {
-                                            r#type: "ConfigInfo".to_owned(),
-                                            config: config.clone(),
-                                        };
-                                        let msg = serde_json::to_string(&config_info).unwrap();
-                                        let _ = sender
-                                            .lock()
-                                            .await
-                                            .send(Message::Text(string_to_utf8bytes(msg)))
-                                            .await;
-                                        handled = true;
-                                    }
-                                    "getThemesList" => {
-                                        let config = state.config.lock().await;
-                                        let themes_folder = config
-                                            .themes_folder
-                                            .clone()
-                                            .unwrap_or_else(|| "themes".to_string());
-                                        drop(config);
-                                        let theme_collection =
-                                            ThemeCollection::load_from_directory(&themes_folder)
-                                                .unwrap_or_default();
-                                        let theme_names: Vec<String> = theme_collection
-                                            .themes
-                                            .iter()
-                                            .map(|theme| theme.name.clone())
-                                            .collect();
-                                        let themes_list = ThemesList {
-                                            r#type: "themesList".to_string(),
-                                            themes: theme_names,
-                                        };
-                                        let msg = serde_json::to_string(&themes_list).unwrap();
-                                        let _ = sender
-                                            .lock()
-                                            .await
-                                            .send(Message::Text(string_to_utf8bytes(msg)))
-                                            .await;
-                                        handled = true;
-                                    }
-                                    "getThemeCSS" => {
-                                        #[derive(Deserialize)]
-                                        #[allow(dead_code)]
-                                        struct GetThemeCSSWeb {
-                                            r#type: String,
-                                            theme_name: String,
-                                        }
-                                        let message: GetThemeCSSWeb =
-                                            match serde_json::from_str(&text_str) {
-                                                Ok(msg) => msg,
-                                                Err(_) => {
-                                                    let _ = sender
-                                                        .lock()
-                                                        .await
-                                                        .send(Message::Text(string_to_utf8bytes(
-                                                            "Error parsing GetThemeCSS message"
-                                                                .to_string(),
-                                                        )))
-                                                        .await;
-
-                                                    continue;
-                                                }
-                                            };
-                                        let config = state.config.lock().await;
-                                        let themes_folder = config
-                                            .themes_folder
-                                            .clone()
-                                            .unwrap_or_else(|| "themes".to_string());
-                                        drop(config);
-                                        let theme_collection =
-                                            ThemeCollection::load_from_directory(&themes_folder)
-                                                .unwrap_or_default();
-                                        let css = if let Some(theme) = theme_collection
-                                            .themes
-                                            .iter()
-                                            .find(|t| t.name == message.theme_name)
-                                        {
-                                            theme.to_css()
-                                        } else {
-                                            let default_theme = ThemeCollection::default();
-                                            if let Some(theme) = default_theme.themes.first() {
-                                                theme.to_css()
-                                            } else {
-                                                String::new()
-                                            }
-                                        };
-                                        let theme_css = ThemeCSS {
-                                            r#type: "themeCSS".to_string(),
-                                            theme_name: message.theme_name,
-                                            css,
-                                        };
-                                        let msg = serde_json::to_string(&theme_css).unwrap();
-                                        let _ = sender
-                                            .lock()
-                                            .await
-                                            .send(Message::Text(string_to_utf8bytes(msg)))
-                                            .await;
-                                        handled = true;
-                                    }
-                                    _ => {}
-                                }
+                                handled = handle_client_request(
+                                    &sender, &state, ev_type, &text_str, false,
+                                )
+                                .await;
                             }
                         }
                         if !handled {
@@ -343,232 +139,10 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                                 {
                                     if let Some(ev_type) = json.get("type").and_then(|v| v.as_str())
                                     {
-                                        match ev_type {
-                                            "requestInfo" => {
-                                                let servers = state.servers.lock().await;
-                                                let val = if let Ok(v) =
-                                                    serde_json::from_str::<SInfoRequestMessage>(
-                                                        &decoded,
-                                                    ) {
-                                                    v
-                                                } else {
-                                                    SInfoRequestMessage {
-                                                        r#type: "requestInfo".to_owned(),
-                                                        arguments: vec![true],
-                                                    }
-                                                };
-                                                let config = state.config.lock().await;
-                                                let mut info = ServerInfoMessage {
-                                                    r#type: "ServerInfo".to_owned(),
-                                                    servers: vec![],
-                                                    config: config.clone(),
-                                                };
-                                                drop(config);
-                                                let mut used_names: Vec<String> = vec![];
-                                                for server in servers.iter() {
-                                                    used_names.push(server.name.clone());
-                                                    let specialized_info = if let Some(handler) =
-                                                        server.specialization_handler.as_ref()
-                                                    {
-                                                        handler.get_status()
-                                                    } else {
-                                                        server
-                                                            .specialized_server_info
-                                                            .clone()
-                                                            .unwrap_or(serde_json::Value::Null)
-                                                    };
-                                                    let mut s_info = ServerInfo {
-                                                        name: server.name.clone(),
-                                                        output: "".to_owned(),
-                                                        active: true,
-                                                        specialization: server
-                                                            .specialized_server_type
-                                                            .clone(),
-                                                        specialized_info: Some(specialized_info),
-                                                        host: None,
-                                                    };
-                                                    if val
-                                                        .arguments
-                                                        .first()
-                                                        .copied()
-                                                        .unwrap_or(false)
-                                                    {
-                                                        let cl: String =
-                                                            server.curr_output_in_progress.clone();
-                                                        let split: Vec<&str> =
-                                                            cl.split("\n").collect();
-                                                        let mut inp = split.len();
-                                                        if inp < 150 {
-                                                            inp = 0;
-                                                        } else {
-                                                            inp -= 150;
-                                                        }
-                                                        s_info.output =
-                                                            split[inp..split.len()].join("\n");
-                                                    }
-                                                    info.servers.push(s_info);
-                                                }
-                                                drop(servers);
-                                                let config = state.config.lock().await;
-                                                for server_config in config.servers.iter() {
-                                                    if !used_names.contains(&server_config.name) {
-                                                        info.servers.push(ServerInfo {
-                                                            name: server_config.name.clone(),
-                                                            output: "".to_owned(),
-                                                            active: false,
-                                                            specialization: server_config
-                                                                .specialized_server_type
-                                                                .clone(),
-                                                            specialized_info: server_config
-                                                                .specialized_server_info
-                                                                .clone(),
-                                                            host: None,
-                                                        })
-                                                    }
-                                                }
-                                                drop(config);
-                                                let msg = serde_json::to_string(&info).unwrap();
-                                                if let Ok(bin) = rmp_serde::to_vec_named(
-                                                    &serde_json::from_str::<serde_json::Value>(
-                                                        &msg,
-                                                    )
-                                                    .unwrap(),
-                                                ) {
-                                                    let _ = sender
-                                                        .lock()
-                                                        .await
-                                                        .send(Message::Binary(bin.into()))
-                                                        .await;
-                                                } else {
-                                                    let _ = sender
-                                                        .lock()
-                                                        .await
-                                                        .send(Message::Text(string_to_utf8bytes(
-                                                            msg,
-                                                        )))
-                                                        .await;
-                                                }
-                                                handled = true;
-                                            }
-                                            "getThemesList" => {
-                                                let config = state.config.lock().await;
-                                                let themes_folder = config
-                                                    .themes_folder
-                                                    .clone()
-                                                    .unwrap_or_else(|| "themes".to_string());
-                                                drop(config);
-                                                let theme_collection =
-                                                    ThemeCollection::load_from_directory(
-                                                        &themes_folder,
-                                                    )
-                                                    .unwrap_or_default();
-                                                let theme_names: Vec<String> = theme_collection
-                                                    .themes
-                                                    .iter()
-                                                    .map(|theme| theme.name.clone())
-                                                    .collect();
-                                                let themes_list = ThemesList {
-                                                    r#type: "themesList".to_string(),
-                                                    themes: theme_names,
-                                                };
-                                                let msg =
-                                                    serde_json::to_string(&themes_list).unwrap();
-                                                if let Ok(bin) = rmp_serde::to_vec_named(
-                                                    &serde_json::from_str::<serde_json::Value>(
-                                                        &msg,
-                                                    )
-                                                    .unwrap(),
-                                                ) {
-                                                    let _ = sender
-                                                        .lock()
-                                                        .await
-                                                        .send(Message::Binary(bin.into()))
-                                                        .await;
-                                                } else {
-                                                    let _ = sender
-                                                        .lock()
-                                                        .await
-                                                        .send(Message::Text(string_to_utf8bytes(
-                                                            msg,
-                                                        )))
-                                                        .await;
-                                                }
-                                                handled = true;
-                                            }
-                                            "getThemeCSS" => {
-                                                #[derive(Deserialize)]
-                                                #[allow(dead_code)]
-                                                struct GetThemeCSSWeb {
-                                                    r#type: String,
-                                                    theme_name: String,
-                                                }
-                                                let message: GetThemeCSSWeb =
-                                                    match serde_json::from_str(&decoded) {
-                                                        Ok(msg) => msg,
-                                                        Err(_) => {
-                                                            let _ = sender.lock().await.send(Message::Text(string_to_utf8bytes("Error parsing GetThemeCSS message".to_string()))).await;
-
-                                                            continue;
-                                                        }
-                                                    };
-                                                let config = state.config.lock().await;
-                                                let themes_folder = config
-                                                    .themes_folder
-                                                    .clone()
-                                                    .unwrap_or_else(|| "themes".to_string());
-                                                drop(config);
-                                                let theme_collection =
-                                                    ThemeCollection::load_from_directory(
-                                                        &themes_folder,
-                                                    )
-                                                    .unwrap_or_default();
-                                                let css = if let Some(theme) = theme_collection
-                                                    .themes
-                                                    .iter()
-                                                    .find(|t| t.name == message.theme_name)
-                                                {
-                                                    theme.to_css()
-                                                } else {
-                                                    let default_theme = ThemeCollection::default();
-                                                    if let Some(theme) =
-                                                        default_theme.themes.first()
-                                                    {
-                                                        theme.to_css()
-                                                    } else {
-                                                        String::new()
-                                                    }
-                                                };
-                                                let theme_css = ThemeCSS {
-                                                    r#type: "themeCSS".to_string(),
-                                                    theme_name: message.theme_name,
-                                                    css,
-                                                };
-                                                let msg =
-                                                    serde_json::to_string(&theme_css).unwrap();
-                                                if let Ok(bin) = rmp_serde::to_vec_named(
-                                                    &serde_json::from_str::<serde_json::Value>(
-                                                        &msg,
-                                                    )
-                                                    .unwrap(),
-                                                ) {
-                                                    let _ = sender
-                                                        .lock()
-                                                        .await
-                                                        .send(Message::Binary(bin.into()))
-                                                        .await;
-                                                } else {
-                                                    let _ = sender
-                                                        .lock()
-                                                        .await
-                                                        .send(Message::Text(string_to_utf8bytes(
-                                                            msg,
-                                                        )))
-                                                        .await;
-                                                }
-                                                handled = true;
-                                            }
-                                            _ => {}
-                                        }
+                                        handled = handle_client_request(
+                                            &sender, &state, ev_type, &decoded, true,
+                                        )
+                                        .await;
                                     }
                                 }
                             }
@@ -623,6 +197,210 @@ async fn pass_stdin(message: StdinInput, server_name: String, state: AppState) {
     }
     drop(servers);
 }
+
+#[derive(Deserialize)]
+struct ConfigChangeMessage {
+    #[serde(alias = "updatedConfig", alias = "updated_config")]
+    updated_config: Config,
+}
+
+#[derive(Deserialize)]
+struct ServerActionMessage {
+    server_name: String,
+}
+
+async fn start_inactive_server(server_name: &str, state: &AppState) {
+    let config = state.config.lock().await;
+    let desc = config
+        .servers
+        .iter()
+        .find(|server_desc| server_desc.name == server_name)
+        .cloned();
+    drop(config);
+
+    if let Some(desc) = desc {
+        let mut servers = state.servers.lock().await;
+        let instance = desc.into_instance(&state.specialization_registry);
+        let specialized_info = if let Some(handler) = instance.specialization_handler.as_ref() {
+            handler.get_status()
+        } else {
+            instance
+                .specialized_server_info
+                .clone()
+                .unwrap_or(serde_json::Value::Null)
+        };
+        let update = ServerSpecializationInfoUpdate {
+            r#type: "ServerSpecializationInfoUpdate".to_string(),
+            server_name: instance.name.clone(),
+            info: specialized_info,
+            specialization: instance.specialized_server_type.clone().unwrap_or_default(),
+            active: true,
+        };
+        servers.push(instance);
+        let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+    }
+}
+
+async fn stop_active_server(server_name: &str, state: &AppState) -> bool {
+    let mut servers = state.servers.lock().await;
+    let Some(index) = servers.iter().position(|server| server.name == server_name) else {
+        return false;
+    };
+
+    let mut server = servers.remove(index);
+    let specialization = server.specialized_server_type.clone().unwrap_or_default();
+    let server_type = server.specialized_server_type.clone();
+    let exit_code = server.stop().await;
+    send_termination_message(
+        state,
+        server.name.clone(),
+        exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+        server_type,
+    )
+    .await;
+    let update = ServerSpecializationInfoUpdate {
+        r#type: "ServerSpecializationInfoUpdate".to_string(),
+        server_name: server.name.clone(),
+        info: serde_json::Value::Null,
+        specialization,
+        active: false,
+    };
+    let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+    true
+}
+
+fn parse_server_action(text: &str, state: &AppState) -> Option<ServerActionMessage> {
+    match serde_json::from_str(text) {
+        Ok(message) => Some(message),
+        Err(error) => {
+            let _ = state
+                .tx
+                .send(format!("Error parsing server action message: {}", error));
+            None
+        }
+    }
+}
+
+async fn start_server_action(text: &str, state: AppState) {
+    let Some(message) = parse_server_action(text, &state) else {
+        return;
+    };
+    start_inactive_server(&message.server_name, &state).await;
+}
+
+async fn kill_server_action(text: &str, state: AppState) {
+    let Some(message) = parse_server_action(text, &state) else {
+        return;
+    };
+    stop_active_server(&message.server_name, &state).await;
+}
+
+async fn restart_server_action(text: &str, state: AppState) {
+    let Some(message) = parse_server_action(text, &state) else {
+        return;
+    };
+    stop_active_server(&message.server_name, &state).await;
+    start_inactive_server(&message.server_name, &state).await;
+}
+
+async fn handle_stdin_input(text: &str, state: AppState) {
+    let value: StdinInput = match serde_json::from_str(text) {
+        Ok(value) => value,
+        Err(error) => {
+            error!("Error parsing stdinInput message: {}", error);
+            return;
+        }
+    };
+
+    let server_name = value.server_name.clone();
+    let servers = state.servers.lock().await;
+    let is_active_server = servers.iter().any(|server| server.name == server_name);
+    drop(servers);
+
+    if is_active_server {
+        tokio::spawn(pass_stdin(value, server_name, state));
+    } else if value.value == "start" {
+        start_inactive_server(&value.server_name, &state).await;
+    }
+}
+
+async fn apply_config_change(text: &str, state: AppState) {
+    let message: ConfigChangeMessage = match serde_json::from_str(text) {
+        Ok(msg) => msg,
+        Err(_) => {
+            let _ = state
+                .tx
+                .send("Error parsing configChange message".to_string());
+            return;
+        }
+    };
+
+    let mut servers = state.servers.lock().await;
+    let mut config = state.config.lock().await;
+
+    for server in servers.iter_mut() {
+        let exit_code = server.stop().await;
+        send_termination_message(
+            &state,
+            server.name.clone(),
+            exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            server.specialized_server_type.clone(),
+        )
+        .await;
+        let update = ServerSpecializationInfoUpdate {
+            r#type: "ServerSpecializationInfoUpdate".to_string(),
+            server_name: server.name.clone(),
+            info: serde_json::Value::Null,
+            specialization: server.specialized_server_type.clone().unwrap_or_default(),
+            active: false,
+        };
+        let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+    }
+    servers.clear();
+
+    config.change(message.updated_config);
+    config.update_config_file("config.json");
+
+    for desc in config.servers.iter_mut().filter(|desc| desc.auto_start) {
+        servers.push(desc.clone().into_instance(&state.specialization_registry));
+    }
+
+    let config_info = ConfigInfo {
+        r#type: "ConfigInfo".to_owned(),
+        config: config.clone(),
+    };
+    let _ = state.tx.send(serde_json::to_string(&config_info).unwrap());
+}
+
+async fn terminate_servers(state: AppState) {
+    let mut servers = state.servers.lock().await;
+    for server in servers.iter_mut() {
+        let exit_code = server.stop().await;
+        send_termination_message(
+            &state,
+            server.name.clone(),
+            exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            server.specialized_server_type.clone(),
+        )
+        .await;
+        let update = ServerSpecializationInfoUpdate {
+            r#type: "ServerSpecializationInfoUpdate".to_string(),
+            server_name: server.name.clone(),
+            info: serde_json::Value::Null,
+            specialization: server.specialized_server_type.clone().unwrap_or_default(),
+            active: false,
+        };
+        let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+    }
+    servers.clear();
+}
+
 /// Processes a message received from the web client over websocket.
 ///
 /// Handles requests for config, themes, server info, stdin input, config changes, and server termination.
@@ -631,11 +409,6 @@ async fn pass_stdin(message: StdinInput, server_name: String, state: AppState) {
 /// * `text` - The received message as a string.
 /// * `state` - The shared application state.
 async fn process_message(text: String, state: AppState) {
-    // (No change to this function, but ensure that all .send(Message::Text(...)) in this file use Utf8Bytes::from(val) and all received Message::Text(text) are handled as Utf8Bytes and converted to String as needed.)
-    // The main changes are in handle_socket above.
-    // If you need to propagate Utf8Bytes usage deeper, do so in the master.rs file as well.
-    // (Function body unchanged here.)
-    // Always parse as JSON, since process_message is always called with a JSON string now
     let json: serde_json::Value = serde_json::from_str(&text.clone()).unwrap();
     let ev_type = match json["type"].as_str() {
         None => {
@@ -646,135 +419,16 @@ async fn process_message(text: String, state: AppState) {
         }
         Some(val) => val,
     };
-    let mut _args: Vec<String> = vec![];
-    let arr = json["arguments"].as_array();
-    match arr {
-        None => {}
-        Some(values) => {
-            _args = values
-                .iter()
-                .filter(|value| -> bool { value.as_str().is_some() })
-                .map(|value| -> String { value.as_str().unwrap().to_owned() })
-                .collect();
-        }
-    }
-    // Handle web client requests for themes and server info
-    match ev_type {
-        // requestConfig is now handled per-client in handle_socket, do nothing here
-        "requestConfig" => {}
-        // (handled per-client in listen_task_handle)
-        "stdinInput" => {
-            // Allow starting servers and sending stdin from the web UI
-            let value: Result<StdinInput, _> = serde_json::from_str(text.clone().as_str());
-            match value {
-                Ok(value) => {
-                    let server_name = value.server_name.clone();
-                    let mut servers = state.servers.lock().await;
-                    let mut is_active_server = false;
-                    let mut server_found = false;
-                    for server in servers.iter_mut() {
-                        if server.name == server_name && !server_found {
-                            is_active_server = true;
-                            server_found = true;
-                            tokio::spawn(pass_stdin(
-                                value.clone(),
-                                server.name.clone(),
-                                state.clone(),
-                            ));
-                        }
-                    }
-                    drop(servers);
-                    let config = state.config.lock().await;
-                    #[allow(unused)]
-                    let slave = config.slave;
-                    drop(config);
-                    // If not active, and value is "start", start the server
-                    if !is_active_server && value.value == "start" {
-                        let config = state.config.lock().await;
-                        let mut desc: ControlledProgramDescriptor =
-                            ControlledProgramDescriptor::new("", "", vec![], "".to_owned());
-                        let mut found = false;
-                        for server_desc in config.servers.iter() {
-                            if server_desc.name == value.server_name {
-                                desc = server_desc.clone();
-                                found = true;
-                            }
-                        }
-                        if found {
-                            let mut servers = state.servers.lock().await;
-                            servers.push(desc.into_instance(&state.specialization_registry));
-                            drop(servers);
-                        }
-                    }
-                }
-                Err(e) => {
-                    dbg!(e, text);
-                }
-            }
-        }
-        "configChange" => {
-            #[derive(Deserialize)]
-            #[allow(dead_code)]
-            struct ConfigChangeMessage {
-                r#type: String,
-                #[serde(alias = "updatedConfig", alias = "updated_config")]
-                updated_config: Config,
-            }
-            let message: ConfigChangeMessage = match serde_json::from_str(&text) {
-                Ok(msg) => msg,
-                Err(_) => {
-                    let _ = state
-                        .tx
-                        .send("Error parsing configChange message".to_string());
-                    return;
-                }
-            };
-            let mut servers = state.servers.lock().await;
-            let mut config = state.config.lock().await;
 
-            // Stop all servers before changing config
-            for server in servers.iter_mut() {
-                let _ = server.stop().await;
-            }
-            servers.clear();
-            config.change(message.updated_config);
-            config.update_config_file("config.json");
-            // Auto-start servers if needed
-            for desc in config.servers.iter_mut() {
-                if desc.auto_start {
-                    let desc_clone = desc.clone();
-                    servers.push(desc_clone.into_instance(&state.specialization_registry));
-                }
-            }
-            // Broadcast ConfigInfo to all clients
-            let config_info = ConfigInfo {
-                r#type: "ConfigInfo".to_owned(),
-                config: config.clone(),
-            };
-            let _ = state.tx.send(serde_json::to_string(&config_info).unwrap());
-            drop(config);
-            drop(servers);
-        }
-        // getConfig is now handled per-client in handle_socket, do nothing here
+    match ev_type {
+        "requestConfig" => {}
+        "stdinInput" => handle_stdin_input(&text, state).await,
+        "startServer" => start_server_action(&text, state).await,
+        "killServer" => kill_server_action(&text, state).await,
+        "restartServer" => restart_server_action(&text, state).await,
+        "configChange" => apply_config_change(&text, state).await,
         "getConfig" => {}
-        "terminateServers" => {
-            let mut servers = state.servers.lock().await;
-            for server in servers.iter_mut() {
-                let exit_code = server.stop().await;
-                let msg = format_exit_message(
-                    exit_code
-                        .map(|c| c.to_string())
-                        .unwrap_or_else(|| "unknown".to_string()),
-                );
-                let server_output = serde_json::json!({
-                    "type": "ServerOutput",
-                    "server_name": server.name.clone(),
-                    "output": msg,
-                });
-                let _ = state.tx.send(server_output.to_string());
-            }
-            servers.clear();
-        }
+        "terminateServers" => terminate_servers(state).await,
         _ => {}
     }
 }

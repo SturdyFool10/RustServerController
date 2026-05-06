@@ -1,5 +1,5 @@
 use super::ServerSpecialization;
-use crate::ansi_to_html::escape_html;
+use crate::ansi_to_html::{ansi_to_plain_text, escape_html};
 use crate::app_state::AppState;
 use crate::controlled_program::ControlledProgramInstance;
 use regex::Regex;
@@ -103,6 +103,8 @@ impl ServerSpecialization for MinecraftSpecialization {
 
         _instance: &mut ControlledProgramInstance,
     ) -> Option<String> {
+        let line = ansi_to_plain_text(&line);
+
         // Player join regex
 
         let join_pattern = Regex::new(
@@ -156,7 +158,7 @@ impl ServerSpecialization for MinecraftSpecialization {
             }
         }
 
-        self.last_status_update = status_update;
+        self.last_status_update |= status_update;
 
         // Colorize the line using bracket counting
 
@@ -246,6 +248,58 @@ impl ServerSpecialization for MinecraftSpecialization {
 /// Returns a boxed instance of `MinecraftSpecialization`.
 pub fn factory() -> Box<dyn ServerSpecialization> {
     Box::new(MinecraftSpecialization::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::specializations::ServerSpecialization;
+    use tokio::process::Command;
+
+    fn test_instance() -> ControlledProgramInstance {
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .spawn()
+            .expect("spawn test child");
+
+        ControlledProgramInstance {
+            name: "test".to_string(),
+            executable_path: "sh".to_string(),
+            command_line_args: vec!["-c".to_string(), "exit 0".to_string()],
+            process: child,
+            working_dir: ".".to_string(),
+            last_log_lines: 0,
+            curr_output_in_progress: String::new(),
+            crash_prevention: false,
+            active: true,
+            specialized_server_type: Some("Minecraft".to_string()),
+            specialized_server_info: None,
+            specialization_handler: None,
+            specialization_info_sent: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn status_update_stays_pending_until_sent() {
+        let mut specialization = MinecraftSpecialization::default();
+        let mut instance = test_instance();
+
+        specialization.parse_output(
+            r#"[Server thread/INFO]: Done (12.345s)! For help, type "help""#.to_string(),
+            &mut instance,
+        );
+        specialization.parse_output(
+            "[Server thread/INFO]: A later non-status line".to_string(),
+            &mut instance,
+        );
+
+        assert!(specialization.has_status_update());
+
+        specialization.set_status_update_sent();
+
+        assert!(!specialization.has_status_update());
+    }
 }
 
 /// Colorizes a single Minecraft log line using bracket counting and HTML spans.

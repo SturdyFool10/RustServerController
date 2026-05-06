@@ -105,7 +105,15 @@ impl ControlledProgramDescriptor {
             "TERM_PROGRAM".to_string(),
             "RustServerController".to_string(),
         );
+        envs.insert(
+            "TERM_PROGRAM_VERSION".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        );
         envs.insert("FORCE_COLOR".to_string(), "1".to_string());
+        envs.insert("CLICOLOR".to_string(), "1".to_string());
+        envs.insert("CLICOLOR_FORCE".to_string(), "1".to_string());
+        envs.insert("ANSICON".to_string(), "1".to_string());
+        envs.insert("RUST_SERVER_CONTROLLER_ANSI".to_string(), "1".to_string());
 
         let mut specialization_handler = None;
         let mut specialized_server_type = self.specialized_server_type.clone();
@@ -248,6 +256,7 @@ impl ControlledProgramInstance {
         let mut process = process
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .current_dir(working_dir.clone());
 
         // Set environment variables from the provided map
@@ -284,44 +293,56 @@ impl ControlledProgramInstance {
     /// Maintains a buffer of recent output lines.
     pub async fn read_output(&mut self) -> Option<String> {
         let mut out = String::new();
-        let mut has_more = true;
 
-        while has_more {
-            let mut buf = [0u8; 4096];
-            let take = self.process.stdout.as_mut();
-            let read = match timeout(Duration::from_millis(10), take.unwrap().read(&mut buf)).await
-            {
-                Ok(val) => val.unwrap(),
-                Err(_) => 0,
+        loop {
+            let Some(stdout) = self.process.stdout.as_mut() else {
+                break;
             };
-            if read > 0 {
-                let new_str = String::from_utf8_lossy(&buf[0..read]);
-                // Always split into lines and process one at a time
-                for log_line in new_str.lines() {
-                    let single_line = log_line.replace('\r', "").replace('\n', "");
-                    if self.specialization_handler.is_some() {
-                        let mut handler = self.specialization_handler.take();
-                        if let Some(ref mut handler_inner) = handler {
-                            if let Some(transformed) =
-                                handler_inner.parse_output(single_line.clone(), self)
-                            {
-                                // If parse_output returns multi-line output, respect each line
-                                for output_line in transformed.lines() {
-                                    out.push_str(output_line);
-                                    out.push('\n');
-                                }
-                            }
-                        }
-                        self.specialization_handler = handler;
-                    } else {
-                        out.push_str(ansi_to_html(&single_line).as_str());
-                        out.push('\n');
-                    }
-                }
+            let mut buf = [0u8; 4096];
+            let read = match timeout(Duration::from_millis(10), stdout.read(&mut buf)).await {
+                Ok(Ok(read)) => read,
+                _ => 0,
+            };
+            if read == 0 {
+                break;
             }
 
-            if read < 1 {
-                has_more = false;
+            let new_str = String::from_utf8_lossy(&buf[0..read]);
+            // Always split into lines and process one at a time
+            for log_line in new_str.lines() {
+                let single_line = log_line.replace(['\r', '\n'], "");
+                if self.specialization_handler.is_some() {
+                    let mut handler = self.specialization_handler.take();
+                    if let Some(ref mut handler_inner) = handler {
+                        if let Some(transformed) =
+                            handler_inner.parse_output(single_line.clone(), self)
+                        {
+                            // If parse_output returns multi-line output, respect each line
+                            for output_line in transformed.lines() {
+                                out.push_str(output_line);
+                                out.push('\n');
+                            }
+                        }
+                    }
+                    self.specialization_handler = handler;
+                } else {
+                    out.push_str(ansi_to_html(&single_line).as_str());
+                    out.push('\n');
+                }
+            }
+        }
+
+        loop {
+            let Some(stderr) = self.process.stderr.as_mut() else {
+                break;
+            };
+            let mut buf = [0u8; 4096];
+            let read = match timeout(Duration::from_millis(10), stderr.read(&mut buf)).await {
+                Ok(Ok(read)) => read,
+                _ => 0,
+            };
+            if read == 0 {
+                break;
             }
         }
 

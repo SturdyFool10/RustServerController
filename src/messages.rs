@@ -90,22 +90,6 @@ pub struct ConfigInfo {
     pub config: crate::configuration::Config,
 }
 
-/// Message to request the list of available themes.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct GetThemesList {
-    /// The type of message (should be "getThemesList").
-    pub r#type: String, // Should be "getThemesList"
-}
-
-/// Message to request the CSS for a specific theme.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct GetThemeCSS {
-    /// The type of message (should be "getThemeCSS").
-    pub r#type: String, // Should be "getThemeCSS"
-    /// The name of the theme to get CSS for.
-    pub theme_name: String,
-}
-
 /// Message containing the list of available theme names.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ThemesList {

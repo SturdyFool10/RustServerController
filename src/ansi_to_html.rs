@@ -204,3 +204,9 @@ pub fn ansi_to_html(inp: &str) -> String {
 
     result
 }
+
+/// Parses ANSI escape sequences and returns plain text with escape codes removed.
+pub fn ansi_to_plain_text(inp: &str) -> String {
+    let mut interpreter = AnsiParser::new(inp);
+    interpreter.parse_annotated().text
+}

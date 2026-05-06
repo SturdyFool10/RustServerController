@@ -211,44 +211,78 @@ h1 {
     width: 100%;
     height: calc(100% - 70px);
     overflow-x: hidden;
-    overflow-y: default;
+    overflow-y: auto;
+    padding: 12px 18px 24px;
+    box-sizing: border-box;
 }
 .CentralMenuDropdown {
     position: relative;
-    left: 0px;
-    top: 0px;
-    /* Height = 2 * vertical padding + text height (font-size) when closed */
     font-size: clamp(1rem, 2.5vw, 1.5rem);
-    padding-top: 0.5em;
-    padding-bottom: 0.5em;
-    height: calc(1em + 1em); /* 1em font-size + 2*0.5em padding */
-    min-height: 2em;
     width: 100%;
-    border-bottom-width: 3px;
-    border-bottom-color: var(--border);
-    border-bottom-style: solid;
-    transition: max-height 250ms linear;
-    box-sizing: content-box;
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    box-sizing: border-box;
+    border-radius: 8px;
+    overflow: hidden;
 }
 .CentralMenuDropdown.open {
     height: auto;
-    min-height: 2em;
-    transition: max-height 250ms linear;
 }
-.CentralMenuDropdown a {
+.serverActions {
     position: absolute;
-    right: 2%;
-    top: 2%;
-    height: 96%;
-    aspect-ratio: 1;
+    left: 0.6em;
+    top: 50%;
+    height: 70%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    gap: 0.25em;
+    z-index: 12;
 }
-.CentralMenuDropdown a svg {
+.serverAction,
+.CentralMenuDropdown a.dropdownArrow {
+    position: relative;
+    width: 2em;
+    height: 2em;
+    aspect-ratio: 1;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.CentralMenuDropdown a.dropdownArrow {
+    position: absolute;
+    right: 0.6em;
+    top: 50%;
+    transform: translateY(-50%);
+}
+.serverAction svg,
+.CentralMenuDropdown a.dropdownArrow svg {
     position: absolute;
     left: 0px;
     top: 0px;
-    width: 100%;
-    height: 100%;
+    width: 82%;
+    height: 82%;
     fill: var(--secondary);
+}
+.serverAction:hover,
+.serverAction:focus {
+    background: color-mix(in srgb, var(--bg-light) 70%, transparent);
+    outline: none;
+}
+.CentralMenuDropdown a.dropdownArrow:hover,
+.CentralMenuDropdown a.dropdownArrow:focus {
+    background: transparent;
+    outline: none;
+}
+.activeServer .powerAction,
+.inactiveServer .restartAction,
+.inactiveServer .killAction {
+    display: none;
 }
 .serverName {
     position: relative;
@@ -265,66 +299,58 @@ h1 {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    padding-left: 2%;
+    padding-left: 5.2em;
+    padding-right: 3.2em;
 }
 .innerTopBarDropDown {
-    position: absolute;
-    left: 0px;
-    top: 0px;
+    position: relative;
     width: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
-    /* Height = 2 * vertical padding + text height (font-size) */
     font-size: clamp(1rem, 2.5vw, 1.5rem);
-    padding-top: 0.5em;
-    padding-bottom: 0.5em;
-    height: calc(1em + 1em); /* 1em font-size + 2*0.5em padding */
-    min-height: 2em;
-    box-sizing: content-box;
+    padding: 0.5em 0;
+    min-height: 2.75em;
+    box-sizing: border-box;
     z-index: 10;
     background: var(--bg);
-    border-bottom-color: var(--border);
-    border-bottom-width: 3px;
-    border-bottom-style: solid;
-    border-top-color: var(--border);
-    border-top-width: 3px;
-    border-top-style: solid;
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
+    cursor: pointer;
+}
+.CentralMenuDropdown.open .innerTopBarDropDown {
+    border-bottom: 1px solid var(--border);
 }
 .dropdownDrop {
     position: static;
     width: 100%;
-    border-bottom-color: var(--border);
-    border-bottom-width: 3px;
-    border-bottom-style: solid;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+    overflow: hidden;
 }
 .serverSTDOut {
     position: relative;
     width: 100%;
     height: 40vh;
     background-color: var(--bg-dark);
-    border: 2px solid var(--border);
-    border-radius: 8px 8px 0 0;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
     overflow-x: auto;
     overflow-y: auto;
     box-sizing: border-box;
     margin-bottom: 0;
     z-index: 1;
     display: block;
-    margin-top: calc(
-        1em + 1em
-    ); /* Match the tab row height: 1em font-size + 2*0.5em padding */
+    margin-top: 0;
     white-space: nowrap;
-    position: relative;
     padding-top: 0.75em;
 }
 .serverSTDIn {
     width: 100%;
     background: var(--bg-dark);
-    margin-top: 0.5em;
-    border-radius: 0 0 8px 8px;
+    margin-top: 0;
+    border-radius: 0;
     position: relative;
     z-index: 2;
     overflow: visible;
@@ -465,4 +491,73 @@ h1 {
     width: 70px;
     aspect-ratio: 1;
     position: absolute;
+}
+
+.theme-container {
+    display: flex;
+    align-items: center;
+    position: absolute;
+    right: 80px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+}
+
+.theme-container label {
+    margin-right: 10px;
+    color: var(--text, white);
+    font-family: "Roboto", sans-serif;
+    font-weight: 500;
+    text-shadow: 0 0 3px rgba(0, 0, 0, 0.4);
+}
+
+#theme-selector {
+    background-color: var(--bg-dark, #222);
+    color: var(--text, white);
+    border: 1px solid var(--border, #555);
+    border-radius: 5px;
+    padding: 6px 12px;
+    font-size: 14px;
+    font-family: "Roboto", sans-serif;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s ease;
+    box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
+    min-width: 120px;
+}
+
+#theme-selector:hover {
+    border-color: var(--primary, #777);
+    box-shadow: 0 0 8px var(--primary, #777);
+}
+
+#theme-selector:focus {
+    border-color: var(--primary, #777);
+    box-shadow: 0 0 12px var(--primary, #777);
+}
+
+#theme-selector option {
+    background: var(--bg, #2a2a2a);
+    color: var(--text, white);
+    padding: 8px;
+}
+
+.theme-loading {
+    margin-left: 8px;
+    color: var(--primary, #777);
+    font-size: 12px;
+    font-family: "Roboto", sans-serif;
+    animation: pulse 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 0.5;
+    }
+    50% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0.5;
+    }
 }

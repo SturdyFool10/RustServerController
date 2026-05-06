@@ -33,7 +33,7 @@ pub fn format_exit_message(exit_code: impl std::fmt::Display) -> String {
 pub async fn send_termination_message(
     state: &AppState,
     server_name: String,
-    exit_code: i32,
+    exit_code: impl std::fmt::Display,
     server_type: Option<String>,
 ) {
     let termination_msg = ConsoleOutput {
@@ -96,10 +96,13 @@ pub async fn process_stdout(state: AppState) {
                 let status = server.process.try_wait();
                 match status {
                     Ok(Some(stat)) => {
-                        let exit_code = stat.code().unwrap();
+                        let exit_code = stat.code();
+                        let exit_code_label = exit_code
+                            .map(|code| code.to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
                         warn!(
                             "A child process has closed! index: {} ExitCode: {}",
-                            index, exit_code
+                            index, exit_code_label
                         );
                         // Mark as inactive
                         server.active = false;
@@ -107,14 +110,14 @@ pub async fn process_stdout(state: AppState) {
                         send_termination_message(
                             &state,
                             server.name.clone(),
-                            exit_code,
+                            exit_code_label.clone(),
                             server.specialized_server_type.clone(),
                         )
                         .await;
 
                         // Call specialization on_exit if present
                         if let Some(mut handler) = server.specialization_handler.take() {
-                            handler.on_exit(server, &state, exit_code);
+                            handler.on_exit(server, &state, exit_code.unwrap_or(-1));
                             server.specialization_handler = Some(handler);
                         }
 
@@ -133,7 +136,7 @@ pub async fn process_stdout(state: AppState) {
                             };
                             let _ = state.tx.send(serde_json::to_string(&update).unwrap());
                         }
-                        if exit_code != 0 && server.crash_prevention {
+                        if exit_code != Some(0) && server.crash_prevention {
                             info!("Server ID: {} has crashed, restarting it...", index);
                             let mut descriptor = ControlledProgramDescriptor::new(
                                 server.name.as_str(),
@@ -156,7 +159,7 @@ pub async fn process_stdout(state: AppState) {
                             drop(config);
 
                             new_instances.push(descriptor);
-                        } else if exit_code != 0 {
+                        } else if exit_code != Some(0) {
                             info!("Server ID: {} has crashed, but crash prevention is disabled. Not restarting.", index);
                         }
                         to_remove.push(index);

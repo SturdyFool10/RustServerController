@@ -18,13 +18,23 @@ use tracing::*;
 
 use crate::app_state::AppState;
 
-/// Serves the main JavaScript file for the web UI.
-///
-/// # Arguments
-/// * `_state` - The shared application state (unused).
-async fn js_serve(State(_state): State<AppState>) -> JavaScript<String> {
-    JavaScript::from(include_str!("html_src/index.js").to_owned())
+macro_rules! js_asset {
+    ($name:ident, $path:literal) => {
+        async fn $name(State(_state): State<AppState>) -> JavaScript<String> {
+            JavaScript::from(include_str!($path).to_owned())
+        }
+    };
 }
+
+js_asset!(msgpack_serve, "html_src/msgpack.min.js");
+js_asset!(constants_serve, "html_src/constants.js");
+js_asset!(core_serve, "html_src/core.js");
+js_asset!(menu_serve, "html_src/menu.js");
+js_asset!(server_ui_serve, "html_src/server_ui.js");
+js_asset!(themes_serve, "html_src/themes.js");
+js_asset!(editor_serve, "html_src/editor.js");
+js_asset!(webgl_background_serve, "html_src/webgl_background.js");
+js_asset!(index_js_serve, "html_src/index.js");
 
 /// Builds the main Axum router for the web server.
 ///
@@ -39,8 +49,15 @@ async fn get_router(_state: AppState) -> Router<AppState> {
     let router: Router<AppState> = Router::new()
         .nest_service("/html", ServeDir::new("html_src"))
         .route("/", get(main_serve))
-        .route("/index.js", get(js_serve))
-        .route("/msgpack.min.js", get(msgpack_serve))
+        .route("/html/msgpack.min.js", get(msgpack_serve))
+        .route("/html/constants.js", get(constants_serve))
+        .route("/html/core.js", get(core_serve))
+        .route("/html/menu.js", get(menu_serve))
+        .route("/html/server_ui.js", get(server_ui_serve))
+        .route("/html/themes.js", get(themes_serve))
+        .route("/html/editor.js", get(editor_serve))
+        .route("/html/webgl_background.js", get(webgl_background_serve))
+        .route("/html/index.js", get(index_js_serve))
         .route("/ws", get(handle_ws_upgrade))
         .route("/favicon.ico", get(handle_icon));
     router
@@ -58,15 +75,6 @@ async fn handle_icon(State(_state): State<AppState>) -> impl IntoResponse {
         .unwrap()
 }
 
-/// Serves the msgpack.min.js file for the web UI.
-async fn msgpack_serve(State(_state): State<AppState>) -> Response {
-    let js_bytes: &'static [u8] = include_bytes!("html_src/msgpack.min.js");
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "application/javascript")
-        .body(Body::from(js_bytes))
-        .unwrap()
-}
 /// Starts the Axum web server for the controller.
 ///
 /// Binds to the configured address and serves the web UI and API.
