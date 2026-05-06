@@ -10,11 +10,26 @@ use std::{
     path::{Path, PathBuf},
 };
 use tracing_subscriber::{
+    filter::Directive,
     fmt::{format::Writer, writer::MakeWriter},
     EnvFilter,
 };
 
 const LOGS_PATH: &str = "./logs/";
+
+fn add_directives(mut filter: EnvFilter, directives: &[&str]) -> EnvFilter {
+    for directive in directives {
+        match directive.parse::<Directive>() {
+            Ok(parsed) => {
+                filter = filter.add_directive(parsed);
+            }
+            Err(error) => {
+                eprintln!("Ignoring invalid log directive '{}': {}", directive, error);
+            }
+        }
+    }
+    filter
+}
 
 /// MultiWriter writes logs to both stdout and a file, stripping ANSI codes for the file.
 pub struct MultiWriter {
@@ -107,36 +122,44 @@ pub fn init_logging() {
     // You may need to adjust the crate name if it differs
     #[cfg(debug_assertions)]
     {
-        filter = filter
-            .add_directive("rust_server_controller=trace".parse().unwrap())
-            .add_directive("tokio=warn".parse().unwrap())
-            .add_directive("hyper=warn".parse().unwrap())
-            .add_directive("tracing=warn".parse().unwrap())
-            .add_directive("tower=warn".parse().unwrap())
-            .add_directive("warp=warn".parse().unwrap())
-            .add_directive("serde=warn".parse().unwrap())
-            .add_directive("reqwest=warn".parse().unwrap())
-            .add_directive("axum=warn".parse().unwrap())
-            .add_directive("sqlx=warn".parse().unwrap())
-            .add_directive("mio=warn".parse().unwrap())
-            .add_directive("tokio_util=warn".parse().unwrap());
+        filter = add_directives(
+            filter,
+            &[
+                "rust_server_controller=trace",
+                "tokio=warn",
+                "hyper=warn",
+                "tracing=warn",
+                "tower=warn",
+                "warp=warn",
+                "serde=warn",
+                "reqwest=warn",
+                "axum=warn",
+                "sqlx=warn",
+                "mio=warn",
+                "tokio_util=warn",
+            ],
+        );
     }
 
     #[cfg(not(debug_assertions))]
     {
-        filter = filter
-            .add_directive("rust_server_controller=info".parse().unwrap())
-            .add_directive("tokio=warn".parse().unwrap())
-            .add_directive("hyper=warn".parse().unwrap())
-            .add_directive("tracing=warn".parse().unwrap())
-            .add_directive("tower=warn".parse().unwrap())
-            .add_directive("warp=warn".parse().unwrap())
-            .add_directive("serde=warn".parse().unwrap())
-            .add_directive("reqwest=warn".parse().unwrap())
-            .add_directive("axum=warn".parse().unwrap())
-            .add_directive("sqlx=warn".parse().unwrap())
-            .add_directive("mio=warn".parse().unwrap())
-            .add_directive("tokio_util=warn".parse().unwrap());
+        filter = add_directives(
+            filter,
+            &[
+                "rust_server_controller=info",
+                "tokio=warn",
+                "hyper=warn",
+                "tracing=warn",
+                "tower=warn",
+                "warp=warn",
+                "serde=warn",
+                "reqwest=warn",
+                "axum=warn",
+                "sqlx=warn",
+                "mio=warn",
+                "tokio_util=warn",
+            ],
+        );
     }
 
     // Use only the subcrate name as the log file name, with .log extension.
@@ -260,11 +283,6 @@ pub fn init_logging() {
     set_panic_hook();
 }
 
-/// Function to deliberately cause a panic for testing the panic hook and logging.
-#[allow(dead_code)]
-pub fn test_panic() {
-    panic!("This is a test panic from logging::test_panic()");
-}
 #[allow(dead_code)]
 pub fn cleanup_old_logs<P: AsRef<Path>>(logs_dir: P, keep_for: std::time::Duration) {
     let logs_dir = logs_dir.as_ref();
@@ -272,8 +290,14 @@ pub fn cleanup_old_logs<P: AsRef<Path>>(logs_dir: P, keep_for: std::time::Durati
 
     // Regex for schema: {subcrate}_{MM-DD-YYYY}_{HH-MM-SS_AMPM}.log
     // Example: calendar_server_04-27-2024_09-15-23_PM.log
-    let re = Regex::new(r"^[^_]+_(\d{2})-(\d{2})-(\d{4})_(\d{2})-(\d{2})-(\d{2})_(AM|PM)\.log$")
-        .expect("Failed to compile regex for log file schema");
+    let re =
+        match Regex::new(r"^[^_]+_(\d{2})-(\d{2})-(\d{4})_(\d{2})-(\d{2})-(\d{2})_(AM|PM)\.log$") {
+            Ok(regex) => regex,
+            Err(error) => {
+                eprintln!("Invalid log cleanup regex: {}", error);
+                return;
+            }
+        };
 
     if let Ok(entries) = fs::read_dir(logs_dir) {
         for entry in entries.flatten() {

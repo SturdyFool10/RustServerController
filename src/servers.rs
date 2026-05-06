@@ -7,6 +7,55 @@ use crate::{
 /// and starting and monitoring server processes.
 use tracing::*;
 
+pub fn format_controller_message(message: impl std::fmt::Display) -> String {
+    format!(
+        "<span style=\"color: var(--danger, #FF5555);\">[Controller: {}]</span>",
+        message
+    )
+}
+
+pub fn send_controller_message(
+    state: &AppState,
+    server_name: String,
+    server_type: Option<String>,
+    message: impl std::fmt::Display,
+) {
+    let output = ConsoleOutput {
+        r#type: "ServerOutput".to_owned(),
+        output: format_controller_message(message),
+        server_name,
+        server_type,
+    };
+    if let Ok(payload) = serde_json::to_string(&output) {
+        let _ = state.tx.send(payload);
+    }
+}
+
+pub fn broadcast_json<T: serde::Serialize>(state: &AppState, value: &T) {
+    if let Ok(payload) = serde_json::to_string(value) {
+        let _ = state.tx.send(payload);
+    }
+}
+
+pub fn create_instance(
+    state: &AppState,
+    desc: ControlledProgramDescriptor,
+) -> Option<crate::controlled_program::ControlledProgramInstance> {
+    match desc.clone().into_instance(&state.specialization_registry) {
+        Ok(instance) => Some(instance),
+        Err(error) => {
+            error!("Failed to start server '{}': {}", desc.name, error);
+            send_controller_message(
+                state,
+                desc.name,
+                desc.specialized_server_type,
+                format!("failed to start server: {}", error),
+            );
+            None
+        }
+    }
+}
+
 // Helper to format exit code message for web console
 /// Formats a server exit code as an HTML message for the web console.
 ///
@@ -42,9 +91,7 @@ pub async fn send_termination_message(
         server_name,
         server_type,
     };
-    let _ = state
-        .tx
-        .send(serde_json::to_string(&termination_msg).unwrap());
+    broadcast_json(state, &termination_msg);
 }
 /// Starts all servers marked for auto-start in the configuration.
 ///
@@ -59,7 +106,9 @@ pub async fn start_servers(state: AppState) {
         if server_desc.auto_start {
             let new_desc = server_desc.clone();
             let mut servers = state.servers.lock().await;
-            let instance = new_desc.into_instance(&state.specialization_registry);
+            let Some(instance) = create_instance(&state, new_desc) else {
+                continue;
+            };
             // After starting a new server, send specialization info update
             if let Some(handler) = instance.specialization_handler.as_ref() {
                 let info = handler.get_status();
@@ -70,7 +119,7 @@ pub async fn start_servers(state: AppState) {
                     specialization: instance.specialized_server_type.clone().unwrap_or_default(),
                     active: instance.active,
                 };
-                let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+                broadcast_json(&state, &update);
             }
             servers.push(instance);
             drop(servers);
@@ -134,7 +183,7 @@ pub async fn process_stdout(state: AppState) {
                                     .unwrap_or_default(),
                                 active: server.active,
                             };
-                            let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+                            broadcast_json(&state, &update);
                         }
                         if exit_code != Some(0) && server.crash_prevention {
                             info!("Server ID: {} has crashed, restarting it...", index);
@@ -169,7 +218,9 @@ pub async fn process_stdout(state: AppState) {
                 }
             }
             for desc in new_instances {
-                let instance = desc.into_instance(&state.specialization_registry);
+                let Some(instance) = create_instance(&state, desc) else {
+                    continue;
+                };
                 // After starting a new server, send specialization info update
                 if let Some(handler) = instance.specialization_handler.as_ref() {
                     let info = handler.get_status();
@@ -183,7 +234,7 @@ pub async fn process_stdout(state: AppState) {
                             .unwrap_or_default(),
                         active: instance.active,
                     };
-                    let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+                    broadcast_json(&state, &update);
                 }
                 servers.push(instance);
             }
@@ -208,7 +259,7 @@ pub async fn process_stdout(state: AppState) {
                             server_name: server.name.clone(),
                             server_type: server.specialized_server_type.clone(),
                         };
-                        let _ = state.tx.send(serde_json::to_string(&out).unwrap());
+                        broadcast_json(&state, &out);
                     }
                     // Send specialization info update only after first output after spawn
                     if let Some(handler) = server.specialization_handler.as_mut() {
@@ -224,7 +275,7 @@ pub async fn process_stdout(state: AppState) {
                                     .unwrap_or_default(),
                                 active: server.active,
                             };
-                            let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+                            broadcast_json(&state, &update);
                             handler.set_status_update_sent();
                             server.specialization_info_sent = true;
                         } else if handler.has_status_update() {
@@ -239,7 +290,7 @@ pub async fn process_stdout(state: AppState) {
                                     .unwrap_or_default(),
                                 active: server.active,
                             };
-                            let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+                            broadcast_json(&state, &update);
                             handler.set_status_update_sent();
                         }
                     }

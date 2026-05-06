@@ -36,13 +36,19 @@ macro_rules! async_listener {
             loop {
                 yield_now().await;
 
-                if poll(std::time::Duration::from_millis(25)).expect("Failed to poll for events") {
-                    if let Event::Key(key_event) = read().expect("Failed to read event") {
-                        if key_event.code == KeyCode::Char($key.chars().next().unwrap()) {
-                            $app.stop();
-                            break;
+                match poll(std::time::Duration::from_millis(25)) {
+                    Ok(true) => {
+                        if let Ok(Event::Key(key_event)) = read() {
+                            if let Some(key_char) = $key.chars().next() {
+                                if key_event.code == KeyCode::Char(key_char) {
+                                    $app.stop();
+                                    break;
+                                }
+                            }
                         }
                     }
+                    Ok(false) => {}
+                    Err(_) => break,
                 }
             }
         };

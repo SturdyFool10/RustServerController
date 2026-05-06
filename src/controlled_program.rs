@@ -1,6 +1,6 @@
 use crate::ansi_to_html::ansi_to_html;
 use serde::{Deserialize, Serialize};
-use std::process::Stdio;
+use std::{io, process::Stdio};
 use tokio::{
     io::*,
     process::*,
@@ -92,7 +92,7 @@ impl ControlledProgramDescriptor {
     pub fn into_instance(
         self,
         registry: &crate::specializations::SpecializationRegistry,
-    ) -> ControlledProgramInstance {
+    ) -> io::Result<ControlledProgramInstance> {
         use std::collections::HashMap;
 
         // Prepare default environment variables
@@ -142,7 +142,7 @@ impl ControlledProgramDescriptor {
             self.arguments,
             self.working_dir,
             envs,
-        );
+        )?;
         instance.specialized_server_type = specialized_server_type;
         instance.crash_prevention = crash_prevention;
 
@@ -154,7 +154,7 @@ impl ControlledProgramDescriptor {
             instance.specialization_handler = None;
         }
 
-        instance
+        Ok(instance)
     }
 }
 impl Default for ControlledProgramDescriptor {
@@ -237,19 +237,14 @@ impl ControlledProgramInstance {
         arguments: Vec<String>,
         working_dir: String,
         envs: std::collections::HashMap<String, String>,
-    ) -> Self {
+    ) -> io::Result<Self> {
         use std::fs;
         use std::path::Path;
 
         // Ensure the working directory exists, create if it doesn't
         let working_dir_path = Path::new(&working_dir);
         if !working_dir_path.exists() {
-            if let Err(e) = fs::create_dir_all(working_dir_path) {
-                panic!(
-                    "Failed to create working directory {:?}: {}",
-                    working_dir_path, e
-                );
-            }
+            fs::create_dir_all(working_dir_path)?;
         }
 
         let mut process = Command::new(exe_path);
@@ -267,10 +262,8 @@ impl ControlledProgramInstance {
         for arg in arguments.iter() {
             process = process.arg(arg.replace("\\\\", "\\").replace('\"', ""));
         }
-        let child = process
-            .spawn()
-            .expect("Could not spawn process for server.");
-        Self {
+        let child = process.spawn()?;
+        Ok(Self {
             name: name.to_owned(),
             executable_path: exe_path.to_owned(),
             command_line_args: arguments,
@@ -284,7 +277,7 @@ impl ControlledProgramInstance {
             specialized_server_info: None,
             specialization_handler: None,
             specialization_info_sent: false,
-        }
+        })
     }
 
     /// Reads and processes output from the server process.

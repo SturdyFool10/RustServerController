@@ -129,16 +129,38 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         _instance: &mut ControlledProgramInstance,
     ) -> Option<String> {
         // Update player count and calendar paused state from log lines
-        let join_re = regex::Regex::new(r"\[Server Event\].*joins\.").unwrap();
-        let disconnect_re = regex::Regex::new(r"\[Server Event\].*disconnected\.").unwrap();
-        let pause_re = regex::Regex::new(
+        let join_re = match regex::Regex::new(r"\[Server Event\].*joins\.") {
+            Ok(regex) => regex,
+            Err(error) => {
+                tracing::error!("Invalid Vintage Story join regex: {}", error);
+                return Some(colorize_vs_log_line(&line));
+            }
+        };
+        let disconnect_re = match regex::Regex::new(r"\[Server Event\].*disconnected\.") {
+            Ok(regex) => regex,
+            Err(error) => {
+                tracing::error!("Invalid Vintage Story disconnect regex: {}", error);
+                return Some(colorize_vs_log_line(&line));
+            }
+        };
+        let pause_re = match regex::Regex::new(
             r"\[Server Notification\] All clients disconnected, pausing game calendar\.",
-        )
-        .unwrap();
-        let resume_re = regex::Regex::new(
+        ) {
+            Ok(regex) => regex,
+            Err(error) => {
+                tracing::error!("Invalid Vintage Story pause regex: {}", error);
+                return Some(colorize_vs_log_line(&line));
+            }
+        };
+        let resume_re = match regex::Regex::new(
             r"\[Server Notification\] A client reconnected, resuming game calendar\.",
-        )
-        .unwrap();
+        ) {
+            Ok(regex) => regex,
+            Err(error) => {
+                tracing::error!("Invalid Vintage Story resume regex: {}", error);
+                return Some(colorize_vs_log_line(&line));
+            }
+        };
 
         let mut status_update = false;
         let player_count_before = self.player_count;

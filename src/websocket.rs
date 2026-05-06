@@ -2,7 +2,11 @@
 ///
 /// Provides websocket upgrade, message processing, and helpers for communication
 /// between the web UI and the backend using [`AppState`].
-use crate::{servers::send_termination_message, websocket_protocol::handle_client_request};
+use crate::{
+    servers::broadcast_json,
+    servers::{create_instance, send_termination_message},
+    websocket_protocol::handle_client_request,
+};
 use axum::{
     extract::{
         ws::{Message, Utf8Bytes, WebSocket},
@@ -184,13 +188,12 @@ async fn pass_stdin(message: StdinInput, server_name: String, state: AppState) {
     let mut servers = state.servers.lock().await;
     for server in servers.iter_mut() {
         if server.name == server_name {
-            let stdi = server.process.stdin.as_mut().unwrap();
-            let res = stdi.write_all(value.as_bytes()).await;
-            match res {
-                Ok(_) => {}
-                Err(error) => {
-                    error!("Error passing command to server: {}", error);
-                }
+            let Some(stdi) = server.process.stdin.as_mut() else {
+                error!("Server '{}' has no stdin pipe", server_name);
+                break;
+            };
+            if let Err(error) = stdi.write_all(value.as_bytes()).await {
+                error!("Error passing command to server: {}", error);
             }
             break;
         }
@@ -220,7 +223,9 @@ async fn start_inactive_server(server_name: &str, state: &AppState) {
 
     if let Some(desc) = desc {
         let mut servers = state.servers.lock().await;
-        let instance = desc.into_instance(&state.specialization_registry);
+        let Some(instance) = create_instance(state, desc) else {
+            return;
+        };
         let specialized_info = if let Some(handler) = instance.specialization_handler.as_ref() {
             handler.get_status()
         } else {
@@ -237,7 +242,7 @@ async fn start_inactive_server(server_name: &str, state: &AppState) {
             active: true,
         };
         servers.push(instance);
-        let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+        broadcast_json(state, &update);
     }
 }
 
@@ -267,7 +272,7 @@ async fn stop_active_server(server_name: &str, state: &AppState) -> bool {
         specialization,
         active: false,
     };
-    let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+    broadcast_json(state, &update);
     true
 }
 
@@ -358,7 +363,7 @@ async fn apply_config_change(text: &str, state: AppState) {
             specialization: server.specialized_server_type.clone().unwrap_or_default(),
             active: false,
         };
-        let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+        broadcast_json(&state, &update);
     }
     servers.clear();
 
@@ -366,14 +371,16 @@ async fn apply_config_change(text: &str, state: AppState) {
     config.update_config_file("config.json");
 
     for desc in config.servers.iter_mut().filter(|desc| desc.auto_start) {
-        servers.push(desc.clone().into_instance(&state.specialization_registry));
+        if let Some(instance) = create_instance(&state, desc.clone()) {
+            servers.push(instance);
+        }
     }
 
     let config_info = ConfigInfo {
         r#type: "ConfigInfo".to_owned(),
         config: config.clone(),
     };
-    let _ = state.tx.send(serde_json::to_string(&config_info).unwrap());
+    broadcast_json(&state, &config_info);
 }
 
 async fn terminate_servers(state: AppState) {
@@ -396,7 +403,7 @@ async fn terminate_servers(state: AppState) {
             specialization: server.specialized_server_type.clone().unwrap_or_default(),
             active: false,
         };
-        let _ = state.tx.send(serde_json::to_string(&update).unwrap());
+        broadcast_json(&state, &update);
     }
     servers.clear();
 }
@@ -409,7 +416,13 @@ async fn terminate_servers(state: AppState) {
 /// * `text` - The received message as a string.
 /// * `state` - The shared application state.
 async fn process_message(text: String, state: AppState) {
-    let json: serde_json::Value = serde_json::from_str(&text.clone()).unwrap();
+    let json: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(json) => json,
+        Err(error) => {
+            error!("Error parsing websocket message: {}", error);
+            return;
+        }
+    };
     let ev_type = match json["type"].as_str() {
         None => {
             let _ = state

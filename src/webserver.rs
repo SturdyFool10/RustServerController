@@ -68,11 +68,17 @@ async fn get_router(_state: AppState) -> Router<AppState> {
 /// * `_state` - The shared application state (unused).
 async fn handle_icon(State(_state): State<AppState>) -> impl IntoResponse {
     let ico_bytes: &'static [u8] = include_bytes!("html_src/icon.ico");
-    Response::builder()
+    match Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "image/x-icon")
         .body(Body::from(ico_bytes))
-        .unwrap()
+    {
+        Ok(response) => response,
+        Err(error) => {
+            error!("Failed to build favicon response: {}", error);
+            Response::new(Body::empty())
+        }
+    }
 }
 
 /// Starts the Axum web server for the controller.
@@ -94,10 +100,16 @@ pub async fn start_web_server(_state: AppState) {
     info!("Starting server on {}", address.replace("0.0.0.0", "*"));
 
     let stateful_router = router.with_state(_state);
-    let listener = TcpListener::bind(&address).await.unwrap();
-    serve(listener, stateful_router.into_make_service())
-        .await
-        .unwrap();
+    let listener = match TcpListener::bind(&address).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            error!("Failed to bind web server to {}: {}", address, error);
+            return;
+        }
+    };
+    if let Err(error) = serve(listener, stateful_router.into_make_service()).await {
+        error!("Web server stopped with error: {}", error);
+    }
 }
 /// Serves the main HTML page for the web UI, inlining the CSS.
 ///

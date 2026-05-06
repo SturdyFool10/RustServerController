@@ -64,7 +64,7 @@ impl SlaveConnection {
                 r#type: "requestInfo".to_owned(),
                 arguments: vec![true],
             };
-            let msg_bytes = to_vec(&request_message).unwrap();
+            let msg_bytes = to_vec(&request_message)?;
             // Send requestInfo message as MessagePack binary
             let message = Message::Binary(Bytes::from(msg_bytes));
             let _res = stream.send(message).await;
@@ -84,8 +84,8 @@ impl SlaveConnection {
                                 // Try to decode as MessagePack
                                 if let Ok(server_info_msg) = from_slice::<ServerInfoMessage>(&bin) {
                                     let mut slave_servers = app_state.slave_servers.lock().await;
-                                    let s_message = to_vec(&server_info_msg).unwrap();
-                                    let s_def = to_vec(&def).unwrap();
+                                    let s_message = to_vec(&server_info_msg)?;
+                                    let s_def = to_vec(&def)?;
                                     if s_message != s_def && !server_info_msg.servers.is_empty() {
                                         for server_info in server_info_msg.servers.iter() {
                                             let new_info = ServerInfo {
@@ -157,7 +157,7 @@ impl SlaveConnection {
             server_name,
             value: message,
         };
-        let msg_bytes = to_vec(&stdin_message).unwrap();
+        let msg_bytes = to_vec(&stdin_message)?;
         // Send stdin message as MessagePack binary
         if let Some(stream) = &mut self.stream {
             let message = Message::Binary(Bytes::from(msg_bytes));

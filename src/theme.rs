@@ -566,11 +566,8 @@ impl ThemeCollection {
         });
         let meta_path = dir_path.join("_collection_meta.json");
         let mut file = fs::File::create(meta_path)?;
-        file.write_all(
-            serde_json::to_string_pretty(&collection_meta)
-                .unwrap()
-                .as_bytes(),
-        )?;
+        let meta_json = serde_json::to_string_pretty(&collection_meta)?;
+        file.write_all(meta_json.as_bytes())?;
 
         Ok(())
     }

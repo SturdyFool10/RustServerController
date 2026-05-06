@@ -66,8 +66,21 @@ async fn build_server_info_message(state: &AppState, include_output: bool) -> Se
 }
 
 async fn send_text_json<T: serde::Serialize>(sender: &WsSender, value: &T) {
-    let msg = serde_json::to_string(value).unwrap();
-    let _ = sender.lock().await.send(text_message(msg)).await;
+    match serde_json::to_string(value) {
+        Ok(msg) => {
+            let _ = sender.lock().await.send(text_message(msg)).await;
+        }
+        Err(error) => {
+            let _ = sender
+                .lock()
+                .await
+                .send(text_message(format!(
+                    "Error serializing response: {}",
+                    error
+                )))
+                .await;
+        }
+    }
 }
 
 async fn send_msgpack_or_text<T: serde::Serialize>(sender: &WsSender, value: &T) {

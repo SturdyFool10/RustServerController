@@ -38,11 +38,21 @@ pub fn load_json(path: &str) -> Config {
             error!(error);
             info!("this is likely ok, trying to salvage from error above by creating a default configuration.");
             info!("this can happen if it is your first launch");
-            let str = serde_json::to_string_pretty(&Config::default()).unwrap();
-            let mut f = File::create(path)
-                .expect(&format!("There was an error creating the file specified: {}", &path)[..]);
-            f.write_all(str.as_bytes()).expect("Error Writing to File");
-            str
+            let default_config = Config::default();
+            let str = match serde_json::to_string_pretty(&default_config) {
+                Ok(str) => str,
+                Err(error) => {
+                    error!("Failed to serialize default configuration: {}", error);
+                    return default_config;
+                }
+            };
+            match File::create(path).and_then(|mut f| f.write_all(str.as_bytes())) {
+                Ok(()) => str,
+                Err(error) => {
+                    error!("Failed to write default config to {}: {}", path, error);
+                    return default_config;
+                }
+            }
         }
     };
     // Validate specializations before deserializing Config
@@ -50,6 +60,11 @@ pub fn load_json(path: &str) -> Config {
         let registry = specializations::init_builtin_registry();
         configuration::validate_specializations_in_config(&json_val, &registry);
     }
-    let json = serde_json::from_str(&data.clone());
-    json.unwrap()
+    match serde_json::from_str(&data) {
+        Ok(config) => config,
+        Err(error) => {
+            error!("Failed to parse config {}: {}", path, error);
+            Config::default()
+        }
+    }
 }

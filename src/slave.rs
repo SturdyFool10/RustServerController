@@ -3,7 +3,7 @@
 /// Provides the HTTP and websocket interface for slave nodes, allowing the master
 /// to communicate and control servers running on this node.
 use axum::{routing::get, Router};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{app_state::AppState, websocket::handle_ws_upgrade};
 
@@ -39,8 +39,14 @@ pub async fn start_slave(_state: AppState) {
     use axum::serve;
     use tokio::net::TcpListener;
 
-    let listener = TcpListener::bind(&address).await.unwrap();
-    serve(listener, stateful_router.into_make_service())
-        .await
-        .unwrap();
+    let listener = match TcpListener::bind(&address).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            error!("Failed to bind slave server to {}: {}", address, error);
+            return;
+        }
+    };
+    if let Err(error) = serve(listener, stateful_router.into_make_service()).await {
+        error!("Slave server stopped with error: {}", error);
+    }
 }

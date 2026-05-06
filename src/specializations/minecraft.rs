@@ -69,12 +69,12 @@ impl ServerSpecialization for MinecraftSpecialization {
         let mut max_players = 20; // Minecraft's default
 
         if let Ok(val) = file_result {
-            let regex = Regex::new(r"max-players=(\d+)").unwrap();
-
-            if let Some(caps) = regex.captures(&val) {
-                if let Some(mp) = caps.get(1) {
-                    if let Ok(mp) = mp.as_str().parse::<usize>() {
-                        max_players = mp;
+            if let Ok(regex) = Regex::new(r"max-players=(\d+)") {
+                if let Some(caps) = regex.captures(&val) {
+                    if let Some(mp) = caps.get(1) {
+                        if let Ok(mp) = mp.as_str().parse::<usize>() {
+                            max_players = mp;
+                        }
                     }
                 }
             }
@@ -107,18 +107,35 @@ impl ServerSpecialization for MinecraftSpecialization {
 
         // Player join regex
 
-        let join_pattern = Regex::new(
+        let join_pattern = match Regex::new(
             r"(\w+)\[/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+\] logged in with entity id",
-        )
-        .unwrap();
+        ) {
+            Ok(regex) => regex,
+            Err(error) => {
+                tracing::error!("Invalid Minecraft join regex: {}", error);
+                return Some(colorize_minecraft_log_line(&line));
+            }
+        };
 
         // Player leave regex
 
-        let leave_pattern = Regex::new(r"\]: (\w+) lost connection").unwrap();
+        let leave_pattern = match Regex::new(r"\]: (\w+) lost connection") {
+            Ok(regex) => regex,
+            Err(error) => {
+                tracing::error!("Invalid Minecraft leave regex: {}", error);
+                return Some(colorize_minecraft_log_line(&line));
+            }
+        };
 
         // Ready regex
 
-        let ready_pattern = Regex::new(r#"Done \(\d+\.\d+s\)! For help, type "help""#).unwrap();
+        let ready_pattern = match Regex::new(r#"Done \(\d+\.\d+s\)! For help, type "help""#) {
+            Ok(regex) => regex,
+            Err(error) => {
+                tracing::error!("Invalid Minecraft ready regex: {}", error);
+                return Some(colorize_minecraft_log_line(&line));
+            }
+        };
 
         // Track if status update occurs
         let mut status_update = false;
@@ -209,9 +226,7 @@ impl ServerSpecialization for MinecraftSpecialization {
                     server_name: name.clone(),
                     server_type: specialized_server_type.clone(),
                 };
-                let _ = state
-                    .tx
-                    .send(serde_json::to_string(&eula_console_msg).unwrap());
+                crate::servers::broadcast_json(&state, &eula_console_msg);
 
                 // Restart the server
                 let mut desc = crate::controlled_program::ControlledProgramDescriptor::new(
@@ -223,7 +238,9 @@ impl ServerSpecialization for MinecraftSpecialization {
                 desc.specialized_server_type = specialized_server_type;
                 desc.crash_prevention = crash_prevention;
                 let mut servers = state.servers.lock().await;
-                servers.push(desc.into_instance(&state.specialization_registry));
+                if let Some(instance) = crate::servers::create_instance(&state, desc) {
+                    servers.push(instance);
+                }
             }
         });
     }
@@ -256,14 +273,10 @@ mod tests {
     use crate::specializations::ServerSpecialization;
     use tokio::process::Command;
 
-    fn test_instance() -> ControlledProgramInstance {
-        let child = Command::new("sh")
-            .arg("-c")
-            .arg("exit 0")
-            .spawn()
-            .expect("spawn test child");
+    fn test_instance() -> std::io::Result<ControlledProgramInstance> {
+        let child = Command::new("sh").arg("-c").arg("exit 0").spawn()?;
 
-        ControlledProgramInstance {
+        Ok(ControlledProgramInstance {
             name: "test".to_string(),
             executable_path: "sh".to_string(),
             command_line_args: vec!["-c".to_string(), "exit 0".to_string()],
@@ -277,13 +290,13 @@ mod tests {
             specialized_server_info: None,
             specialization_handler: None,
             specialization_info_sent: false,
-        }
+        })
     }
 
     #[tokio::test]
-    async fn status_update_stays_pending_until_sent() {
+    async fn status_update_stays_pending_until_sent() -> std::io::Result<()> {
         let mut specialization = MinecraftSpecialization::default();
-        let mut instance = test_instance();
+        let mut instance = test_instance()?;
 
         specialization.parse_output(
             r#"[Server thread/INFO]: Done (12.345s)! For help, type "help""#.to_string(),
@@ -299,6 +312,7 @@ mod tests {
         specialization.set_status_update_sent();
 
         assert!(!specialization.has_status_update());
+        Ok(())
     }
 }
 
@@ -385,12 +399,17 @@ fn colorize_minecraft_log_line(line: &str) -> String {
     };
     // Extract type (INFO/WARN/ERROR) from inside brackets for both colored_type and colored_third
     let typ_str = if blocks.len() > 1 {
-        let typ_caps = Regex::new(r"\[([^\]/]+/)?([A-Z]+)\]").unwrap();
-        typ_caps
-            .captures(&blocks[1])
-            .and_then(|c| c.get(2))
-            .map(|m| m.as_str())
-            .unwrap_or("")
+        match Regex::new(r"\[([^\]/]+/)?([A-Z]+)\]") {
+            Ok(typ_caps) => typ_caps
+                .captures(&blocks[1])
+                .and_then(|c| c.get(2))
+                .map(|m| m.as_str())
+                .unwrap_or(""),
+            Err(error) => {
+                tracing::error!("Invalid Minecraft log type regex: {}", error);
+                ""
+            }
+        }
     } else {
         ""
     };

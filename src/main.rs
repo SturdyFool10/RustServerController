@@ -106,7 +106,10 @@ async fn main() -> Result<(), String> {
         let shutdown = shutdown.clone();
         async move {
             use tokio::signal;
-            signal::ctrl_c().await.expect("Failed to listen for ctrl_c");
+            if let Err(error) = signal::ctrl_c().await {
+                error!("Failed to listen for ctrl_c: {}", error);
+                return;
+            }
             shutdown("ctrl_c").await;
         }
     });
@@ -122,11 +125,18 @@ async fn main() -> Result<(), String> {
             use tokio::task::yield_now;
             loop {
                 yield_now().await;
-                if poll(std::time::Duration::from_millis(25)).expect("Failed to poll for events") {
-                    if let Event::Key(key_event) = read().expect("Failed to read event") {
-                        if key_event.code == KeyCode::Char('t') {
-                            shutdown("T key").await;
+                match poll(std::time::Duration::from_millis(25)) {
+                    Ok(true) => {
+                        if let Ok(Event::Key(key_event)) = read() {
+                            if key_event.code == KeyCode::Char('t') {
+                                shutdown("T key").await;
+                            }
                         }
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        error!("Failed to poll terminal events: {}", error);
+                        break;
                     }
                 }
             }
