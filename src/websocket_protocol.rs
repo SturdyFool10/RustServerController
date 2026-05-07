@@ -12,7 +12,10 @@ fn text_message(s: String) -> Message {
     Message::Text(Utf8Bytes::from(s))
 }
 
-async fn build_server_info_message(state: &AppState, include_output: bool) -> ServerInfoMessage {
+pub(crate) async fn build_server_info_message(
+    state: &AppState,
+    include_output: bool,
+) -> ServerInfoMessage {
     let servers = state.servers.lock().await;
     let mut server_infos = vec![];
     let mut used_names: Vec<String> = vec![];
@@ -34,6 +37,7 @@ async fn build_server_info_message(state: &AppState, include_output: bool) -> Se
             .filter(|stats| !stats.is_null());
         let mut s_info = ServerInfo {
             name: server.name.clone(),
+            server_uuid: Some(server.server_uuid.clone()),
             output: "".to_owned(),
             active: true,
             specialization: server.specialized_server_type.clone(),
@@ -56,6 +60,7 @@ async fn build_server_info_message(state: &AppState, include_output: bool) -> Se
         if !used_names.contains(&server_config.name) {
             server_infos.push(ServerInfo {
                 name: server_config.name.clone(),
+                server_uuid: server_config.server_uuid.clone(),
                 output: "".to_owned(),
                 active: false,
                 specialization: server_config.specialized_server_type.clone(),
@@ -67,9 +72,18 @@ async fn build_server_info_message(state: &AppState, include_output: bool) -> Se
         }
     }
 
+    let active_server_uuids: Vec<String> = config
+        .servers
+        .iter()
+        .filter_map(|server| server.server_uuid.clone())
+        .collect();
+
     ServerInfoMessage {
         r#type: "ServerInfo".to_owned(),
         servers: server_infos,
+        archived_server_stats: crate::specializations::player_activity::archived_server_stats(
+            &active_server_uuids,
+        ),
         config,
     }
 }

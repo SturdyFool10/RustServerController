@@ -541,7 +541,9 @@ h1 {
     gap: 8px;
 }
 .statsColumns li,
-.statsSpecializationDetails li {
+.statsSpecializationDetails li,
+.statsServerData li,
+.statsArchivedServerData li {
     display: flex;
     justify-content: space-between;
     gap: 12px;
@@ -551,30 +553,40 @@ h1 {
     line-height: 1.25;
 }
 .statsSpecializationDetails li,
-.statsSpecializationSettings li {
+.statsSpecializationSettings li,
+.statsServerData li,
+.statsArchivedServerData li {
     display: block;
     border-top: 1px solid var(--border-muted);
     padding-top: 10px;
 }
 .statsSpecializationDetails li:first-child,
-.statsSpecializationSettings li:first-child {
+.statsSpecializationSettings li:first-child,
+.statsServerData li:first-child,
+.statsArchivedServerData li:first-child {
     border-top: 0;
     padding-top: 0;
 }
 .statsSpecializationDetails dl,
-.statsSpecializationSettings dl {
+.statsSpecializationSettings dl,
+.statsServerData dl,
+.statsArchivedServerData dl {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 8px 16px;
     margin: 10px 0 0;
 }
 .statsSpecializationDetails dt,
-.statsSpecializationSettings dt {
+.statsSpecializationSettings dt,
+.statsServerData dt,
+.statsArchivedServerData dt {
     color: var(--text-muted);
     font-size: 0.8rem;
 }
 .statsSpecializationDetails dd,
-.statsSpecializationSettings dd {
+.statsSpecializationSettings dd,
+.statsServerData dd,
+.statsArchivedServerData dd {
     margin: 2px 0 0;
     color: var(--text);
     overflow-wrap: anywhere;
@@ -585,8 +597,26 @@ h1 {
 }
 .statsColumns li strong,
 .statsSpecializationDetails strong,
-.statsSpecializationSettings strong {
+.statsSpecializationSettings strong,
+.statsServerData strong,
+.statsArchivedServerData strong {
     color: var(--secondary);
+}
+.statsUuidButton,
+.statsArchiveActions button {
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    padding: 4px 8px;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+}
+.statsArchiveActions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: -24px;
 }
 .statsPlayerActivity {
     margin: 0;
@@ -782,6 +812,87 @@ h1 {
     font-size: 12px;
     font-family: "Roboto", sans-serif;
     animation: pulse 1.5s infinite ease-in-out;
+}
+
+.administrationDashboard {
+    width: min(1200px, calc(100% - 48px));
+    margin: 90px auto 32px;
+    color: var(--text);
+}
+.adminToolbar,
+.adminGroup {
+    background: var(--bg-dark);
+    border: 1px solid var(--border-muted);
+    border-radius: 8px;
+    padding: 14px;
+    box-sizing: border-box;
+}
+.adminToolbar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.adminGroups,
+.adminEntryList {
+    display: grid;
+    gap: 10px;
+}
+.adminGroupHeader,
+.adminEntryRow {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+}
+.adminBanEntryRow {
+    grid-template-columns: minmax(150px, 1fr) minmax(110px, 0.65fr) minmax(180px, 1fr) minmax(180px, 1fr) auto;
+}
+.adminPermanentToggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+}
+.adminGroupHeader {
+    margin-bottom: 12px;
+}
+.adminServers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+    color: var(--text-muted);
+}
+.adminServers label {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+}
+.adminGroup h3 {
+    margin: 12px 0 8px;
+    color: var(--secondary);
+    font-size: 1rem;
+    font-weight: 500;
+}
+.adminEntryList {
+    margin-bottom: 8px;
+}
+.adminToolbar input,
+.adminGroup input,
+.adminToolbar button,
+.adminGroup button {
+    min-height: 34px;
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    padding: 6px 8px;
+    box-sizing: border-box;
+    min-width: 0;
+}
+.adminToolbar button,
+.adminGroup button {
+    cursor: pointer;
 }
 
 @keyframes pulse {

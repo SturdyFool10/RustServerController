@@ -134,6 +134,7 @@ window.RSCApp = window.RSCApp || {};
       Servers: ".servers",
       Configuration: ".config",
       Stats: ".stat",
+      Administration: ".administration",
     };
     $("#menu ul li a").click(function (e) {
       const targetSelector = classMap[e.target.innerHTML];

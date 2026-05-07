@@ -274,6 +274,7 @@ window.RSCApp = window.RSCApp || {};
   app.mergeSpecializationInfoUpdate = function (update) {
     upsertServerInfo({
       name: update.server_name,
+      server_uuid: update.server_uuid ?? null,
       specialized_info: update.info,
       specialization_stats: update.stats ?? null,
       specialization_options: update.specialization_options ?? null,

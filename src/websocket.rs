@@ -211,6 +211,11 @@ struct ServerActionMessage {
     server_name: String,
 }
 
+#[derive(Deserialize)]
+struct DeleteServerStatsMessage {
+    server_uuid: String,
+}
+
 async fn start_inactive_server(server_name: &str, state: &AppState) {
     let config = state.config.lock().await;
     let desc = config
@@ -238,6 +243,7 @@ async fn start_inactive_server(server_name: &str, state: &AppState) {
             };
         let update = specialization_update(
             instance.name.clone(),
+            Some(instance.server_uuid.clone()),
             specialized_info,
             specialization_stats,
             instance.specialization_options.clone(),
@@ -270,6 +276,7 @@ async fn stop_active_server(server_name: &str, state: &AppState) -> bool {
     .await;
     let update = specialization_update(
         server.name.clone(),
+        Some(server.server_uuid.clone()),
         serde_json::Value::Null,
         None,
         server.specialization_options.clone(),
@@ -312,6 +319,43 @@ async fn restart_server_action(text: &str, state: AppState) {
     };
     stop_active_server(&message.server_name, &state).await;
     start_inactive_server(&message.server_name, &state).await;
+}
+
+async fn delete_archived_server_stats(text: &str, state: AppState) {
+    let message: DeleteServerStatsMessage = match serde_json::from_str(text) {
+        Ok(message) => message,
+        Err(error) => {
+            error!("Error parsing deleteArchivedServerStats message: {}", error);
+            return;
+        }
+    };
+
+    let active = {
+        let config = state.config.lock().await;
+        config
+            .servers
+            .iter()
+            .any(|server| server.server_uuid.as_deref() == Some(message.server_uuid.as_str()))
+    };
+    if active {
+        let _ = state
+            .tx
+            .send("Refusing to delete stats for a server still present in config".to_string());
+        return;
+    }
+
+    if let Err(error) =
+        crate::specializations::player_activity::delete_server_stats(&message.server_uuid)
+    {
+        error!(
+            "Failed to delete archived server stats for '{}': {}",
+            message.server_uuid, error
+        );
+        return;
+    }
+
+    let info = crate::websocket_protocol::build_server_info_message(&state, false).await;
+    broadcast_json(&state, &info);
 }
 
 async fn handle_stdin_input(text: &str, state: AppState) {
@@ -362,6 +406,7 @@ async fn apply_config_change(text: &str, state: AppState) {
         .await;
         let update = specialization_update(
             server.name.clone(),
+            Some(server.server_uuid.clone()),
             serde_json::Value::Null,
             None,
             server.specialization_options.clone(),
@@ -373,6 +418,16 @@ async fn apply_config_change(text: &str, state: AppState) {
     servers.clear();
 
     config.change(message.updated_config);
+    crate::configuration::ensure_server_uuids(&mut config);
+    crate::configuration::ensure_account_filter_group_uuids(&mut config);
+    for server in &config.servers {
+        if let Some(server_uuid) = server.server_uuid.as_deref() {
+            crate::specializations::player_activity::migrate_server_name_to_uuid(
+                &server.name,
+                server_uuid,
+            );
+        }
+    }
     crate::configuration::apply_specialization_option_defaults(
         &mut config,
         &state.specialization_registry,
@@ -407,6 +462,7 @@ async fn terminate_servers(state: AppState) {
         .await;
         let update = specialization_update(
             server.name.clone(),
+            Some(server.server_uuid.clone()),
             serde_json::Value::Null,
             None,
             server.specialization_options.clone(),
@@ -450,6 +506,7 @@ async fn process_message(text: String, state: AppState) {
         "killServer" => kill_server_action(&text, state).await,
         "restartServer" => restart_server_action(&text, state).await,
         "configChange" => apply_config_change(&text, state).await,
+        "deleteArchivedServerStats" => delete_archived_server_stats(&text, state).await,
         "getConfig" => {}
         "terminateServers" => terminate_servers(state).await,
         _ => {}

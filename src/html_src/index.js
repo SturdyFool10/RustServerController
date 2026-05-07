@@ -25,10 +25,12 @@ $(document).ready(function () {
     switch (obj.type) {
       case "ConfigInfo":
         app.setEditorConfig(obj.config);
+        app.updateAdministration?.();
         break;
       case "ServerInfo":
         app.mergeServerInfoSnapshot(obj);
         app.updateServerInfoSpecializations();
+        app.updateAdministration?.();
         break;
       case "ServerSpecializationInfoUpdate":
         app.mergeSpecializationInfoUpdate(obj);
@@ -50,5 +52,6 @@ $(document).ready(function () {
   app.initConfigEditor();
   app.initNavigation();
   app.initStats();
+  app.initAdministration();
   app.initWebglBackground();
 });

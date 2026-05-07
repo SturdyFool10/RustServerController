@@ -1,10 +1,20 @@
 use super::{player_activity::PlayerActivityTracker, ServerSpecialization};
 use crate::ansi_to_html::{ansi_to_plain_text, escape_html};
 use crate::app_state::AppState;
+use crate::configuration::{
+    Config, MinecraftAccountFilterDetail, MinecraftAccountFilterDetailGroup,
+    MinecraftIpBanFilterDetail,
+};
 use crate::controlled_program::ControlledProgramInstance;
+use crate::messages::ConfigInfo;
+use crate::servers::broadcast_json;
 use regex::Regex;
-use serde_json::json;
-use std::path::Path;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
 
 /// Specialization for Minecraft servers.
 ///
@@ -25,6 +35,10 @@ pub struct MinecraftSpecialization {
     player_activity: PlayerActivityTracker,
 
     last_status_update: bool,
+
+    account_filter_watcher_stop: Option<watch::Sender<bool>>,
+
+    account_filter_watcher: Option<JoinHandle<()>>,
 }
 
 impl ServerSpecialization for MinecraftSpecialization {
@@ -42,6 +56,7 @@ impl ServerSpecialization for MinecraftSpecialization {
     fn default_options(&self) -> serde_json::Value {
         json!({
             "auto_accept_eula": true,
+            "account_filter_groups": [],
         })
     }
 
@@ -92,7 +107,9 @@ impl ServerSpecialization for MinecraftSpecialization {
 
         self.player_list = Vec::new();
 
-        self.player_activity = PlayerActivityTracker::for_server(&instance.name, "Minecraft");
+        self.player_activity =
+            PlayerActivityTracker::for_server(&instance.server_uuid, &instance.name, "Minecraft");
+        sync_account_filters(instance);
 
         self.last_status_update = true;
     }
@@ -200,10 +217,13 @@ impl ServerSpecialization for MinecraftSpecialization {
             self.player_list = Vec::new();
             self.last_status_update = true;
         }
+        self.stop_account_filter_watcher();
+        self.start_account_filter_watcher(instance, state.clone());
 
         // Robust EULA auto-accept: check eula.txt for eula=false and patch/restart if needed
         let state = state.clone();
         let name = instance.name.clone();
+        let server_uuid = instance.server_uuid.clone();
         let exe_path = instance.executable_path.clone();
         let args = instance.command_line_args.clone();
         let working_dir = instance.working_dir.clone();
@@ -256,6 +276,7 @@ impl ServerSpecialization for MinecraftSpecialization {
                     working_dir,
                 );
                 desc.specialized_server_type = specialized_server_type;
+                desc.server_uuid = Some(server_uuid);
                 desc.specialization_options = specialization_options;
                 desc.crash_prevention = crash_prevention;
                 let mut servers = state.servers.lock().await;
@@ -284,14 +305,390 @@ impl ServerSpecialization for MinecraftSpecialization {
             "Players Online": self.player_count,
             "Player Slots": self.max_players,
             "Ready": self.ready,
-            "Tracked Players": self.player_list.len(),
-            "Known Players": self.player_activity.known_player_count(),
-            "Total Player Hours": self.player_activity.total_hours(),
-            "Player Activity": self.player_activity.summaries(),
+            "Online Names": self.player_list.len(),
+            "Observed Names": self.player_activity.known_player_count(),
+            "Total Session Hours": self.player_activity.total_hours(),
+            "Name Activity": self.player_activity.summaries(),
             "Recent Sessions": self.player_activity.recent_sessions(25),
             "Timeframe Stats": self.player_activity.timeframe_stats(),
         })
     }
+}
+
+impl MinecraftSpecialization {
+    fn start_account_filter_watcher(
+        &mut self,
+        instance: &ControlledProgramInstance,
+        state: AppState,
+    ) {
+        self.stop_account_filter_watcher();
+        let Some(group_ids) = account_filter_group_ids(instance.specialization_options.as_ref())
+        else {
+            return;
+        };
+        if group_ids.is_empty() {
+            return;
+        }
+
+        let working_dir = instance.working_dir.clone();
+        let server_name = instance.name.clone();
+        let (stop_tx, stop_rx) = watch::channel(false);
+        self.account_filter_watcher_stop = Some(stop_tx);
+        self.account_filter_watcher = Some(tokio::spawn(watch_account_filter_files(
+            server_name,
+            working_dir,
+            group_ids,
+            state,
+            stop_rx,
+        )));
+    }
+
+    fn stop_account_filter_watcher(&mut self) {
+        if let Some(stop) = self.account_filter_watcher_stop.take() {
+            let _ = stop.send(true);
+        }
+        if let Some(handle) = self.account_filter_watcher.take() {
+            handle.abort();
+        }
+    }
+}
+
+impl Drop for MinecraftSpecialization {
+    fn drop(&mut self) {
+        self.stop_account_filter_watcher();
+    }
+}
+
+fn sync_account_filters(instance: &ControlledProgramInstance) {
+    let Some(group_ids) = account_filter_group_ids(instance.specialization_options.as_ref()) else {
+        return;
+    };
+    sync_account_filters_for(&instance.working_dir, &group_ids);
+}
+
+async fn watch_account_filter_files(
+    server_name: String,
+    working_dir: String,
+    group_ids: Vec<String>,
+    state: AppState,
+    mut stop: watch::Receiver<bool>,
+) {
+    let mut snapshot = filter_file_snapshot(&working_dir);
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let next_snapshot = filter_file_snapshot(&working_dir);
+                if next_snapshot != snapshot {
+                    tracing::debug!("Minecraft account filter files changed for '{}'; syncing groups", server_name);
+                    sync_account_filters_for_state(&state, &working_dir, &group_ids).await;
+                    snapshot = filter_file_snapshot(&working_dir);
+                }
+            }
+            changed = stop.changed() => {
+                if changed.is_err() || *stop.borrow() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+async fn sync_account_filters_for_state(state: &AppState, working_dir: &str, group_ids: &[String]) {
+    let mut config = state.config.lock().await;
+    if merge_instance_filter_files_into_groups(&mut config, working_dir, group_ids) {
+        config.update_config_file("config.json");
+        let message = ConfigInfo {
+            r#type: "ConfigInfo".to_string(),
+            config: config.clone(),
+        };
+        broadcast_json(state, &message);
+    }
+    fan_out_effective_filter_files(&config, group_ids);
+}
+
+fn sync_account_filters_for(working_dir: &str, group_ids: &[String]) {
+    if group_ids.is_empty() {
+        return;
+    }
+
+    let mut config = match crate::files::load_json("config.json") {
+        config if !config.minecraft_account_filter_detail_groups.is_empty() => config,
+        _ => return,
+    };
+
+    if merge_instance_filter_files_into_groups(&mut config, working_dir, group_ids) {
+        config.update_config_file("config.json");
+    }
+
+    fan_out_effective_filter_files(&config, group_ids);
+}
+
+fn fan_out_effective_filter_files(config: &Config, group_ids: &[String]) {
+    let minecraft_servers: Vec<_> = config
+        .servers
+        .iter()
+        .filter(|server| server.specialized_server_type.as_deref() == Some("Minecraft"))
+        .filter_map(|server| {
+            let server_group_ids =
+                account_filter_group_ids(server.specialization_options.as_ref())?;
+            if server_group_ids
+                .iter()
+                .any(|group| group_ids.contains(group))
+            {
+                Some((server.working_dir.clone(), server_group_ids))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for (working_dir, server_group_ids) in minecraft_servers {
+        write_effective_filter_files(&config, &working_dir, &server_group_ids);
+    }
+}
+
+fn filter_file_snapshot(working_dir: &str) -> Vec<Option<(SystemTime, u64)>> {
+    ["whitelist.json", "banned-players.json", "banned-ips.json"]
+        .iter()
+        .map(|file_name| filter_file_state(Path::new(working_dir).join(file_name)))
+        .collect()
+}
+
+fn filter_file_state(path: PathBuf) -> Option<(SystemTime, u64)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.modified().ok()?, metadata.len()))
+}
+
+fn merge_instance_filter_files_into_groups(
+    config: &mut Config,
+    working_dir: &str,
+    group_ids: &[String],
+) -> bool {
+    let whitelist =
+        read_minecraft_filter_file::<MinecraftAccountFilterDetail>(working_dir, "whitelist.json");
+    let bans = read_minecraft_filter_file::<MinecraftAccountFilterDetail>(
+        working_dir,
+        "banned-players.json",
+    );
+    let ip_bans =
+        read_minecraft_filter_file::<MinecraftIpBanFilterDetail>(working_dir, "banned-ips.json");
+    let mut changed = false;
+
+    for group in config
+        .minecraft_account_filter_detail_groups
+        .iter_mut()
+        .filter(|group| {
+            group
+                .uuid
+                .as_ref()
+                .is_some_and(|uuid| group_ids.contains(uuid))
+        })
+    {
+        changed |= merge_account_entries(&mut group.whitelist, &whitelist, false);
+        changed |= merge_account_entries(&mut group.ban_list, &bans, true);
+        changed |= merge_ip_entries(&mut group.banned_ips, &ip_bans);
+    }
+
+    changed
+}
+
+fn write_effective_filter_files(config: &Config, working_dir: &str, group_ids: &[String]) {
+    let selected: Vec<&MinecraftAccountFilterDetailGroup> = config
+        .minecraft_account_filter_detail_groups
+        .iter()
+        .filter(|group| {
+            group
+                .uuid
+                .as_ref()
+                .is_some_and(|uuid| group_ids.contains(uuid))
+        })
+        .collect();
+    if selected.is_empty() {
+        return;
+    }
+
+    let mut whitelist = BTreeMap::new();
+    let mut bans = BTreeMap::new();
+    let mut ip_bans = BTreeMap::new();
+    for group in selected {
+        for entry in &group.whitelist {
+            if !entry.name.trim().is_empty() {
+                whitelist.insert(entry.name.to_ascii_lowercase(), entry);
+            }
+        }
+        for entry in &group.ban_list {
+            if !entry.name.trim().is_empty() {
+                bans.insert(entry.name.to_ascii_lowercase(), entry);
+            }
+        }
+        for entry in &group.banned_ips {
+            if !entry.ip.trim().is_empty() {
+                ip_bans.insert(entry.ip.clone(), entry);
+            }
+        }
+    }
+
+    if let Err(error) = write_minecraft_filter_file(
+        working_dir,
+        "whitelist.json",
+        whitelist.values().map(|entry| {
+            json!({
+                "uuid": entry.uuid.clone().unwrap_or_default(),
+                "name": entry.name,
+            })
+        }),
+    ) {
+        tracing::warn!("Failed to sync Minecraft whitelist: {}", error);
+    }
+
+    if let Err(error) = write_minecraft_filter_file(
+        working_dir,
+        "banned-players.json",
+        bans.values().map(|entry| {
+            json!({
+                "uuid": entry.uuid.clone().unwrap_or_default(),
+                "name": entry.name,
+                "created": entry.created.clone().unwrap_or_else(|| "1970-01-01 00:00:00 +0000".to_string()),
+                "source": entry.source.clone().unwrap_or_else(|| "RustServerController".to_string()),
+                "expires": entry.expires.clone().unwrap_or_else(|| "forever".to_string()),
+                "reason": entry.reason.clone().unwrap_or_else(|| "Banned by administrator".to_string()),
+            })
+        }),
+    ) {
+        tracing::warn!("Failed to sync Minecraft ban list: {}", error);
+    }
+
+    if let Err(error) = write_minecraft_filter_file(
+        working_dir,
+        "banned-ips.json",
+        ip_bans.values().map(|entry| {
+            json!({
+                "ip": entry.ip,
+                "created": entry.created.clone().unwrap_or_else(|| "1970-01-01 00:00:00 +0000".to_string()),
+                "source": entry.source.clone().unwrap_or_else(|| "RustServerController".to_string()),
+                "expires": entry.expires.clone().unwrap_or_else(|| "forever".to_string()),
+                "reason": entry.reason.clone().unwrap_or_else(|| "Banned by administrator".to_string()),
+            })
+        }),
+    ) {
+        tracing::warn!("Failed to sync Minecraft IP ban list: {}", error);
+    }
+}
+
+fn merge_account_entries(
+    target: &mut Vec<MinecraftAccountFilterDetail>,
+    incoming: &[MinecraftAccountFilterDetail],
+    include_ban_metadata: bool,
+) -> bool {
+    let mut changed = false;
+    for incoming_entry in incoming {
+        if incoming_entry.name.trim().is_empty() {
+            continue;
+        }
+        let key = incoming_entry.name.to_ascii_lowercase();
+        match target
+            .iter_mut()
+            .find(|entry| entry.name.to_ascii_lowercase() == key)
+        {
+            Some(existing) => {
+                changed |= fill_missing(&mut existing.uuid, &incoming_entry.uuid);
+                if include_ban_metadata {
+                    changed |= fill_missing(&mut existing.created, &incoming_entry.created);
+                    changed |= fill_missing(&mut existing.source, &incoming_entry.source);
+                    changed |= fill_missing(&mut existing.expires, &incoming_entry.expires);
+                    changed |= fill_missing(&mut existing.reason, &incoming_entry.reason);
+                }
+            }
+            None => {
+                target.push(incoming_entry.clone());
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+fn merge_ip_entries(
+    target: &mut Vec<MinecraftIpBanFilterDetail>,
+    incoming: &[MinecraftIpBanFilterDetail],
+) -> bool {
+    let mut changed = false;
+    for incoming_entry in incoming {
+        if incoming_entry.ip.trim().is_empty() {
+            continue;
+        }
+        match target
+            .iter_mut()
+            .find(|entry| entry.ip == incoming_entry.ip)
+        {
+            Some(existing) => {
+                changed |= fill_missing(&mut existing.created, &incoming_entry.created);
+                changed |= fill_missing(&mut existing.source, &incoming_entry.source);
+                changed |= fill_missing(&mut existing.expires, &incoming_entry.expires);
+                changed |= fill_missing(&mut existing.reason, &incoming_entry.reason);
+            }
+            None => {
+                target.push(incoming_entry.clone());
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+fn fill_missing(target: &mut Option<String>, incoming: &Option<String>) -> bool {
+    if target
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return false;
+    }
+    let Some(value) = incoming.as_ref().filter(|value| !value.trim().is_empty()) else {
+        return false;
+    };
+    *target = Some(value.clone());
+    true
+}
+
+fn read_minecraft_filter_file<T: serde::de::DeserializeOwned>(
+    working_dir: &str,
+    file_name: &str,
+) -> Vec<T> {
+    let path = Path::new(working_dir).join(file_name);
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<Vec<T>>(&contents).ok())
+        .unwrap_or_default()
+}
+
+fn account_filter_group_ids(options: Option<&Value>) -> Option<Vec<String>> {
+    options
+        .and_then(|options| options.get("account_filter_groups"))
+        .and_then(Value::as_array)
+        .map(|groups| {
+            groups
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+}
+
+fn write_minecraft_filter_file(
+    working_dir: &str,
+    file_name: &str,
+    entries: impl Iterator<Item = Value>,
+) -> std::io::Result<()> {
+    let path = Path::new(working_dir).join(file_name);
+    let json = serde_json::to_string_pretty(&entries.collect::<Vec<_>>())?;
+    if std::fs::read_to_string(&path).ok().as_deref() == Some(json.as_str()) {
+        return Ok(());
+    }
+    std::fs::write(path, json)
 }
 
 /// Factory function for Minecraft specialization.
@@ -312,6 +709,7 @@ mod tests {
 
         Ok(ControlledProgramInstance {
             name: "test".to_string(),
+            server_uuid: uuid::Uuid::new_v4().to_string(),
             executable_path: "sh".to_string(),
             command_line_args: vec!["-c".to_string(), "exit 0".to_string()],
             process: child,
@@ -347,6 +745,61 @@ mod tests {
         specialization.set_status_update_sent();
 
         assert!(!specialization.has_status_update());
+        Ok(())
+    }
+
+    #[test]
+    fn account_filter_sync_imports_real_minecraft_ban_files() -> std::io::Result<()> {
+        let working_dir =
+            std::env::temp_dir().join(format!("rsc-minecraft-filter-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&working_dir)?;
+        std::fs::write(
+            working_dir.join("whitelist.json"),
+            r#"[{"uuid":"7febb72b-4010-47ae-b810-b14394a89fd5","name":"Lord55DRAGON"}]"#,
+        )?;
+        std::fs::write(
+            working_dir.join("banned-players.json"),
+            r#"[{"uuid":"ca2d0ab0-e4a1-4d54-b4cd-a2d5ed0b6b8c","name":"DingDong7801","created":"2026-05-01 01:17:18 -0700","source":"SturdyFool10","expires":"forever","reason":"Nice try"}]"#,
+        )?;
+        std::fs::write(
+            working_dir.join("banned-ips.json"),
+            r#"[{"ip":"192.0.2.10","created":"2026-05-01 01:17:18 -0700","source":"SturdyFool10","expires":"forever","reason":"Nope"}]"#,
+        )?;
+
+        let mut config = Config {
+            minecraft_account_filter_detail_groups: vec![MinecraftAccountFilterDetailGroup {
+                name: "Shared".to_string(),
+                uuid: Some("group-one".to_string()),
+                ..Default::default()
+            }],
+            ..Config::default()
+        };
+        assert!(merge_instance_filter_files_into_groups(
+            &mut config,
+            working_dir.to_str().unwrap_or_default(),
+            &["group-one".to_string()]
+        ));
+
+        let group = &config.minecraft_account_filter_detail_groups[0];
+        assert_eq!(group.whitelist.len(), 1);
+        assert_eq!(group.ban_list.len(), 1);
+        assert_eq!(group.banned_ips.len(), 1);
+        assert_eq!(group.ban_list[0].source.as_deref(), Some("SturdyFool10"));
+        assert_eq!(
+            group.ban_list[0].created.as_deref(),
+            Some("2026-05-01 01:17:18 -0700")
+        );
+
+        write_effective_filter_files(
+            &config,
+            working_dir.to_str().unwrap_or_default(),
+            &["group-one".to_string()],
+        );
+        let written_bans = std::fs::read_to_string(working_dir.join("banned-players.json"))?;
+        assert!(written_bans.contains(r#""source": "SturdyFool10""#));
+        assert!(written_bans.contains(r#""reason": "Nice try""#));
+
+        let _ = std::fs::remove_dir_all(working_dir);
         Ok(())
     }
 }

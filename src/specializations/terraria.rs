@@ -35,7 +35,8 @@ impl ServerSpecialization for TerrariaSpecialization {
     fn init(&mut self, instance: &mut ControlledProgramInstance) {
         self.max_players = parse_max_players(&instance.command_line_args).unwrap_or(0);
         self.player_count = 0;
-        self.player_activity = PlayerActivityTracker::for_server(&instance.name, "Terraria");
+        self.player_activity =
+            PlayerActivityTracker::for_server(&instance.server_uuid, &instance.name, "Terraria");
         instance.specialized_server_info = Some(json!({
             "player_count": 0,
             "max_players": self.max_players
@@ -96,9 +97,9 @@ impl ServerSpecialization for TerrariaSpecialization {
         json!({
             "Players Online": self.player_count,
             "Player Slots": self.max_players,
-            "Known Players": self.player_activity.known_player_count(),
-            "Total Player Hours": self.player_activity.total_hours(),
-            "Player Activity": self.player_activity.summaries(),
+            "Observed Names": self.player_activity.known_player_count(),
+            "Total Session Hours": self.player_activity.total_hours(),
+            "Name Activity": self.player_activity.summaries(),
             "Recent Sessions": self.player_activity.recent_sessions(25),
             "Timeframe Stats": self.player_activity.timeframe_stats(),
         })

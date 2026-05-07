@@ -9,6 +9,12 @@ window.RSCApp = window.RSCApp || {};
       : [];
   }
 
+  function archivedServerStats() {
+    return Array.isArray(window.serverInfoObj?.archived_server_stats)
+      ? window.serverInfoObj.archived_server_stats
+      : [];
+  }
+
   function aggregateStats(servers) {
     const stats = {
       total: servers.length,
@@ -114,13 +120,20 @@ window.RSCApp = window.RSCApp || {};
     return date.toLocaleString();
   }
 
+  function copyText(value) {
+    if (!value) return;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(value).catch(() => {});
+    }
+  }
+
   function renderPlayerActivity(description, players) {
     const playerList = document.createElement("ul");
     playerList.className = "statsPlayerActivity";
 
     if (!Array.isArray(players) || players.length === 0) {
       const empty = document.createElement("li");
-      empty.textContent = "No tracked players yet";
+      empty.textContent = "No observed names yet";
       playerList.appendChild(empty);
       description.appendChild(playerList);
       return;
@@ -175,7 +188,13 @@ window.RSCApp = window.RSCApp || {};
   }
 
   function timeframeLabel(name) {
-    return name.charAt(0).toUpperCase() + name.slice(1);
+    const labels = {
+      day: "Rolling Day",
+      week: "Rolling Week",
+      month: "Rolling Month",
+      year: "Rolling Year",
+    };
+    return labels[name] || name.charAt(0).toUpperCase() + name.slice(1);
   }
 
   function maxValue(values, selector) {
@@ -221,7 +240,7 @@ window.RSCApp = window.RSCApp || {};
       heading.textContent = timeframeLabel(name);
       metrics.innerHTML = `
         <dt>Logged Hours</dt><dd>${formatHours(value.logged_hours)}</dd>
-        <dt>Unique Players</dt><dd>${value.unique_players || 0}</dd>
+        <dt>Distinct Names</dt><dd>${value.distinct_names ?? 0}</dd>
         <dt>Average Online</dt><dd>${Number(value.average_online || 0).toFixed(2)}</dd>
         <dt>Peak Online</dt><dd>${value.peak_online || 0}</dd>
       `;
@@ -251,7 +270,7 @@ window.RSCApp = window.RSCApp || {};
   }
 
   function renderStatDescription(description, label, value) {
-    if (label === "Player Activity") {
+    if (label === "Player Activity" || label === "Name Activity") {
       renderPlayerActivity(description, value);
       return;
     }
@@ -287,6 +306,19 @@ window.RSCApp = window.RSCApp || {};
 
       if (server.specialization_stats) {
         const detailList = document.createElement("dl");
+        if (server.server_uuid) {
+          const term = document.createElement("dt");
+          const description = document.createElement("dd");
+          const uuidButton = document.createElement("button");
+          term.textContent = "Server UUID";
+          uuidButton.type = "button";
+          uuidButton.className = "statsUuidButton";
+          uuidButton.textContent = server.server_uuid;
+          uuidButton.title = "Copy server UUID";
+          uuidButton.addEventListener("click", () => copyText(server.server_uuid));
+          description.appendChild(uuidButton);
+          detailList.append(term, description);
+        }
         Object.entries(server.specialization_stats).forEach(([label, value]) => {
           const term = document.createElement("dt");
           const description = document.createElement("dd");
@@ -324,6 +356,19 @@ window.RSCApp = window.RSCApp || {};
 
       if (server.specialization_options) {
         const detailList = document.createElement("dl");
+        if (server.server_uuid) {
+          const term = document.createElement("dt");
+          const description = document.createElement("dd");
+          const uuidButton = document.createElement("button");
+          term.textContent = "Server UUID";
+          uuidButton.type = "button";
+          uuidButton.className = "statsUuidButton";
+          uuidButton.textContent = server.server_uuid;
+          uuidButton.title = "Copy server UUID";
+          uuidButton.addEventListener("click", () => copyText(server.server_uuid));
+          description.appendChild(uuidButton);
+          detailList.append(term, description);
+        }
         Object.entries(server.specialization_options).forEach(([label, value]) => {
           const term = document.createElement("dt");
           const description = document.createElement("dd");
@@ -334,6 +379,94 @@ window.RSCApp = window.RSCApp || {};
         item.appendChild(detailList);
       }
 
+      list.appendChild(item);
+    });
+  }
+
+  function appendUuidRow(detailList, uuid) {
+    if (!uuid) return;
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    const uuidButton = document.createElement("button");
+    term.textContent = "Server UUID";
+    uuidButton.type = "button";
+    uuidButton.className = "statsUuidButton";
+    uuidButton.textContent = uuid;
+    uuidButton.title = "Copy server UUID";
+    uuidButton.addEventListener("click", () => copyText(uuid));
+    description.appendChild(uuidButton);
+    detailList.append(term, description);
+  }
+
+  function renderServerData(root, servers) {
+    const list = root.querySelector(".statsServerData");
+    if (!list) return;
+    list.replaceChildren();
+
+    const values = servers.length ? servers : [{ name: "No configured servers" }];
+    values.forEach((server) => {
+      const item = document.createElement("li");
+      const title = document.createElement("strong");
+      const detailList = document.createElement("dl");
+      title.textContent = server.name;
+      appendUuidRow(detailList, server.server_uuid);
+      item.append(title, detailList);
+      list.appendChild(item);
+    });
+  }
+
+  function renderArchivedServerStats(root, archives) {
+    const list = root.querySelector(".statsArchivedServerData");
+    if (!list) return;
+    list.replaceChildren();
+
+    if (!archives.length) {
+      const item = document.createElement("li");
+      item.textContent = "No retained stats for removed servers";
+      list.appendChild(item);
+      return;
+    }
+
+    archives.forEach((archive) => {
+      const item = document.createElement("li");
+      const title = document.createElement("strong");
+      const actions = document.createElement("div");
+      const detailList = document.createElement("dl");
+      const deleteButton = document.createElement("button");
+
+      title.textContent = archive.name || "Removed server";
+      actions.className = "statsArchiveActions";
+      deleteButton.type = "button";
+      deleteButton.textContent = "Delete";
+      deleteButton.title = "Delete retained stats";
+      deleteButton.addEventListener("click", () => {
+        app.sendSocketMessage({
+          type: RSC.messages.deleteArchivedServerStats,
+          server_uuid: archive.server_uuid,
+        });
+      });
+      actions.appendChild(deleteButton);
+
+      appendUuidRow(detailList, archive.server_uuid);
+      [
+        ["Specialization", archive.specialization || "Unknown"],
+        ["Observed Names", archive.observed_names ?? 0],
+        ["Last Seen", formatTimestamp(archive.last_seen_at)],
+      ].forEach(([label, value]) => {
+        const term = document.createElement("dt");
+        const description = document.createElement("dd");
+        term.textContent = label;
+        description.textContent = value;
+        detailList.append(term, description);
+      });
+
+      item.append(title, actions, detailList);
+      const timeframeContainer = document.createElement("div");
+      renderTimeframeStats(timeframeContainer, archive.stats);
+      item.appendChild(timeframeContainer);
+      const sessionsContainer = document.createElement("div");
+      renderRecentSessions(sessionsContainer, archive.recent_sessions);
+      item.appendChild(sessionsContainer);
       list.appendChild(item);
     });
   }
@@ -379,6 +512,14 @@ window.RSCApp = window.RSCApp || {};
         <ul class="statsSpecializationDetails"></ul>
       </section>
       <section class="statsDetails">
+        <h2>Server Data</h2>
+        <ul class="statsServerData"></ul>
+      </section>
+      <section class="statsDetails">
+        <h2>Retained Server Data</h2>
+        <ul class="statsArchivedServerData"></ul>
+      </section>
+      <section class="statsDetails">
         <h2>Specialization Settings</h2>
         <ul class="statsSpecializationSettings"></ul>
       </section>
@@ -413,6 +554,8 @@ window.RSCApp = window.RSCApp || {};
 
     renderSpecializations(root, stats);
     renderSpecializationStats(root, servers);
+    renderServerData(root, servers);
+    renderArchivedServerStats(root, archivedServerStats());
     renderSpecializationSettings(root, servers);
     renderList(root, ".statsActiveServers", stats.activeNames, "No active servers");
     renderList(

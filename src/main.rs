@@ -61,6 +61,8 @@ async fn main() -> Result<(), String> {
     let (tx, _rx) = broadcast::channel(100);
     let specialization_registry = specializations::init_builtin_registry();
     configuration::apply_specialization_option_defaults(&mut config, &specialization_registry);
+    configuration::ensure_server_uuids(&mut config);
+    configuration::ensure_account_filter_group_uuids(&mut config);
     let slave: bool = config.slave;
     let mut app_state = app_state::AppState::new(tx, config, specialization_registry);
     let handles: Vec<tokio::task::JoinHandle<()>> = if slave {

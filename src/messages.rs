@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub struct ServerInfo {
     /// The name of the server.
     pub name: String,
+    /// Stable UUID used for persisted server data.
+    pub server_uuid: Option<String>,
     /// The latest output from the server.
     pub output: String,
     /// Whether the server is currently active.
@@ -47,6 +49,8 @@ pub struct ServerSpecializationInfoUpdate {
     pub r#type: String,
     /// The unique name of the server this update is for.
     pub server_name: String,
+    /// Stable UUID used for persisted server data.
+    pub server_uuid: Option<String>,
     /// The specialization info object (arbitrary structure).
     pub info: serde_json::Value,
     /// Optional specialization stats object for the stats page.
@@ -66,6 +70,9 @@ pub struct ServerInfoMessage {
     pub r#type: String,
     /// List of server info objects.
     pub servers: Vec<ServerInfo>,
+    /// Stats retained for server UUIDs no longer present in the current config.
+    #[serde(default)]
+    pub archived_server_stats: serde_json::Value,
     /// The current configuration.
     pub config: crate::configuration::Config,
 }

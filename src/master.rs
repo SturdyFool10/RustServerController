@@ -73,6 +73,7 @@ impl SlaveConnection {
             let def = ServerInfoMessage {
                 r#type: "".to_string(),
                 servers: vec![],
+                archived_server_stats: serde_json::Value::Array(Vec::new()),
                 config: Config::default(),
             };
             let mut _sinfo: ServerInfoMessage = def.clone();
@@ -90,6 +91,7 @@ impl SlaveConnection {
                                         for server_info in server_info_msg.servers.iter() {
                                             let new_info = ServerInfo {
                                                 name: server_info.name.clone(),
+                                                server_uuid: server_info.server_uuid.clone(),
                                                 output: server_info.output.clone(),
                                                 active: server_info.active,
                                                 host: Some(SlaveConnectionDescriptor {

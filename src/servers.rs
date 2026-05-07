@@ -58,6 +58,7 @@ pub fn create_instance(
 
 pub fn specialization_update(
     server_name: String,
+    server_uuid: Option<String>,
     info: serde_json::Value,
     stats: Option<serde_json::Value>,
     specialization_options: Option<serde_json::Value>,
@@ -67,6 +68,7 @@ pub fn specialization_update(
     crate::messages::ServerSpecializationInfoUpdate {
         r#type: "ServerSpecializationInfoUpdate".to_owned(),
         server_name,
+        server_uuid,
         info,
         stats,
         specialization_options,
@@ -141,6 +143,7 @@ pub async fn start_servers(state: AppState) {
                 let info = handler.get_status();
                 let update = specialization_update(
                     instance.name.clone(),
+                    Some(instance.server_uuid.clone()),
                     info,
                     stats_if_present(handler.get_stats()),
                     instance.specialization_options.clone(),
@@ -203,6 +206,7 @@ pub async fn process_stdout(state: AppState) {
                             let info = handler.get_status();
                             let update = specialization_update(
                                 server.name.clone(),
+                                Some(server.server_uuid.clone()),
                                 info,
                                 stats_if_present(handler.get_stats()),
                                 server.specialization_options.clone(),
@@ -256,6 +260,7 @@ pub async fn process_stdout(state: AppState) {
                     let info = handler.get_status();
                     let update = specialization_update(
                         instance.name.clone(),
+                        Some(instance.server_uuid.clone()),
                         info,
                         stats_if_present(handler.get_stats()),
                         instance.specialization_options.clone(),
@@ -295,6 +300,7 @@ pub async fn process_stdout(state: AppState) {
                             let info = handler.get_status();
                             let update = specialization_update(
                                 server.name.clone(),
+                                Some(server.server_uuid.clone()),
                                 info,
                                 stats_if_present(handler.get_stats()),
                                 server.specialization_options.clone(),
@@ -308,6 +314,7 @@ pub async fn process_stdout(state: AppState) {
                             let info = handler.get_status();
                             let update = specialization_update(
                                 server.name.clone(),
+                                Some(server.server_uuid.clone()),
                                 info,
                                 stats_if_present(handler.get_stats()),
                                 server.specialization_options.clone(),

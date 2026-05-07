@@ -1,7 +1,13 @@
-/target
+# Rust build output
+/target/
 /Cargo.lock
+
+# Local runtime configuration and state
 /config.json
-/.vs
-/themes
-config.json
-/logs
+/logs/
+/controller_data/
+
+# Local editor/tooling state
+/.vs/
+/.agents/
+/.codex/

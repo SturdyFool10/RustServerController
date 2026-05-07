@@ -13,6 +13,9 @@ use tokio::{
 pub struct ControlledProgramDescriptor {
     /// Display name of the server/program.
     pub name: String,
+    /// Stable identity for persisted server data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_uuid: Option<String>,
     /// Path to the executable.
     pub exe_path: String,
     /// Command-line arguments for the process.
@@ -51,6 +54,7 @@ impl ControlledProgramDescriptor {
     ) -> Self {
         Self {
             name: name.to_owned(),
+            server_uuid: None,
             exe_path: exe_path.to_owned(),
             arguments,
             working_dir,
@@ -72,6 +76,7 @@ impl ControlledProgramDescriptor {
     pub fn new(name: &str, exe_path: &str, arguments: Vec<String>, working_dir: String) -> Self {
         Self {
             name: name.to_owned(),
+            server_uuid: None,
             exe_path: exe_path.to_owned(),
             arguments,
             working_dir,
@@ -153,6 +158,10 @@ impl ControlledProgramDescriptor {
         instance.specialized_server_type = specialized_server_type;
         instance.specialization_options = specialization_options;
         instance.crash_prevention = crash_prevention;
+        instance.server_uuid = self
+            .server_uuid
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         // If a specialization handler was attached, call init before assigning to instance
         if let Some(mut handler) = specialization_handler {
@@ -170,6 +179,7 @@ impl Default for ControlledProgramDescriptor {
     fn default() -> Self {
         Self {
             name: "".to_owned(),
+            server_uuid: None,
             exe_path: "".to_owned(),
             arguments: vec![],
             working_dir: "".to_owned(),
@@ -186,6 +196,8 @@ impl Default for ControlledProgramDescriptor {
 pub struct ControlledProgramInstance {
     /// Display name of the server/program.
     pub name: String,
+    /// Stable identity used for persisted server data.
+    pub server_uuid: String,
     /// Path to the executable.
     pub executable_path: String,
     /// Command-line arguments for the process.
@@ -275,6 +287,7 @@ impl ControlledProgramInstance {
         let child = process.spawn()?;
         Ok(Self {
             name: name.to_owned(),
+            server_uuid: uuid::Uuid::new_v4().to_string(),
             executable_path: exe_path.to_owned(),
             command_line_args: arguments,
             process: child,

@@ -130,7 +130,11 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         }
         self.player_count = 0;
         self.calendar_paused = false;
-        self.player_activity = PlayerActivityTracker::for_server(&instance.name, "VintageStory");
+        self.player_activity = PlayerActivityTracker::for_server(
+            &instance.server_uuid,
+            &instance.name,
+            "VintageStory",
+        );
         self.last_status_update = true;
         self.last_player_count = self.player_count;
         self.last_calendar_paused = self.calendar_paused;
@@ -235,9 +239,9 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
             "Player Slots": self.max_players,
             "Calendar Paused": self.calendar_paused,
             "Config Found": self.config_found,
-            "Known Players": self.player_activity.known_player_count(),
-            "Total Player Hours": self.player_activity.total_hours(),
-            "Player Activity": self.player_activity.summaries(),
+            "Observed Names": self.player_activity.known_player_count(),
+            "Total Session Hours": self.player_activity.total_hours(),
+            "Name Activity": self.player_activity.summaries(),
             "Recent Sessions": self.player_activity.recent_sessions(25),
             "Timeframe Stats": self.player_activity.timeframe_stats(),
         })

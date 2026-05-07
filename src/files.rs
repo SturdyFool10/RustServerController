@@ -61,7 +61,22 @@ pub fn load_json(path: &str) -> Config {
         configuration::validate_specializations_in_config(&json_val, &registry);
     }
     match serde_json::from_str(&data) {
-        Ok(config) => config,
+        Ok(mut config) => {
+            let changed = configuration::ensure_server_uuids(&mut config)
+                | configuration::ensure_account_filter_group_uuids(&mut config);
+            if changed {
+                for server in &config.servers {
+                    if let Some(server_uuid) = server.server_uuid.as_deref() {
+                        crate::specializations::player_activity::migrate_server_name_to_uuid(
+                            &server.name,
+                            server_uuid,
+                        );
+                    }
+                }
+                config.update_config_file(path);
+            }
+            config
+        }
         Err(error) => {
             error!("Failed to parse config {}: {}", path, error);
             Config::default()

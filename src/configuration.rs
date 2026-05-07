@@ -6,6 +6,113 @@ use std::io::Write;
 use crate::master::SlaveConnectionDescriptor;
 use crate::specializations::{merge_option_defaults, SpecializationRegistry};
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct WebTransportConfig {
+    #[serde(default)]
+    pub enable_https: bool,
+    #[serde(default)]
+    pub enable_http3: bool,
+    #[serde(default)]
+    pub https_port: Option<String>,
+    #[serde(default)]
+    pub http3_port: Option<String>,
+    #[serde(default)]
+    pub acme: AcmeCertificateConfig,
+}
+
+impl Default for WebTransportConfig {
+    fn default() -> Self {
+        Self {
+            enable_https: false,
+            enable_http3: false,
+            https_port: Some("443".to_string()),
+            http3_port: Some("443".to_string()),
+            acme: AcmeCertificateConfig::default(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AcmeCertificateConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub production: bool,
+    #[serde(default)]
+    pub contact_email: Option<String>,
+    #[serde(default)]
+    pub cache_dir: Option<String>,
+    #[serde(default)]
+    pub certificate_targets: Vec<String>,
+}
+
+impl Default for AcmeCertificateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            production: false,
+            contact_email: None,
+            cache_dir: Some("controller_data/acme".to_string()),
+            certificate_targets: Vec::new(),
+        }
+    }
+}
+
+pub fn effective_certificate_targets(config: &Config) -> Vec<String> {
+    let mut targets: Vec<String> = config
+        .web_transport
+        .acme
+        .certificate_targets
+        .iter()
+        .map(|target| target.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|target| !target.is_empty())
+        .collect();
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct MinecraftAccountFilterDetail {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct MinecraftIpBanFilterDetail {
+    pub ip: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct MinecraftAccountFilterDetailGroup {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    #[serde(default)]
+    pub whitelist: Vec<MinecraftAccountFilterDetail>,
+    #[serde(default)]
+    pub ban_list: Vec<MinecraftAccountFilterDetail>,
+    #[serde(default)]
+    pub banned_ips: Vec<MinecraftIpBanFilterDetail>,
+}
+
 /// Validates `specialized_server_type` values in a config JSON, warning on unknown types.
 ///
 /// Prints the position (array index) and allowed values, and states defaulting to generic behavior.
@@ -68,6 +175,41 @@ pub fn apply_specialization_option_defaults(
     }
 }
 
+/// Ensures every server descriptor has a stable UUID for persisted server data.
+pub fn ensure_server_uuids(config: &mut Config) -> bool {
+    let mut changed = false;
+    for server in &mut config.servers {
+        if server
+            .server_uuid
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            continue;
+        }
+
+        server.server_uuid = Some(uuid::Uuid::new_v4().to_string());
+        changed = true;
+    }
+    changed
+}
+
+pub fn ensure_account_filter_group_uuids(config: &mut Config) -> bool {
+    let mut changed = false;
+    for group in &mut config.minecraft_account_filter_detail_groups {
+        if group
+            .uuid
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            continue;
+        }
+
+        group.uuid = Some(uuid::Uuid::new_v4().to_string());
+        changed = true;
+    }
+    changed
+}
+
 /// Main configuration struct for the server controller.
 ///
 /// Contains network settings, server descriptors, slave node info, and theme folder location.
@@ -91,6 +233,12 @@ pub struct Config {
 
     /// Optional path to the themes folder.
     pub themes_folder: Option<String>,
+
+    #[serde(default)]
+    pub web_transport: WebTransportConfig,
+
+    #[serde(default)]
+    pub minecraft_account_filter_detail_groups: Vec<MinecraftAccountFilterDetailGroup>,
 }
 
 impl Config {
@@ -107,9 +255,14 @@ impl Config {
 
         self.themes_folder = new_config.themes_folder.clone();
 
+        self.web_transport = new_config.web_transport.clone();
+
         self.slave = new_config.slave;
 
         self.slave_connections = new_config.slave_connections.clone();
+
+        self.minecraft_account_filter_detail_groups =
+            new_config.minecraft_account_filter_detail_groups.clone();
     }
 
     /// Writes the configuration to a file as pretty-printed JSON.
@@ -154,6 +307,10 @@ impl Default for Config {
             slave_connections: vec![],
 
             themes_folder: Some("themes".to_string()),
+
+            web_transport: WebTransportConfig::default(),
+
+            minecraft_account_filter_detail_groups: vec![],
         }
     }
 }
@@ -187,6 +344,7 @@ mod tests {
             config.servers[0].specialization_options,
             Some(json!({
                 "auto_accept_eula": true,
+                "account_filter_groups": [],
             }))
         );
     }
@@ -209,6 +367,7 @@ mod tests {
             config.servers[0].specialization_options,
             Some(json!({
                 "auto_accept_eula": false,
+                "account_filter_groups": [],
             }))
         );
     }
@@ -224,5 +383,79 @@ mod tests {
         apply_specialization_option_defaults(&mut config, &registry);
 
         assert_eq!(config.servers[0].specialization_options, None);
+    }
+
+    #[test]
+    fn ensure_server_uuids_fills_missing_values_without_replacing_existing() {
+        let mut config = Config {
+            servers: vec![descriptor("Server One", "Minecraft"), {
+                let mut server = descriptor("Server Two", "Terraria");
+                server.server_uuid = Some("existing-uuid".to_string());
+                server
+            }],
+            ..Config::default()
+        };
+
+        assert!(ensure_server_uuids(&mut config));
+        assert!(config.servers[0].server_uuid.is_some());
+        assert_eq!(
+            config.servers[1].server_uuid.as_deref(),
+            Some("existing-uuid")
+        );
+        assert!(!ensure_server_uuids(&mut config));
+    }
+
+    #[test]
+    fn ensure_account_filter_group_uuids_fills_missing_values() {
+        let mut config = Config {
+            minecraft_account_filter_detail_groups: vec![
+                MinecraftAccountFilterDetailGroup {
+                    name: "Shared Survival".to_string(),
+                    ..Default::default()
+                },
+                MinecraftAccountFilterDetailGroup {
+                    name: "Moderated".to_string(),
+                    uuid: Some("existing-group".to_string()),
+                    ..Default::default()
+                },
+            ],
+            ..Config::default()
+        };
+
+        assert!(ensure_account_filter_group_uuids(&mut config));
+        assert!(config.minecraft_account_filter_detail_groups[0]
+            .uuid
+            .is_some());
+        assert_eq!(
+            config.minecraft_account_filter_detail_groups[1]
+                .uuid
+                .as_deref(),
+            Some("existing-group")
+        );
+        assert!(!ensure_account_filter_group_uuids(&mut config));
+    }
+
+    #[test]
+    fn effective_certificate_targets_normalizes_and_deduplicates_targets() {
+        let config = Config {
+            web_transport: WebTransportConfig {
+                acme: AcmeCertificateConfig {
+                    certificate_targets: vec![
+                        "Example.COM.".to_string(),
+                        "example.com".to_string(),
+                        "  play.example.com  ".to_string(),
+                        "".to_string(),
+                    ],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+
+        assert_eq!(
+            effective_certificate_targets(&config),
+            vec!["example.com".to_string(), "play.example.com".to_string()]
+        );
     }
 }

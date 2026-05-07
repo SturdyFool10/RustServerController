@@ -22,6 +22,7 @@ window.RSC_CONSTANTS = Object.freeze({
       "configChange",
       "getThemesList",
       "getThemeCSS",
+      "deleteArchivedServerStats",
     ]),
     requestInfo: "requestInfo",
     requestConfig: "requestConfig",
@@ -33,6 +34,7 @@ window.RSC_CONSTANTS = Object.freeze({
     configChange: "configChange",
     getThemesList: "getThemesList",
     getThemeCSS: "getThemeCSS",
+    deleteArchivedServerStats: "deleteArchivedServerStats",
   }),
   selectors: Object.freeze({
     currentThemeStyleId: "current-theme",
