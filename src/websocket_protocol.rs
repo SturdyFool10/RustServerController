@@ -27,12 +27,19 @@ async fn build_server_info_message(state: &AppState, include_output: bool) -> Se
                 .clone()
                 .unwrap_or(serde_json::Value::Null)
         };
+        let specialization_stats = server
+            .specialization_handler
+            .as_ref()
+            .map(|handler| handler.get_stats())
+            .filter(|stats| !stats.is_null());
         let mut s_info = ServerInfo {
             name: server.name.clone(),
             output: "".to_owned(),
             active: true,
             specialization: server.specialized_server_type.clone(),
             specialized_info: Some(specialized_info),
+            specialization_options: server.specialization_options.clone(),
+            specialization_stats,
             host: None,
         };
         if include_output {
@@ -53,6 +60,8 @@ async fn build_server_info_message(state: &AppState, include_output: bool) -> Se
                 active: false,
                 specialization: server_config.specialized_server_type.clone(),
                 specialized_info: server_config.specialized_server_info.clone(),
+                specialization_options: server_config.specialization_options.clone(),
+                specialization_stats: None,
                 host: None,
             });
         }

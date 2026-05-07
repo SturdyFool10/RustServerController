@@ -45,6 +45,7 @@ window.RSC_CONSTANTS = Object.freeze({
     overlay: ".overlay",
     grad: ".grad",
     serverList: ".centerMenu.servers",
+    statsRoot: ".statsDashboard",
   }),
   themeStorage: Object.freeze({
     selectedTheme: "selectedTheme",

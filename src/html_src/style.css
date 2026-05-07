@@ -428,6 +428,240 @@ h1 {
     padding-bottom: 2px;
     white-space: pre;
 }
+.statsDashboard {
+    position: absolute;
+    left: 0;
+    top: 70px;
+    width: 100%;
+    height: calc(100% - 70px);
+    overflow: auto;
+    padding: 18px;
+    box-sizing: border-box;
+    color: var(--text);
+    font-family: "Roboto", sans-serif;
+}
+.statsSummary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+}
+.statBlock {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-dark);
+    padding: 14px;
+    box-sizing: border-box;
+    min-height: 86px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+.statBlock span,
+.statsBandHeader span,
+.statsColumns h2 {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1.2;
+}
+.statBlock strong {
+    color: var(--text);
+    font-size: clamp(1.6rem, 4vw, 2.6rem);
+    line-height: 1;
+}
+.statsBands {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+}
+.statsBand {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-dark);
+    padding: 14px;
+    box-sizing: border-box;
+}
+.statsBandHeader {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.statsBandHeader strong {
+    color: var(--primary);
+    font-size: 1rem;
+}
+.statsMeter {
+    width: 100%;
+    height: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border-muted);
+    border-radius: 999px;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+.statsMeter span {
+    display: block;
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--primary), var(--secondary));
+    transition: width 220ms ease;
+}
+.statsColumns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+.statsColumns > div,
+.statsDetails {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-dark);
+    padding: 14px;
+    box-sizing: border-box;
+    min-height: 160px;
+}
+.statsDetails {
+    margin-top: 12px;
+}
+.statsColumns h2,
+.statsDetails h2 {
+    margin: 0 0 10px;
+    font-weight: 500;
+}
+.statsColumns ul,
+.statsDetails ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.statsColumns li,
+.statsSpecializationDetails li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    color: var(--text);
+    font-size: 0.95rem;
+    line-height: 1.25;
+}
+.statsSpecializationDetails li,
+.statsSpecializationSettings li {
+    display: block;
+    border-top: 1px solid var(--border-muted);
+    padding-top: 10px;
+}
+.statsSpecializationDetails li:first-child,
+.statsSpecializationSettings li:first-child {
+    border-top: 0;
+    padding-top: 0;
+}
+.statsSpecializationDetails dl,
+.statsSpecializationSettings dl {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 8px 16px;
+    margin: 10px 0 0;
+}
+.statsSpecializationDetails dt,
+.statsSpecializationSettings dt {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+.statsSpecializationDetails dd,
+.statsSpecializationSettings dd {
+    margin: 2px 0 0;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+.statsColumns li span,
+.statsColumns li {
+    overflow-wrap: anywhere;
+}
+.statsColumns li strong,
+.statsSpecializationDetails strong,
+.statsSpecializationSettings strong {
+    color: var(--secondary);
+}
+.statsPlayerActivity {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.statsPlayerActivity li {
+    display: grid;
+    grid-template-columns: minmax(120px, 0.35fr) minmax(180px, 1fr);
+    gap: 10px;
+    border-top: 1px solid var(--border-muted);
+    padding-top: 6px;
+}
+.statsPlayerActivity li:first-child {
+    border-top: 0;
+    padding-top: 0;
+}
+.statsPlayerActivity span {
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+.statsTimeframes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+}
+.statsTimeframes section {
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    padding: 10px;
+    background: var(--bg);
+    min-width: 0;
+}
+.statsTimeframes h3 {
+    margin: 0 0 8px;
+    color: var(--secondary);
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+.statsTimeframes dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 10px;
+    margin: 0 0 10px;
+}
+.statsTimeframes dt {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+.statsTimeframes dd {
+    margin: 0;
+    color: var(--text);
+    font-size: 0.86rem;
+}
+.statsBars {
+    height: 56px;
+    display: flex;
+    align-items: end;
+    gap: 2px;
+    margin-top: 8px;
+    border-bottom: 1px solid var(--border-muted);
+}
+.statsBars span {
+    flex: 1 1 2px;
+    min-width: 2px;
+    background: var(--primary);
+    opacity: 0.78;
+    border-radius: 2px 2px 0 0;
+}
+.statsBars + .statsBars span {
+    background: var(--secondary);
+}
 .ConfigEditor {
     position: absolute;
     left: 0;

@@ -31,6 +31,7 @@ js_asset!(constants_serve, "html_src/constants.js");
 js_asset!(core_serve, "html_src/core.js");
 js_asset!(menu_serve, "html_src/menu.js");
 js_asset!(server_ui_serve, "html_src/server_ui.js");
+js_asset!(stats_serve, "html_src/stats.js");
 js_asset!(themes_serve, "html_src/themes.js");
 js_asset!(editor_serve, "html_src/editor.js");
 js_asset!(webgl_background_serve, "html_src/webgl_background.js");
@@ -54,6 +55,7 @@ async fn get_router(_state: AppState) -> Router<AppState> {
         .route("/html/core.js", get(core_serve))
         .route("/html/menu.js", get(menu_serve))
         .route("/html/server_ui.js", get(server_ui_serve))
+        .route("/html/stats.js", get(stats_serve))
         .route("/html/themes.js", get(themes_serve))
         .route("/html/editor.js", get(editor_serve))
         .route("/html/webgl_background.js", get(webgl_background_serve))

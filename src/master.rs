@@ -100,6 +100,12 @@ impl SlaveConnection {
                                                 specialized_info: server_info
                                                     .specialized_info
                                                     .clone(),
+                                                specialization_options: server_info
+                                                    .specialization_options
+                                                    .clone(),
+                                                specialization_stats: server_info
+                                                    .specialization_stats
+                                                    .clone(),
                                             };
                                             let mut found_existing_server = false;
                                             for existing_server in slave_servers.iter_mut() {
@@ -110,6 +116,10 @@ impl SlaveConnection {
                                                         new_info.specialization.clone();
                                                     existing_server.specialized_info =
                                                         new_info.specialized_info.clone();
+                                                    existing_server.specialization_options =
+                                                        new_info.specialization_options.clone();
+                                                    existing_server.specialization_stats =
+                                                        new_info.specialization_stats.clone();
                                                     found_existing_server = true;
                                                 }
                                             }

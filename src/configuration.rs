@@ -4,13 +4,11 @@ use std::fs::{self, File};
 use std::io::Write;
 
 use crate::master::SlaveConnectionDescriptor;
-use crate::specializations::SpecializationRegistry;
+use crate::specializations::{merge_option_defaults, SpecializationRegistry};
 
 /// Validates `specialized_server_type` values in a config JSON, warning on unknown types.
-
 ///
 /// Prints the position (array index) and allowed values, and states defaulting to generic behavior.
-
 ///
 /// # Arguments
 /// * `config_json` - The JSON value representing the configuration.
@@ -45,6 +43,28 @@ pub fn validate_specializations_in_config(config_json: &Value, registry: &Specia
                 }
             }
         }
+    }
+}
+
+/// Applies registered specialization defaults to every matching server descriptor.
+///
+/// Existing configured values are preserved, with defaults filling only missing
+/// keys. Unknown specializations are left untouched so validation can report
+/// them without mutating user config.
+pub fn apply_specialization_option_defaults(
+    config: &mut Config,
+    registry: &SpecializationRegistry,
+) {
+    for server in &mut config.servers {
+        let Some(specialization) = server.specialized_server_type.as_deref() else {
+            continue;
+        };
+        let Some(defaults) = registry.default_options_for(specialization) else {
+            continue;
+        };
+
+        server.specialization_options =
+            merge_option_defaults(server.specialization_options.take(), defaults);
     }
 }
 
@@ -135,5 +155,74 @@ impl Default for Config {
 
             themes_folder: Some("themes".to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::controlled_program::ControlledProgramDescriptor;
+    use crate::specializations::init_builtin_registry;
+    use serde_json::json;
+
+    fn descriptor(name: &str, specialization: &str) -> ControlledProgramDescriptor {
+        ControlledProgramDescriptor {
+            name: name.to_string(),
+            specialized_server_type: Some(specialization.to_string()),
+            ..ControlledProgramDescriptor::default()
+        }
+    }
+
+    #[test]
+    fn applies_builtin_specialization_defaults_to_configured_servers() {
+        let registry = init_builtin_registry();
+        let mut config = Config {
+            servers: vec![descriptor("minecraft", "Minecraft")],
+            ..Config::default()
+        };
+
+        apply_specialization_option_defaults(&mut config, &registry);
+
+        assert_eq!(
+            config.servers[0].specialization_options,
+            Some(json!({
+                "auto_accept_eula": true,
+            }))
+        );
+    }
+
+    #[test]
+    fn config_specialization_defaults_preserve_user_values() {
+        let registry = init_builtin_registry();
+        let mut server = descriptor("minecraft", "Minecraft");
+        server.specialization_options = Some(json!({
+            "auto_accept_eula": false,
+        }));
+        let mut config = Config {
+            servers: vec![server],
+            ..Config::default()
+        };
+
+        apply_specialization_option_defaults(&mut config, &registry);
+
+        assert_eq!(
+            config.servers[0].specialization_options,
+            Some(json!({
+                "auto_accept_eula": false,
+            }))
+        );
+    }
+
+    #[test]
+    fn config_specialization_defaults_ignore_unknown_specializations() {
+        let registry = init_builtin_registry();
+        let mut config = Config {
+            servers: vec![descriptor("unknown", "Missing")],
+            ..Config::default()
+        };
+
+        apply_specialization_option_defaults(&mut config, &registry);
+
+        assert_eq!(config.servers[0].specialization_options, None);
     }
 }

@@ -84,7 +84,7 @@ window.RSCApp = window.RSCApp || {};
   function ensureThemeSelector() {
     let themeSelector = document.getElementById(RSC.selectors.themeSelectorId);
     if (themeSelector) {
-      themeSelector.innerHTML = "";
+      themeSelector.replaceChildren();
       return themeSelector;
     }
 
@@ -96,7 +96,10 @@ window.RSCApp = window.RSCApp || {};
 
     const themeContainer = document.createElement("div");
     themeContainer.className = RSC.selectors.themeContainer.slice(1);
-    themeContainer.innerHTML = `<label for="${RSC.selectors.themeSelectorId}">Theme</label>`;
+    const label = document.createElement("label");
+    label.htmlFor = RSC.selectors.themeSelectorId;
+    label.textContent = "Theme";
+    themeContainer.appendChild(label);
     themeContainer.appendChild(themeSelector);
 
     const loadingIndicator = document.createElement("span");

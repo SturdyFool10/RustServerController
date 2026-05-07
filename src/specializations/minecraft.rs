@@ -1,4 +1,4 @@
-use super::ServerSpecialization;
+use super::{player_activity::PlayerActivityTracker, ServerSpecialization};
 use crate::ansi_to_html::{ansi_to_plain_text, escape_html};
 use crate::app_state::AppState;
 use crate::controlled_program::ControlledProgramInstance;
@@ -22,6 +22,8 @@ pub struct MinecraftSpecialization {
 
     player_list: Vec<String>,
 
+    player_activity: PlayerActivityTracker,
+
     last_status_update: bool,
 }
 
@@ -37,6 +39,12 @@ impl ServerSpecialization for MinecraftSpecialization {
         // Default: do nothing for Minecraft
     }
 
+    fn default_options(&self) -> serde_json::Value {
+        json!({
+            "auto_accept_eula": true,
+        })
+    }
+
     fn has_status_update(&self) -> bool {
         self.last_status_update
     }
@@ -46,13 +54,9 @@ impl ServerSpecialization for MinecraftSpecialization {
     }
 
     /// Initialize the Minecraft specialization for a server instance.
-
     ///
-
     /// Reads the `max-players` value from `server.properties` if available,
-
     /// and sets up the initial specialized_server_info state.
-
     fn init(&mut self, instance: &mut ControlledProgramInstance) {
         // Try to read max-players from server.properties
 
@@ -88,6 +92,8 @@ impl ServerSpecialization for MinecraftSpecialization {
 
         self.player_list = Vec::new();
 
+        self.player_activity = PlayerActivityTracker::for_server(&instance.name, "Minecraft");
+
         self.last_status_update = true;
     }
 
@@ -95,7 +101,6 @@ impl ServerSpecialization for MinecraftSpecialization {
     ///
     /// Updates player count, readiness, and player list in specialized_server_info.
     /// Returns a colorized HTML string for the log line.
-
     fn parse_output(
         &mut self,
 
@@ -142,37 +147,36 @@ impl ServerSpecialization for MinecraftSpecialization {
 
         // Player join
 
-        if let Some(caps) = join_pattern.captures(&line) {
-            let player_name = &caps[1];
-
-            self.player_count += 1;
-
-            self.player_list.push(player_name.to_string());
-
+        if let Some(player_name) = join_pattern
+            .captures(&line)
+            .and_then(|caps| caps.get(1))
+            .map(|player| player.as_str())
+        {
+            self.player_activity.player_joined(player_name);
+            self.player_count = self.player_activity.online_count();
+            self.player_list = self.player_activity.online_names();
             status_update = true;
         }
 
         // Player leave
 
-        if let Some(caps) = leave_pattern.captures(&line) {
-            let player_name = &caps[1];
-
-            if self.player_count > 0 {
-                self.player_count -= 1;
-
-                status_update = true;
-            }
-            self.player_list.retain(|n| n != player_name);
+        if let Some(player_name) = leave_pattern
+            .captures(&line)
+            .and_then(|caps| caps.get(1))
+            .map(|player| player.as_str())
+        {
+            self.player_activity.player_left(player_name);
+            self.player_count = self.player_activity.online_count();
+            self.player_list = self.player_activity.online_names();
+            status_update = true;
         }
 
         // Server ready
 
-        if ready_pattern.is_match(&line) {
-            if !self.ready {
-                self.ready = true;
+        if ready_pattern.is_match(&line) && !self.ready {
+            self.ready = true;
 
-                status_update = true;
-            }
+            status_update = true;
         }
 
         self.last_status_update |= status_update;
@@ -191,6 +195,12 @@ impl ServerSpecialization for MinecraftSpecialization {
         state: &AppState,
         _exit_code: i32,
     ) {
+        if self.player_activity.mark_all_offline() {
+            self.player_count = 0;
+            self.player_list = Vec::new();
+            self.last_status_update = true;
+        }
+
         // Robust EULA auto-accept: check eula.txt for eula=false and patch/restart if needed
         let state = state.clone();
         let name = instance.name.clone();
@@ -198,8 +208,18 @@ impl ServerSpecialization for MinecraftSpecialization {
         let args = instance.command_line_args.clone();
         let working_dir = instance.working_dir.clone();
         let specialized_server_type = instance.specialized_server_type.clone();
+        let specialization_options = instance.specialization_options.clone();
         let crash_prevention = instance.crash_prevention;
         tokio::spawn(async move {
+            let auto_accept_eula = specialization_options
+                .as_ref()
+                .and_then(|options| options.get("auto_accept_eula"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true);
+            if !auto_accept_eula {
+                return;
+            }
+
             // Build eula.txt path
             let mut eula_path = working_dir.clone();
             if !(eula_path.ends_with('/') || eula_path.ends_with('\\')) {
@@ -236,6 +256,7 @@ impl ServerSpecialization for MinecraftSpecialization {
                     working_dir,
                 );
                 desc.specialized_server_type = specialized_server_type;
+                desc.specialization_options = specialization_options;
                 desc.crash_prevention = crash_prevention;
                 let mut servers = state.servers.lock().await;
                 if let Some(instance) = crate::servers::create_instance(&state, desc) {
@@ -249,13 +270,26 @@ impl ServerSpecialization for MinecraftSpecialization {
     ///
     /// For Minecraft, this should return the current specialized_server_info if available.
     /// Returns the instance's specialized_server_info, or Null if not present.
-
     fn get_status(&self) -> serde_json::Value {
         json!({
             "player_count": self.player_count,
             "max_players": self.max_players,
             "ready": self.ready,
             "player_list": self.player_list,
+        })
+    }
+
+    fn get_stats(&self) -> serde_json::Value {
+        json!({
+            "Players Online": self.player_count,
+            "Player Slots": self.max_players,
+            "Ready": self.ready,
+            "Tracked Players": self.player_list.len(),
+            "Known Players": self.player_activity.known_player_count(),
+            "Total Player Hours": self.player_activity.total_hours(),
+            "Player Activity": self.player_activity.summaries(),
+            "Recent Sessions": self.player_activity.recent_sessions(25),
+            "Timeframe Stats": self.player_activity.timeframe_stats(),
         })
     }
 }
@@ -288,6 +322,7 @@ mod tests {
             active: true,
             specialized_server_type: Some("Minecraft".to_string()),
             specialized_server_info: None,
+            specialization_options: None,
             specialization_handler: None,
             specialization_info_sent: false,
         })

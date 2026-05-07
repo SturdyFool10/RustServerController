@@ -1,4 +1,7 @@
-use crate::{controlled_program::ControlledProgramInstance, specializations::ServerSpecialization};
+use crate::{
+    controlled_program::ControlledProgramInstance,
+    specializations::{player_activity::PlayerActivityTracker, ServerSpecialization},
+};
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -40,6 +43,7 @@ pub struct VintageStoryServerSpecialization {
     last_status_update: bool,
     last_player_count: i32,
     last_calendar_paused: bool,
+    player_activity: PlayerActivityTracker,
 }
 
 // Colorize a single Vintage Story log line using theme colors
@@ -73,13 +77,8 @@ fn colorize_vs_log_line(line: &str) -> String {
             }
 
             format!(
-                "{}{}{}",
-                before,
-                format!(
-                    "<span style=\"color:{};font-weight:bold;\">{}</span>",
-                    found_color, bracketed
-                ),
-                rest
+                "{}<span style=\"color:{};font-weight:bold;\">{}</span>{}",
+                before, found_color, bracketed, rest
             )
         } else {
             format!("<span style=\"color:var(--text);\">{}</span>", line)
@@ -98,9 +97,22 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         // Default: do nothing for VintageStory
     }
 
-    fn init(&mut self, _instance: &mut ControlledProgramInstance) {
+    fn default_options(&self) -> serde_json::Value {
+        serde_json::json!({
+            "data_path": null,
+        })
+    }
+
+    fn init(&mut self, instance: &mut ControlledProgramInstance) {
         // On init, try to read config and set fields
-        let data_path = vintagestory_data_path();
+        let data_path = instance
+            .specialization_options
+            .as_ref()
+            .and_then(|options| options.get("data_path"))
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(vintagestory_data_path);
         let config_path = data_path.join("serverconfig.json");
         self.server_name = "Vintage Story Server".to_string();
         self.max_players = 0;
@@ -118,6 +130,7 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         }
         self.player_count = 0;
         self.calendar_paused = false;
+        self.player_activity = PlayerActivityTracker::for_server(&instance.name, "VintageStory");
         self.last_status_update = true;
         self.last_player_count = self.player_count;
         self.last_calendar_paused = self.calendar_paused;
@@ -129,14 +142,14 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         _instance: &mut ControlledProgramInstance,
     ) -> Option<String> {
         // Update player count and calendar paused state from log lines
-        let join_re = match regex::Regex::new(r"\[Server Event\].*joins\.") {
+        let join_re = match regex::Regex::new(r"\[Server Event\]\s*(.+?) joins\.") {
             Ok(regex) => regex,
             Err(error) => {
                 tracing::error!("Invalid Vintage Story join regex: {}", error);
                 return Some(colorize_vs_log_line(&line));
             }
         };
-        let disconnect_re = match regex::Regex::new(r"\[Server Event\].*disconnected\.") {
+        let disconnect_re = match regex::Regex::new(r"\[Server Event\]\s*(.+?) disconnected\.") {
             Ok(regex) => regex,
             Err(error) => {
                 tracing::error!("Invalid Vintage Story disconnect regex: {}", error);
@@ -167,14 +180,21 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         let calendar_paused_before = self.calendar_paused;
 
         for l in line.lines() {
-            if join_re.is_match(l) {
-                self.player_count += 1;
+            if let Some(player_name) = join_re
+                .captures(l)
+                .and_then(|captures| captures.get(1))
+                .map(|player| player.as_str())
+            {
+                self.player_activity.player_joined(player_name);
+                self.player_count = self.player_activity.online_count() as i32;
             }
-            if disconnect_re.is_match(l) {
-                self.player_count -= 1;
-                if self.player_count < 0 {
-                    self.player_count = 0;
-                }
+            if let Some(player_name) = disconnect_re
+                .captures(l)
+                .and_then(|captures| captures.get(1))
+                .map(|player| player.as_str())
+            {
+                self.player_activity.player_left(player_name);
+                self.player_count = self.player_activity.online_count() as i32;
             }
             if pause_re.is_match(l) {
                 self.calendar_paused = true;
@@ -194,7 +214,7 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         self.last_calendar_paused = self.calendar_paused;
 
         // Split multi-line output and colorize each line
-        let colored_lines: Vec<String> = line.lines().map(|l| colorize_vs_log_line(l)).collect();
+        let colored_lines: Vec<String> = line.lines().map(colorize_vs_log_line).collect();
         Some(colored_lines.join("<br>"))
     }
 
@@ -208,12 +228,39 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
         })
     }
 
+    fn get_stats(&self) -> serde_json::Value {
+        serde_json::json!({
+            "Server Name": self.server_name,
+            "Players Online": self.player_count,
+            "Player Slots": self.max_players,
+            "Calendar Paused": self.calendar_paused,
+            "Config Found": self.config_found,
+            "Known Players": self.player_activity.known_player_count(),
+            "Total Player Hours": self.player_activity.total_hours(),
+            "Player Activity": self.player_activity.summaries(),
+            "Recent Sessions": self.player_activity.recent_sessions(25),
+            "Timeframe Stats": self.player_activity.timeframe_stats(),
+        })
+    }
+
     fn has_status_update(&self) -> bool {
         self.last_status_update
     }
 
     fn set_status_update_sent(&mut self) {
         self.last_status_update = false;
+    }
+
+    fn on_exit(
+        &mut self,
+        _instance: &mut ControlledProgramInstance,
+        _state: &crate::app_state::AppState,
+        _exit_code: i32,
+    ) {
+        if self.player_activity.mark_all_offline() {
+            self.player_count = 0;
+            self.last_status_update = true;
+        }
     }
 }
 

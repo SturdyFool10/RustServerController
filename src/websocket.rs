@@ -4,7 +4,7 @@
 /// between the web UI and the backend using [`AppState`].
 use crate::{
     servers::broadcast_json,
-    servers::{create_instance, send_termination_message},
+    servers::{create_instance, send_termination_message, specialization_update, stats_if_present},
     websocket_protocol::handle_client_request,
 };
 use axum::{
@@ -65,7 +65,6 @@ pub async fn handle_ws_upgrade(ws: WebSocketUpgrade, State(state): State<AppStat
 /// # Arguments
 /// * `socket` - The websocket connection.
 /// * `state` - The shared application state.
-
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (sender, mut reciever) = socket.split();
     let sender = Arc::new(Mutex::new(sender));
@@ -226,21 +225,25 @@ async fn start_inactive_server(server_name: &str, state: &AppState) {
         let Some(instance) = create_instance(state, desc) else {
             return;
         };
-        let specialized_info = if let Some(handler) = instance.specialization_handler.as_ref() {
-            handler.get_status()
-        } else {
-            instance
-                .specialized_server_info
-                .clone()
-                .unwrap_or(serde_json::Value::Null)
-        };
-        let update = ServerSpecializationInfoUpdate {
-            r#type: "ServerSpecializationInfoUpdate".to_string(),
-            server_name: instance.name.clone(),
-            info: specialized_info,
-            specialization: instance.specialized_server_type.clone().unwrap_or_default(),
-            active: true,
-        };
+        let (specialized_info, specialization_stats) =
+            match instance.specialization_handler.as_ref() {
+                Some(handler) => (handler.get_status(), stats_if_present(handler.get_stats())),
+                None => (
+                    instance
+                        .specialized_server_info
+                        .clone()
+                        .unwrap_or(serde_json::Value::Null),
+                    None,
+                ),
+            };
+        let update = specialization_update(
+            instance.name.clone(),
+            specialized_info,
+            specialization_stats,
+            instance.specialization_options.clone(),
+            instance.specialized_server_type.clone().unwrap_or_default(),
+            true,
+        );
         servers.push(instance);
         broadcast_json(state, &update);
     }
@@ -265,13 +268,14 @@ async fn stop_active_server(server_name: &str, state: &AppState) -> bool {
         server_type,
     )
     .await;
-    let update = ServerSpecializationInfoUpdate {
-        r#type: "ServerSpecializationInfoUpdate".to_string(),
-        server_name: server.name.clone(),
-        info: serde_json::Value::Null,
+    let update = specialization_update(
+        server.name.clone(),
+        serde_json::Value::Null,
+        None,
+        server.specialization_options.clone(),
         specialization,
-        active: false,
-    };
+        false,
+    );
     broadcast_json(state, &update);
     true
 }
@@ -356,18 +360,23 @@ async fn apply_config_change(text: &str, state: AppState) {
             server.specialized_server_type.clone(),
         )
         .await;
-        let update = ServerSpecializationInfoUpdate {
-            r#type: "ServerSpecializationInfoUpdate".to_string(),
-            server_name: server.name.clone(),
-            info: serde_json::Value::Null,
-            specialization: server.specialized_server_type.clone().unwrap_or_default(),
-            active: false,
-        };
+        let update = specialization_update(
+            server.name.clone(),
+            serde_json::Value::Null,
+            None,
+            server.specialization_options.clone(),
+            server.specialized_server_type.clone().unwrap_or_default(),
+            false,
+        );
         broadcast_json(&state, &update);
     }
     servers.clear();
 
     config.change(message.updated_config);
+    crate::configuration::apply_specialization_option_defaults(
+        &mut config,
+        &state.specialization_registry,
+    );
     config.update_config_file("config.json");
 
     for desc in config.servers.iter_mut().filter(|desc| desc.auto_start) {
@@ -396,13 +405,14 @@ async fn terminate_servers(state: AppState) {
             server.specialized_server_type.clone(),
         )
         .await;
-        let update = ServerSpecializationInfoUpdate {
-            r#type: "ServerSpecializationInfoUpdate".to_string(),
-            server_name: server.name.clone(),
-            info: serde_json::Value::Null,
-            specialization: server.specialized_server_type.clone().unwrap_or_default(),
-            active: false,
-        };
+        let update = specialization_update(
+            server.name.clone(),
+            serde_json::Value::Null,
+            None,
+            server.specialization_options.clone(),
+            server.specialized_server_type.clone().unwrap_or_default(),
+            false,
+        );
         broadcast_json(&state, &update);
     }
     servers.clear();

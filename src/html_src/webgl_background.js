@@ -37,10 +37,11 @@ window.RSCApp = window.RSCApp || {};
         /oklch\s*\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)/,
       );
       if (!matchResult) return [...RSC.webgl.fallbackRgb];
+      const [, lightness, chroma, hue] = matchResult;
       return oklchToRgb(
-        parseFloat(matchResult[1]),
-        parseFloat(matchResult[2]),
-        parseFloat(matchResult[3]),
+        parseFloat(lightness),
+        parseFloat(chroma),
+        parseFloat(hue),
       );
     } catch (e) {
       console.error("Error parsing OKLCH color:", e);
@@ -125,17 +126,19 @@ window.RSCApp = window.RSCApp || {};
     gl.enableVertexAttribArray(positionAttributeLocation);
     gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
 
+    const [primaryR, primaryG, primaryB] = primaryRgb;
+    const [bgDarkR, bgDarkG, bgDarkB] = bgDarkRgb;
     gl.uniform3f(
       gl.getUniformLocation(program, "u_primaryColor"),
-      primaryRgb[0],
-      primaryRgb[1],
-      primaryRgb[2],
+      primaryR,
+      primaryG,
+      primaryB,
     );
     gl.uniform3f(
       gl.getUniformLocation(program, "u_bgColor"),
-      bgDarkRgb[0],
-      bgDarkRgb[1],
-      bgDarkRgb[2],
+      bgDarkR,
+      bgDarkG,
+      bgDarkB,
     );
     gl.uniform1f(gl.getUniformLocation(program, "u_decayRate"), RSC.webgl.decayRate);
 

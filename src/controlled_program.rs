@@ -118,13 +118,20 @@ impl ControlledProgramDescriptor {
         let mut specialization_handler = None;
         let mut specialized_server_type = self.specialized_server_type.clone();
         let crash_prevention = self.crash_prevention;
+        let mut specialization_options = self.specialization_options.clone();
 
         // If specialization exists, allow it to modify envs before process spawn
         if let Some(ref typ) = self.specialized_server_type {
             tracing::trace!("Attempting to get specialization handler for type: {}", typ);
             if let Some(mut handler) = registry.get(typ) {
                 tracing::trace!("Calling pre_init for specialization: {}", typ);
-                handler.pre_init(&mut envs, &self);
+                specialization_options = crate::specializations::merge_option_defaults(
+                    specialization_options,
+                    handler.default_options(),
+                );
+                let mut descriptor_for_init = self.clone();
+                descriptor_for_init.specialization_options = specialization_options.clone();
+                handler.pre_init(&mut envs, &descriptor_for_init);
                 tracing::trace!("pre_init complete for specialization: {}", typ);
                 specialization_handler = Some(handler);
             } else {
@@ -144,6 +151,7 @@ impl ControlledProgramDescriptor {
             envs,
         )?;
         instance.specialized_server_type = specialized_server_type;
+        instance.specialization_options = specialization_options;
         instance.crash_prevention = crash_prevention;
 
         // If a specialization handler was attached, call init before assigning to instance
@@ -199,6 +207,8 @@ pub struct ControlledProgramInstance {
     pub specialized_server_type: Option<String>,
     /// Optional extra info for specialized servers.
     pub specialized_server_info: Option<serde_json::Value>,
+    /// Persisted options available to the attached specialization.
+    pub specialization_options: Option<serde_json::Value>,
     /// Optional handler for server specialization logic.
     pub specialization_handler: Option<Box<dyn crate::specializations::ServerSpecialization>>,
     /// Tracks if the first specialization info update has been sent after spawn.
@@ -275,6 +285,7 @@ impl ControlledProgramInstance {
             active: true,
             specialized_server_type: None,
             specialized_server_info: None,
+            specialization_options: None,
             specialization_handler: None,
             specialization_info_sent: false,
         })

@@ -5,11 +5,13 @@
 //! thread-safe registry for managing available specializations.
 
 pub mod minecraft;
+pub mod player_activity;
 pub mod terraria;
 pub mod vintage_story;
 
 use crate::controlled_program::ControlledProgramInstance;
 use dashmap::DashMap;
+use serde_json::Value;
 use std::sync::Arc;
 
 /// Trait for implementing server-specific logic and output parsing.
@@ -72,6 +74,19 @@ pub trait ServerSpecialization: Send + Sync {
     /// By convention, status is usually stored in the instance's `specialized_server_info`.
     #[allow(unused)]
     fn get_status(&self) -> serde_json::Value;
+
+    /// Returns optional stats for the web UI stats page.
+    fn get_stats(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
+    /// Returns default persisted options for this specialization.
+    ///
+    /// Defaults are merged with the server descriptor's `specialization_options`
+    /// before the process starts. Configured values always win.
+    fn default_options(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
 }
 
 /// Factory type for creating new specialization instances.
@@ -121,6 +136,46 @@ impl SpecializationRegistry {
     pub fn get(&self, name: &str) -> Option<Box<dyn ServerSpecialization>> {
         self.map.get(name).map(|f| f())
     }
+
+    /// Returns the default options supplied by a registered specialization.
+    pub fn default_options_for(&self, name: &str) -> Option<Value> {
+        self.get(name).map(|handler| handler.default_options())
+    }
+}
+
+/// Merges specialization defaults with configured options.
+///
+/// Only object values are merged recursively. Configured values are preserved,
+/// and non-object configured values are left untouched.
+pub fn merge_option_defaults(configured: Option<Value>, defaults: Value) -> Option<Value> {
+    if defaults.is_null() {
+        return configured;
+    }
+
+    match configured {
+        Some(mut configured_value) => {
+            merge_json_defaults(&mut configured_value, &defaults);
+            Some(configured_value)
+        }
+        None => Some(defaults),
+    }
+}
+
+fn merge_json_defaults(configured: &mut Value, defaults: &Value) {
+    let (Some(configured_object), Some(defaults_object)) =
+        (configured.as_object_mut(), defaults.as_object())
+    else {
+        return;
+    };
+
+    for (key, default_value) in defaults_object {
+        match configured_object.get_mut(key) {
+            Some(configured_child) => merge_json_defaults(configured_child, default_value),
+            None => {
+                configured_object.insert(key.clone(), default_value.clone());
+            }
+        }
+    }
 }
 
 /// Helper to initialize the registry with built-in specializations.
@@ -132,4 +187,65 @@ pub fn init_builtin_registry() -> Arc<SpecializationRegistry> {
     registry.register("Terraria", terraria::factory);
     registry.register("VintageStory", vintage_story::vintage_story_factory);
     registry
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn merge_option_defaults_preserves_configured_values() {
+        let configured = json!({
+            "enabled": false,
+            "nested": {
+                "level": 3
+            }
+        });
+        let defaults = json!({
+            "enabled": true,
+            "mode": "auto",
+            "nested": {
+                "level": 1,
+                "label": "default"
+            }
+        });
+
+        let merged = merge_option_defaults(Some(configured), defaults);
+
+        assert_eq!(
+            merged,
+            Some(json!({
+                "enabled": false,
+                "mode": "auto",
+                "nested": {
+                    "level": 3,
+                    "label": "default"
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn merge_option_defaults_leaves_non_object_config_untouched() {
+        let configured = json!("custom");
+        let defaults = json!({
+            "enabled": true,
+        });
+
+        let merged = merge_option_defaults(Some(configured.clone()), defaults);
+
+        assert_eq!(merged, Some(configured));
+    }
+
+    #[test]
+    fn merge_option_defaults_uses_defaults_when_missing() {
+        let defaults = json!({
+            "enabled": true,
+        });
+
+        let merged = merge_option_defaults(None, defaults.clone());
+
+        assert_eq!(merged, Some(defaults));
+    }
 }

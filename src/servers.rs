@@ -56,6 +56,33 @@ pub fn create_instance(
     }
 }
 
+pub fn specialization_update(
+    server_name: String,
+    info: serde_json::Value,
+    stats: Option<serde_json::Value>,
+    specialization_options: Option<serde_json::Value>,
+    specialization: String,
+    active: bool,
+) -> crate::messages::ServerSpecializationInfoUpdate {
+    crate::messages::ServerSpecializationInfoUpdate {
+        r#type: "ServerSpecializationInfoUpdate".to_owned(),
+        server_name,
+        info,
+        stats,
+        specialization_options,
+        specialization,
+        active,
+    }
+}
+
+pub fn stats_if_present(stats: serde_json::Value) -> Option<serde_json::Value> {
+    if stats.is_null() {
+        None
+    } else {
+        Some(stats)
+    }
+}
+
 // Helper to format exit code message for web console
 /// Formats a server exit code as an HTML message for the web console.
 ///
@@ -112,13 +139,14 @@ pub async fn start_servers(state: AppState) {
             // After starting a new server, send specialization info update
             if let Some(handler) = instance.specialization_handler.as_ref() {
                 let info = handler.get_status();
-                let update = crate::messages::ServerSpecializationInfoUpdate {
-                    r#type: "ServerSpecializationInfoUpdate".to_owned(),
-                    server_name: instance.name.clone(),
+                let update = specialization_update(
+                    instance.name.clone(),
                     info,
-                    specialization: instance.specialized_server_type.clone().unwrap_or_default(),
-                    active: instance.active,
-                };
+                    stats_if_present(handler.get_stats()),
+                    instance.specialization_options.clone(),
+                    instance.specialized_server_type.clone().unwrap_or_default(),
+                    instance.active,
+                );
                 broadcast_json(&state, &update);
             }
             servers.push(instance);
@@ -173,16 +201,14 @@ pub async fn process_stdout(state: AppState) {
                         // Always send specialization info update when server goes inactive
                         if let Some(handler) = server.specialization_handler.as_mut() {
                             let info = handler.get_status();
-                            let update = crate::messages::ServerSpecializationInfoUpdate {
-                                r#type: "ServerSpecializationInfoUpdate".to_owned(),
-                                server_name: server.name.clone(),
+                            let update = specialization_update(
+                                server.name.clone(),
                                 info,
-                                specialization: server
-                                    .specialized_server_type
-                                    .clone()
-                                    .unwrap_or_default(),
-                                active: server.active,
-                            };
+                                stats_if_present(handler.get_stats()),
+                                server.specialization_options.clone(),
+                                server.specialized_server_type.clone().unwrap_or_default(),
+                                server.active,
+                            );
                             broadcast_json(&state, &update);
                         }
                         if exit_code != Some(0) && server.crash_prevention {
@@ -196,12 +222,16 @@ pub async fn process_stdout(state: AppState) {
                             // set_specialization removed; assign directly if needed
                             descriptor.specialized_server_type =
                                 server.specialized_server_type.clone();
+                            descriptor.specialization_options =
+                                server.specialization_options.clone();
 
                             // Lookup the original crash_prevention setting from config to preserve it
                             let config = state.config.lock().await;
                             for server_config in config.servers.iter() {
                                 if server_config.name == server.name {
                                     descriptor.crash_prevention = server_config.crash_prevention;
+                                    descriptor.specialization_options =
+                                        server_config.specialization_options.clone();
                                     break;
                                 }
                             }
@@ -224,16 +254,14 @@ pub async fn process_stdout(state: AppState) {
                 // After starting a new server, send specialization info update
                 if let Some(handler) = instance.specialization_handler.as_ref() {
                     let info = handler.get_status();
-                    let update = crate::messages::ServerSpecializationInfoUpdate {
-                        r#type: "ServerSpecializationInfoUpdate".to_owned(),
-                        server_name: instance.name.clone(),
+                    let update = specialization_update(
+                        instance.name.clone(),
                         info,
-                        specialization: instance
-                            .specialized_server_type
-                            .clone()
-                            .unwrap_or_default(),
-                        active: instance.active,
-                    };
+                        stats_if_present(handler.get_stats()),
+                        instance.specialization_options.clone(),
+                        instance.specialized_server_type.clone().unwrap_or_default(),
+                        instance.active,
+                    );
                     broadcast_json(&state, &update);
                 }
                 servers.push(instance);
@@ -265,31 +293,27 @@ pub async fn process_stdout(state: AppState) {
                     if let Some(handler) = server.specialization_handler.as_mut() {
                         if !server.specialization_info_sent {
                             let info = handler.get_status();
-                            let update = crate::messages::ServerSpecializationInfoUpdate {
-                                r#type: "ServerSpecializationInfoUpdate".to_owned(),
-                                server_name: server.name.clone(),
+                            let update = specialization_update(
+                                server.name.clone(),
                                 info,
-                                specialization: server
-                                    .specialized_server_type
-                                    .clone()
-                                    .unwrap_or_default(),
-                                active: server.active,
-                            };
+                                stats_if_present(handler.get_stats()),
+                                server.specialization_options.clone(),
+                                server.specialized_server_type.clone().unwrap_or_default(),
+                                server.active,
+                            );
                             broadcast_json(&state, &update);
                             handler.set_status_update_sent();
                             server.specialization_info_sent = true;
                         } else if handler.has_status_update() {
                             let info = handler.get_status();
-                            let update = crate::messages::ServerSpecializationInfoUpdate {
-                                r#type: "ServerSpecializationInfoUpdate".to_owned(),
-                                server_name: server.name.clone(),
+                            let update = specialization_update(
+                                server.name.clone(),
                                 info,
-                                specialization: server
-                                    .specialized_server_type
-                                    .clone()
-                                    .unwrap_or_default(),
-                                active: server.active,
-                            };
+                                stats_if_present(handler.get_stats()),
+                                server.specialization_options.clone(),
+                                server.specialized_server_type.clone().unwrap_or_default(),
+                                server.active,
+                            );
                             broadcast_json(&state, &update);
                             handler.set_status_update_sent();
                         }
@@ -298,8 +322,6 @@ pub async fn process_stdout(state: AppState) {
             }
             drop(servers);
         }
-        const REFRESHES_PER_SECOND: f64 = 10.;
-        const SECONDS_TO_SLEEP: f64 = 1000. / REFRESHES_PER_SECOND / 1000.;
-        std::thread::sleep(std::time::Duration::from_secs_f64(SECONDS_TO_SLEEP));
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 }

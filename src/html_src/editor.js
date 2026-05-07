@@ -80,12 +80,11 @@ window.RSCApp = window.RSCApp || {};
       try {
         const jsonContent = editor ? editor.getValue() : $(".editorText").val();
         const newConfig = JSON.parse(jsonContent);
-        app.state.socket.send(
-          JSON.stringify({
-            type: RSC.messages.configChange,
-            updatedConfig: newConfig,
-          }),
-        );
+        const sent = app.sendSocketMessage({
+          type: RSC.messages.configChange,
+          updatedConfig: newConfig,
+        });
+        if (!sent) return;
 
         const formattedJson = JSON.stringify(newConfig, null, 4);
         if (editor) {
@@ -106,7 +105,9 @@ window.RSCApp = window.RSCApp || {};
 
   app.initConfigEditor = function () {
     window.config = { state: "NotInit" };
-    require(["vs/editor/editor.main"], initMonacoEditor);
+    if (typeof require === "function") {
+      require(["vs/editor/editor.main"], initMonacoEditor);
+    }
     bindSaveButton();
     sendRequestConfig();
   };

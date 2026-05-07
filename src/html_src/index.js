@@ -49,5 +49,6 @@ $(document).ready(function () {
   app.loadThemeFromStorage();
   app.initConfigEditor();
   app.initNavigation();
+  app.initStats();
   app.initWebglBackground();
 });

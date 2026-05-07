@@ -154,6 +154,11 @@ window.RSCApp = window.RSCApp || {};
     let numBack = 0;
     const input = dropdown.find(".STDInInput");
 
+    function historyValueFromBack(offset) {
+      const index = app.state.commandHistory.length - offset;
+      return index >= 0 ? app.state.commandHistory[index] : "";
+    }
+
     function handleConsoleInput(inputValue) {
       if (inputValue === "") return;
 
@@ -191,16 +196,10 @@ window.RSCApp = window.RSCApp || {};
         handleConsoleInput(inputValue);
       } else if (e.which === 40) {
         numBack = Math.max(0, numBack - 1);
-        $(this).val(
-          numBack > 0
-            ? app.state.commandHistory[app.state.commandHistory.length - numBack]
-            : "",
-        );
+        $(this).val(numBack > 0 ? historyValueFromBack(numBack) : "");
       } else if (e.which === 38) {
         numBack = Math.min(app.state.commandHistory.length, numBack + 1);
-        $(this).val(
-          app.state.commandHistory[app.state.commandHistory.length - numBack],
-        );
+        $(this).val(historyValueFromBack(numBack));
       }
     });
 
@@ -236,7 +235,8 @@ window.RSCApp = window.RSCApp || {};
     for (let i = startIdx; i < lines.length; i++) {
       const line = lines[i];
       if (line.trim() !== "") {
-        $('<p class="STDOutMessage"></p>').appendTo(outDiv)[0].innerHTML = line;
+        const message = $('<p class="STDOutMessage"></p>').appendTo(outDiv)[0];
+        if (message) message.innerHTML = line;
       }
     }
 
@@ -268,15 +268,19 @@ window.RSCApp = window.RSCApp || {};
       addDropdownNoDupe(server.name, !server.active);
       processServerLogLines(server.name, server.output || "", true);
     });
+    app.updateStats?.();
   };
 
   app.mergeSpecializationInfoUpdate = function (update) {
     upsertServerInfo({
       name: update.server_name,
       specialized_info: update.info,
+      specialization_stats: update.stats ?? null,
+      specialization_options: update.specialization_options ?? null,
       active: typeof update.active !== "undefined" ? update.active : false,
       specialization: update.specialization || "",
     });
+    app.updateStats?.();
   };
 
   app.updateServerInfoSpecializations = function () {

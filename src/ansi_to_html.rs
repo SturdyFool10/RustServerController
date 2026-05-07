@@ -2,12 +2,9 @@ use ansi_escapers::{interpreter::*, types::*};
 
 /// Utilities for converting ANSI escape sequences to HTML for colored log output.
 /// Provides HTML escaping and color mapping for terminal output.
-
 /// Escapes HTML special characters to prevent XSS attacks.
-
 ///
 /// Converts &, <, >, ", and ' to their HTML entity equivalents.
-
 pub fn escape_html(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -152,13 +149,12 @@ pub fn ansi_to_html(inp: &str) -> String {
     // Create styled spans
     let mut styled_spans = Vec::new();
     for span in &parse_result.spans {
-        if span.end > parse_result.text.len() {
-            continue;
-        }
-
         let style = get_html_style(span.codes.clone());
+        let Some(span_text) = parse_result.text.get(span.start..span.end) else {
+            continue;
+        };
         // Escape HTML and preserve newlines by converting to <br>
-        let content = escape_html(&parse_result.text[span.start..span.end])
+        let content = escape_html(span_text)
             .replace("\\n", "<br>")
             .replace("\\r", "");
 
@@ -179,11 +175,13 @@ pub fn ansi_to_html(inp: &str) -> String {
     for (start, end, styled_span) in styled_spans {
         // Add any text before this span
         if start > current_pos {
-            result.push_str(
-                &escape_html(&parse_result.text[current_pos..start])
-                    .replace("\\n", "<br>")
-                    .replace("\\r", ""),
-            );
+            if let Some(before_span) = parse_result.text.get(current_pos..start) {
+                result.push_str(
+                    &escape_html(before_span)
+                        .replace("\\n", "<br>")
+                        .replace("\\r", ""),
+                );
+            }
         }
 
         // Add the styled span
@@ -195,11 +193,13 @@ pub fn ansi_to_html(inp: &str) -> String {
 
     // Add any remaining text after the last span
     if current_pos < parse_result.text.len() {
-        result.push_str(
-            &escape_html(&parse_result.text[current_pos..])
-                .replace("\\n", "<br>")
-                .replace("\\r", ""),
-        );
+        if let Some(remaining) = parse_result.text.get(current_pos..) {
+            result.push_str(
+                &escape_html(remaining)
+                    .replace("\\n", "<br>")
+                    .replace("\\r", ""),
+            );
+        }
     }
 
     result

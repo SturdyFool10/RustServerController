@@ -127,7 +127,7 @@ window.RSCApp = window.RSCApp || {};
 
     $(".menuBTN1").click(function (e) {
       if (e.which !== 1) return;
-      app.state.socket.send(app.createEvent(RSC.messages.terminateServers));
+      app.sendSocketMessage({ type: RSC.messages.terminateServers });
     });
 
     const classMap = {
@@ -136,14 +136,16 @@ window.RSCApp = window.RSCApp || {};
       Stats: ".stat",
     };
     $("#menu ul li a").click(function (e) {
+      const targetSelector = classMap[e.target.innerHTML];
+      if (!targetSelector) return;
       $(".active").toggleClass("active");
       $(e.target.parentElement).toggleClass("active");
       $(".page").hide();
       $(RSC.selectors.grad).show();
-      $(classMap[e.target.innerHTML]).show();
+      $(targetSelector).show();
     });
 
-    $($("#menu ul li")[0]).toggleClass("active");
+    $("#menu ul li").first().toggleClass("active");
     $(".page").hide();
     $(".servers").show();
 

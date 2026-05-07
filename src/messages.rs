@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 ///
 /// This module defines the types used for exchanging information between the
 /// controller, slave nodes, and web clients.
-
 /// Information about a server instance, including its name, output, status, and specialization.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ServerInfo {
@@ -21,6 +20,10 @@ pub struct ServerInfo {
     pub specialization: Option<String>,
     /// Optional extra info for specialized servers.
     pub specialized_info: Option<serde_json::Value>,
+    /// Optional specialization settings after defaults have been applied.
+    pub specialization_options: Option<serde_json::Value>,
+    /// Optional stats supplied by specialized servers.
+    pub specialization_stats: Option<serde_json::Value>,
 }
 
 /// Message for sending console output to the web client.
@@ -46,6 +49,10 @@ pub struct ServerSpecializationInfoUpdate {
     pub server_name: String,
     /// The specialization info object (arbitrary structure).
     pub info: serde_json::Value,
+    /// Optional specialization stats object for the stats page.
+    pub stats: Option<serde_json::Value>,
+    /// Optional specialization settings after defaults have been applied.
+    pub specialization_options: Option<serde_json::Value>,
     /// The specialization type string (e.g., "Minecraft", "VintageStory").
     pub specialization: String,
     /// Whether the server is currently active.

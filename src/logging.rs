@@ -307,14 +307,13 @@ pub fn cleanup_old_logs<P: AsRef<Path>>(logs_dir: P, keep_for: std::time::Durati
             }
             if let Some(fname) = path.file_name().and_then(|n| n.to_str()) {
                 if let Some(caps) = re.captures(fname) {
-                    // Parse date and time from filename
-                    let month = caps[1].parse::<u32>().ok();
-                    let day = caps[2].parse::<u32>().ok();
-                    let year = caps[3].parse::<i32>().ok();
-                    let hour = caps[4].parse::<u32>().ok();
-                    let minute = caps[5].parse::<u32>().ok();
-                    let second = caps[6].parse::<u32>().ok();
-                    let ampm = &caps[7];
+                    let month = caps.get(1).and_then(|value| value.as_str().parse().ok());
+                    let day = caps.get(2).and_then(|value| value.as_str().parse().ok());
+                    let year = caps.get(3).and_then(|value| value.as_str().parse().ok());
+                    let hour = caps.get(4).and_then(|value| value.as_str().parse().ok());
+                    let minute = caps.get(5).and_then(|value| value.as_str().parse().ok());
+                    let second = caps.get(6).and_then(|value| value.as_str().parse().ok());
+                    let ampm = caps.get(7).map(|value| value.as_str());
 
                     if let (
                         Some(month),
@@ -323,7 +322,8 @@ pub fn cleanup_old_logs<P: AsRef<Path>>(logs_dir: P, keep_for: std::time::Durati
                         Some(mut hour),
                         Some(minute),
                         Some(second),
-                    ) = (month, day, year, hour, minute, second)
+                        Some(ampm),
+                    ) = (month, day, year, hour, minute, second, ampm)
                     {
                         // Convert to 24-hour time
                         if ampm == "PM" && hour != 12 {
@@ -336,17 +336,16 @@ pub fn cleanup_old_logs<P: AsRef<Path>>(logs_dir: P, keep_for: std::time::Durati
                         let time = NaiveTime::from_hms_opt(hour, minute, second);
                         if let (Some(date), Some(time)) = (date, time) {
                             let naive_dt = date.and_time(time);
-                            match Local.from_local_datetime(&naive_dt) {
-                                LocalResult::Single(file_dt) => {
-                                    let age = now
-                                        .signed_duration_since(file_dt)
-                                        .to_std()
-                                        .unwrap_or_default();
-                                    if age > keep_for {
-                                        let _ = fs::remove_file(&path);
-                                    }
+                            if let LocalResult::Single(file_dt) =
+                                Local.from_local_datetime(&naive_dt)
+                            {
+                                let age = now
+                                    .signed_duration_since(file_dt)
+                                    .to_std()
+                                    .unwrap_or_default();
+                                if age > keep_for {
+                                    let _ = fs::remove_file(&path);
                                 }
-                                _ => {}
                             }
                         }
                     }

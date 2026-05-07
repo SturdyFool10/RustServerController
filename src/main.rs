@@ -10,13 +10,10 @@ use std::{fs, path::Path, process::exit};
 use tokio::{spawn, sync::broadcast};
 use tracing::*;
 
-/// Main entry point and initialization logic for the Rust Server Controller.
-
-///
-
-/// This module sets up the application state, loads configuration, ensures the themes directory exists,
-
-/// and starts the appropriate async tasks for master or slave mode.
+// Main entry point and initialization logic for the Rust Server Controller.
+//
+// This module sets up the application state, loads configuration, ensures the themes directory exists,
+// and starts the appropriate async tasks for master or slave mode.
 mod ansi_to_html;
 
 mod app_state;
@@ -56,14 +53,15 @@ mod websocket_protocol;
 /// Handles graceful shutdown on Ctrl+C or T key.
 #[tokio::main]
 async fn main() -> Result<(), String> {
-    let config = load_json("config.json");
-    let slave: bool = config.slave;
+    let mut config = load_json("config.json");
     logging::init_logging();
 
     // Ensure themes directory exists with default themes
     ensure_themes_directory(&config);
     let (tx, _rx) = broadcast::channel(100);
     let specialization_registry = specializations::init_builtin_registry();
+    configuration::apply_specialization_option_defaults(&mut config, &specialization_registry);
+    let slave: bool = config.slave;
     let mut app_state = app_state::AppState::new(tx, config, specialization_registry);
     let handles: Vec<tokio::task::JoinHandle<()>> = if slave {
         spawn_tasks!(app_state.clone(), start_servers, start_slave)

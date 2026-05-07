@@ -21,6 +21,7 @@ serde_json = { version = "1.0.105", features = ["float_roundtrip"] }
 
 rmp-serde = "1.1.2"
 rmpv = "1.0.0"
+rusqlite = { version = "0.32.1", features = ["bundled"] }
 tokio = { version = "1.31.0", features = ["full", "tracing"] }
 
 tokio-tungstenite = "0.27.0"
