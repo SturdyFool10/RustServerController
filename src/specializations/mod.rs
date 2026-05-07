@@ -46,6 +46,15 @@ pub trait ServerSpecialization: Send + Sync {
     /// Use this to initialize any state or inspect the instance.
     fn init(&mut self, instance: &mut ControlledProgramInstance);
 
+    /// Called after a server instance has been created and can receive controller state.
+    fn on_start(
+        &mut self,
+        _instance: &mut ControlledProgramInstance,
+        _state: &crate::app_state::AppState,
+    ) {
+        // Default: do nothing
+    }
+
     /// Called for each output line from the server process.
     ///
     /// Takes ownership of the log line. Return `Some(String)` to transform the line,

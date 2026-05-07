@@ -433,6 +433,7 @@ async fn apply_config_change(text: &str, state: AppState) {
         &state.specialization_registry,
     );
     config.update_config_file("config.json");
+    crate::specializations::minecraft::sync_configured_account_filters(&config);
 
     for desc in config.servers.iter_mut().filter(|desc| desc.auto_start) {
         if let Some(instance) = create_instance(&state, desc.clone()) {

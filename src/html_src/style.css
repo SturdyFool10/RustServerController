@@ -837,15 +837,58 @@ h1 {
     display: grid;
     gap: 10px;
 }
-.adminGroupHeader,
-.adminEntryRow {
+.adminGroupHeader {
     display: grid;
     grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) auto;
     gap: 8px;
     align-items: center;
 }
-.adminBanEntryRow {
-    grid-template-columns: minmax(150px, 1fr) minmax(110px, 0.65fr) minmax(180px, 1fr) minmax(180px, 1fr) auto;
+.adminEntryCard {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    background: var(--bg);
+}
+.adminEntryAddCard {
+    border-style: dashed;
+}
+.adminEntryPrimary,
+.adminEntrySecondary {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+}
+.adminEntrySecondary {
+    grid-template-columns: minmax(180px, 0.8fr) minmax(120px, auto) minmax(180px, 1fr);
+}
+.adminEntryName {
+    min-height: 34px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+.adminExpirationField {
+    display: grid;
+    grid-template-columns: auto minmax(160px, 1fr);
+    gap: 8px;
+    align-items: center;
+    color: var(--text-muted);
+}
+.adminExpirationField[hidden] {
+    display: none;
+}
+.adminExpirationStatus {
+    margin: 0;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+.adminExpirationStatus[hidden] {
+    display: none;
 }
 .adminPermanentToggle {
     display: inline-flex;
@@ -893,6 +936,19 @@ h1 {
 .adminToolbar button,
 .adminGroup button {
     cursor: pointer;
+}
+
+@media (max-width: 720px) {
+    .administrationDashboard {
+        width: min(100% - 24px, 1200px);
+    }
+    .adminToolbar,
+    .adminGroupHeader,
+    .adminEntryPrimary,
+    .adminEntrySecondary,
+    .adminExpirationField {
+        grid-template-columns: 1fr;
+    }
 }
 
 @keyframes pulse {

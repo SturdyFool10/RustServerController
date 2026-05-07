@@ -42,7 +42,13 @@ pub fn create_instance(
     desc: ControlledProgramDescriptor,
 ) -> Option<crate::controlled_program::ControlledProgramInstance> {
     match desc.clone().into_instance(&state.specialization_registry) {
-        Ok(instance) => Some(instance),
+        Ok(mut instance) => {
+            if let Some(mut handler) = instance.specialization_handler.take() {
+                handler.on_start(&mut instance, state);
+                instance.specialization_handler = Some(handler);
+            }
+            Some(instance)
+        }
         Err(error) => {
             error!("Failed to start server '{}': {}", desc.name, error);
             send_controller_message(
