@@ -16,11 +16,15 @@ use tracing::*;
 // and starts the appropriate async tasks for master or slave mode.
 mod ansi_to_html;
 
+mod auth;
+
 mod app_state;
 
 mod configuration;
 
 mod controlled_program;
+
+mod credential_store;
 
 mod files;
 
@@ -53,6 +57,7 @@ mod websocket_protocol;
 /// Handles graceful shutdown on Ctrl+C or T key.
 #[tokio::main]
 async fn main() -> Result<(), String> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let mut config = load_json("config.json");
     logging::init_logging();
 
@@ -63,8 +68,22 @@ async fn main() -> Result<(), String> {
     configuration::apply_specialization_option_defaults(&mut config, &specialization_registry);
     configuration::ensure_server_uuids(&mut config);
     configuration::ensure_account_filter_group_uuids(&mut config);
+    let credential_store = credential_store::CredentialStore::open_default()
+        .map_err(|error| format!("failed to open credential store: {}", error))?;
+    if credential_store::migrate_config_credentials(&mut config, &credential_store) {
+        config
+            .update_config_file_async("config.json")
+            .await
+            .map_err(|error| {
+                format!(
+                    "failed to remove migrated credentials from config: {}",
+                    error
+                )
+            })?;
+    }
     let slave: bool = config.slave;
-    let mut app_state = app_state::AppState::new(tx, config, specialization_registry);
+    let mut app_state =
+        app_state::AppState::new(tx, config, specialization_registry, credential_store);
     let handles: Vec<tokio::task::JoinHandle<()>> = if slave {
         spawn_tasks!(app_state.clone(), start_servers, start_slave)
     } else {
@@ -86,7 +105,10 @@ async fn main() -> Result<(), String> {
             "Shutdown signal received ({}), terminating all child processes...",
             reason
         );
-        let mut servers = app_state_clone.servers.lock().await;
+        let mut servers = {
+            let mut server_guard = app_state_clone.servers.lock().await;
+            std::mem::take(&mut *server_guard)
+        };
         let shutdown_fut = async {
             for server in servers.iter_mut() {
                 let _ = server.stop().await;

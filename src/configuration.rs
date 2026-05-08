@@ -6,6 +6,138 @@ use std::io::Write;
 use crate::master::SlaveConnectionDescriptor;
 use crate::specializations::{merge_option_defaults, SpecializationRegistry};
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PermissionDecisionState {
+    Granted,
+    #[default]
+    Default,
+    Blocked,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct PermissionDecisionConfig {
+    pub permission: String,
+    #[serde(default)]
+    pub state: PermissionDecisionState,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AuthGroupConfig {
+    pub name: String,
+    #[serde(default)]
+    pub permissions: Vec<PermissionDecisionConfig>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AuthUserConfig {
+    pub username: String,
+    #[serde(default)]
+    pub password_salt: String,
+    #[serde(default)]
+    pub password_hash: String,
+    #[serde(default)]
+    pub permissions: Vec<String>,
+    #[serde(default)]
+    pub permission_overrides: Vec<PermissionDecisionConfig>,
+    #[serde(default)]
+    pub groups: Vec<String>,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(default)]
+    pub password_required: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AccountRequestConfig {
+    pub username: String,
+    #[serde(default)]
+    pub requested_at: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AuthConfig {
+    #[serde(default = "default_auth_cookie_name")]
+    pub cookie_name: String,
+    #[serde(default = "default_auth_session_hours")]
+    pub session_ttl_hours: u64,
+    #[serde(default = "default_oauth_access_token_minutes")]
+    pub oauth_access_token_minutes: u64,
+    #[serde(default = "default_oauth_refresh_token_days")]
+    pub oauth_refresh_token_days: u64,
+    #[serde(default)]
+    pub users: Vec<AuthUserConfig>,
+    #[serde(default = "default_auth_default_permissions")]
+    pub default_permissions: Vec<PermissionDecisionConfig>,
+    #[serde(default)]
+    pub groups: Vec<AuthGroupConfig>,
+    #[serde(default)]
+    pub account_requests: Vec<AccountRequestConfig>,
+    #[serde(default)]
+    pub oauth_clients: Vec<OAuthClientConfig>,
+}
+
+fn default_auth_cookie_name() -> String {
+    "rsc_session".to_string()
+}
+
+fn default_auth_session_hours() -> u64 {
+    12
+}
+
+fn default_oauth_access_token_minutes() -> u64 {
+    15
+}
+
+fn default_oauth_refresh_token_days() -> u64 {
+    30
+}
+
+fn default_auth_default_permissions() -> Vec<PermissionDecisionConfig> {
+    ["view", "stats", "console"]
+        .into_iter()
+        .map(|permission| PermissionDecisionConfig {
+            permission: permission.to_string(),
+            state: PermissionDecisionState::Granted,
+        })
+        .chain(
+            ["control", "config", "admin"]
+                .into_iter()
+                .map(|permission| PermissionDecisionConfig {
+                    permission: permission.to_string(),
+                    state: PermissionDecisionState::Blocked,
+                }),
+        )
+        .collect()
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            cookie_name: default_auth_cookie_name(),
+            session_ttl_hours: default_auth_session_hours(),
+            oauth_access_token_minutes: default_oauth_access_token_minutes(),
+            oauth_refresh_token_days: default_oauth_refresh_token_days(),
+            users: vec![],
+            default_permissions: default_auth_default_permissions(),
+            groups: vec![],
+            account_requests: vec![],
+            oauth_clients: vec![],
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct OAuthClientConfig {
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret_hash: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub disabled: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct WebTransportConfig {
     #[serde(default)]
@@ -18,6 +150,10 @@ pub struct WebTransportConfig {
     pub http3_port: Option<String>,
     #[serde(default)]
     pub acme: AcmeCertificateConfig,
+    #[serde(default)]
+    pub local_certificate: LocalCertificateConfig,
+    #[serde(default)]
+    pub self_signed: SelfSignedCertificateConfig,
 }
 
 impl Default for WebTransportConfig {
@@ -28,6 +164,41 @@ impl Default for WebTransportConfig {
             https_port: Some("443".to_string()),
             http3_port: Some("443".to_string()),
             acme: AcmeCertificateConfig::default(),
+            local_certificate: LocalCertificateConfig::default(),
+            self_signed: SelfSignedCertificateConfig::default(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct LocalCertificateConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub cert_path: Option<String>,
+    #[serde(default)]
+    pub key_path: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct SelfSignedCertificateConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub cert_path: Option<String>,
+    #[serde(default)]
+    pub key_path: Option<String>,
+    #[serde(default)]
+    pub subject_alt_names: Vec<String>,
+}
+
+impl Default for SelfSignedCertificateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cert_path: Some("controller_data/tls/self_signed_cert.pem".to_string()),
+            key_path: Some("controller_data/tls/self_signed_key.pem".to_string()),
+            subject_alt_names: vec!["localhost".to_string()],
         }
     }
 }
@@ -238,6 +409,9 @@ pub struct Config {
     pub web_transport: WebTransportConfig,
 
     #[serde(default)]
+    pub auth: AuthConfig,
+
+    #[serde(default)]
     pub minecraft_account_filter_detail_groups: Vec<MinecraftAccountFilterDetailGroup>,
 }
 
@@ -256,6 +430,8 @@ impl Config {
         self.themes_folder = new_config.themes_folder.clone();
 
         self.web_transport = new_config.web_transport.clone();
+
+        self.auth = new_config.auth.clone();
 
         self.slave = new_config.slave;
 
@@ -290,6 +466,11 @@ impl Config {
             }
         }
     }
+
+    pub async fn update_config_file_async(&self, file_path: &str) -> std::io::Result<()> {
+        let json_data = serde_json::to_string_pretty(self)?;
+        tokio::fs::write(file_path, json_data).await
+    }
 }
 
 impl Default for Config {
@@ -309,6 +490,8 @@ impl Default for Config {
             themes_folder: Some("themes".to_string()),
 
             web_transport: WebTransportConfig::default(),
+
+            auth: AuthConfig::default(),
 
             minecraft_account_filter_detail_groups: vec![],
         }

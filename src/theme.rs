@@ -293,6 +293,13 @@ impl Theme {
         Ok(theme)
     }
 
+    /// Load a theme from a JSON file without blocking the async runtime.
+    pub async fn load_from_file_async<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let json = tokio::fs::read_to_string(path).await?;
+        let theme: Self = serde_json::from_str(&json)?;
+        Ok(theme)
+    }
+
     /// Find a theme file by name in a directory
     pub fn find_in_directory<P: AsRef<Path>>(dir_path: P, theme_name: &str) -> Option<PathBuf> {
         let dir_path = dir_path.as_ref();
@@ -510,6 +517,42 @@ impl ThemeCollection {
                     Err(e) => {
                         eprintln!("Error loading theme from {:?}: {}", path, e);
                         // Continue with other themes
+                    }
+                }
+            }
+        }
+
+        Ok(collection)
+    }
+
+    /// Load all themes from a directory without blocking the async runtime.
+    pub async fn load_from_directory_async<P: AsRef<Path>>(dir_path: P) -> io::Result<Self> {
+        let dir_path = dir_path.as_ref();
+
+        let metadata = tokio::fs::metadata(dir_path).await.map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("Theme directory not found: {:?}: {}", dir_path, error),
+            )
+        })?;
+        if !metadata.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Theme directory not found: {:?}", dir_path),
+            ));
+        }
+
+        let mut collection = ThemeCollection::default();
+        let mut entries = tokio::fs::read_dir(dir_path).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                match Theme::load_from_file_async(&path).await {
+                    Ok(theme) => {
+                        collection.add_theme(theme);
+                    }
+                    Err(error) => {
+                        eprintln!("Error loading theme from {:?}: {}", path, error);
                     }
                 }
             }

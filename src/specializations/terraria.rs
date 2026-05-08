@@ -90,6 +90,7 @@ impl ServerSpecialization for TerrariaSpecialization {
         json!({
             "player_count": self.player_count,
             "max_players": self.max_players,
+            "player_list": self.player_activity.online_names(),
         })
     }
 

@@ -228,7 +228,8 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
             "max_players": self.max_players,
             "player_count": self.player_count,
             "calendar_paused": self.calendar_paused,
-            "config_found": self.config_found
+            "config_found": self.config_found,
+            "player_list": self.player_activity.online_names()
         })
     }
 

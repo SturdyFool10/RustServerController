@@ -72,4 +72,46 @@ window.RSCApp = window.RSCApp || {};
     app.state.socket = socket;
     window.socket = socket;
   };
+
+  app.hasPermission = function (permission) {
+    const auth = app.state.auth;
+    if (!auth || !Array.isArray(auth.permissions)) return false;
+    return auth.permissions.includes("admin") || auth.permissions.includes(permission);
+  };
+
+  app.hasServerPermission = function (server, permission) {
+    const auth = app.state.auth;
+    if (!auth || !Array.isArray(auth.permissions)) return false;
+    if (auth.permissions.includes("admin") || auth.permissions.includes(permission)) return true;
+    const ids = [server?.server_uuid, server?.name].filter(Boolean);
+    return ids.some((id) => auth.permissions.includes(`server:${id}:${permission}`));
+  };
+
+  app.hasAnyServerPermission = function (permission) {
+    const auth = app.state.auth;
+    if (!auth || !Array.isArray(auth.permissions)) return false;
+    if (auth.permissions.includes("admin") || auth.permissions.includes(permission)) return true;
+    return auth.permissions.some(
+      (value) => value.startsWith("server:") && value.endsWith(`:${permission}`),
+    );
+  };
+
+  app.authRequest = async function (path, body) {
+    const response = await fetch(path, {
+      method: body ? "POST" : "GET",
+      headers: body ? { "Content-Type": "application/json" } : {},
+      credentials: "same-origin",
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!response.ok) {
+      let message = "Authentication failed";
+      try {
+        const error = await response.json();
+        if (error?.error) message = error.error;
+      } catch (e) {}
+      throw new Error(message);
+    }
+    if (response.status === 204) return null;
+    return response.json();
+  };
 })(window.RSCApp);

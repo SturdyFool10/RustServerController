@@ -2,12 +2,12 @@ use crate::{app_state::AppState, configuration::Config, messages::*};
 use futures_util::{SinkExt, StreamExt};
 use rmp_serde::{from_slice, to_vec};
 use serde::{Deserialize, Serialize};
-use std::{error::Error, time::Duration};
+use std::{error::Error, sync::Arc, time::Duration};
 use tokio::{net::TcpStream, time};
 use tokio_tungstenite::{
-    connect_async,
+    connect_async, connect_async_tls_with_config,
     tungstenite::{Bytes, Message},
-    MaybeTlsStream, WebSocketStream,
+    Connector, MaybeTlsStream, WebSocketStream,
 };
 use tracing::error;
 
@@ -16,6 +16,110 @@ use tracing::error;
 pub struct SlaveConnectionDescriptor {
     pub address: String,
     pub port: String,
+    #[serde(default = "default_slave_use_https")]
+    pub use_https: bool,
+    #[serde(default)]
+    pub pinned_certificate_sha256: Option<String>,
+}
+
+fn default_slave_use_https() -> bool {
+    true
+}
+
+#[derive(Debug)]
+struct PinnedCertificateVerifier {
+    expected_sha256: String,
+}
+
+impl rustls::client::danger::ServerCertVerifier for PinnedCertificateVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        let actual = certificate_sha256_hex(end_entity.as_ref());
+        if actual == self.expected_sha256 {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        } else {
+            Err(rustls::Error::InvalidCertificate(
+                rustls::CertificateError::UnknownIssuer,
+            ))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+        ]
+    }
+}
+
+fn certificate_sha256_hex(bytes: &[u8]) -> String {
+    let digest = ring::digest::digest(&ring::digest::SHA256, bytes);
+    digest
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{:02X}", byte))
+        .collect::<String>()
+}
+
+fn normalize_fingerprint(fingerprint: &str) -> String {
+    fingerprint
+        .chars()
+        .filter(|ch| ch.is_ascii_hexdigit())
+        .flat_map(|ch| ch.to_uppercase())
+        .collect()
+}
+
+fn pinned_tls_connector(
+    pinned_certificate_sha256: Option<&str>,
+) -> Result<Option<Connector>, Box<dyn Error>> {
+    let Some(pin) = pinned_certificate_sha256
+        .map(normalize_fingerprint)
+        .filter(|pin| !pin.is_empty())
+    else {
+        return Ok(None);
+    };
+    if pin.len() != 64 {
+        return Err("pinned_certificate_sha256 must be a SHA-256 hex fingerprint".into());
+    }
+
+    let config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(PinnedCertificateVerifier {
+            expected_sha256: pin,
+        }))
+        .with_no_client_auth();
+    Ok(Some(Connector::Rustls(Arc::new(config))))
 }
 
 /// Represents a connection to a slave node, including the websocket stream.
@@ -23,16 +127,22 @@ pub struct SlaveConnectionDescriptor {
 pub struct SlaveConnection {
     pub address: String,
     pub port: String,
+    #[serde(default = "default_slave_use_https")]
+    pub use_https: bool,
+    #[serde(default)]
+    pub pinned_certificate_sha256: Option<String>,
     #[serde(skip)]
     pub stream: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>, // Public member to store the TcpStream
 }
 
 impl SlaveConnection {
     /// Creates a new SlaveConnection instance with the given address and port.
-    pub fn new(address: String, port: String) -> Self {
+    pub fn new(desc: SlaveConnectionDescriptor) -> Self {
         Self {
-            address,
-            port,
+            address: desc.address,
+            port: desc.port,
+            use_https: desc.use_https,
+            pinned_certificate_sha256: desc.pinned_certificate_sha256,
             stream: None,
         }
     }
@@ -43,8 +153,19 @@ impl SlaveConnection {
     /// * `Ok(())` if the connection is successful.
     /// * `Err` if the connection fails.
     pub async fn create_connection(&mut self) -> Result<(), Box<dyn Error>> {
-        let addr = format!("ws://{}:{}/ws", self.address, self.port);
-        let (ws_stream, _) = connect_async(addr).await?;
+        let scheme = if self.use_https { "wss" } else { "ws" };
+        let addr = format!("{}://{}:{}/ws", scheme, self.address, self.port);
+        let connector = if self.use_https {
+            pinned_tls_connector(self.pinned_certificate_sha256.as_deref())?
+        } else {
+            None
+        };
+        let (ws_stream, _) = match connector {
+            Some(connector) => {
+                connect_async_tls_with_config(addr, None, false, Some(connector)).await?
+            }
+            None => connect_async(addr).await?,
+        };
         self.stream = Some(ws_stream);
         Ok(())
     }
@@ -97,6 +218,10 @@ impl SlaveConnection {
                                                 host: Some(SlaveConnectionDescriptor {
                                                     address: self.address.clone(),
                                                     port: self.port.clone(),
+                                                    use_https: self.use_https,
+                                                    pinned_certificate_sha256: self
+                                                        .pinned_certificate_sha256
+                                                        .clone(),
                                                 }),
                                                 specialization: server_info.specialization.clone(),
                                                 specialized_info: server_info
@@ -195,7 +320,7 @@ pub async fn create_slave_connections(state: AppState) {
     let config: Config = conf.clone();
     drop(conf);
     for slave_desc in config.slave_connections {
-        let mut slave = SlaveConnection::new(slave_desc.address.clone(), slave_desc.port.clone());
+        let mut slave = SlaveConnection::new(slave_desc.clone());
         let conn_res = slave.create_connection().await;
         match conn_res {
             Ok(_) => {
@@ -223,7 +348,10 @@ pub async fn create_slave_connections(state: AppState) {
             interval.tick().await;
             // Perform actions on each tick, such as checking the status of connections,
             // sending keep-alive messages, etc.
-            let mut slaves = state.slave_connections.lock().await;
+            let mut slaves = {
+                let mut slave_connections = state.slave_connections.lock().await;
+                std::mem::take(&mut *slave_connections)
+            };
             for slave in slaves.iter_mut() {
                 let _ = tokio::time::timeout(
                     Duration::from_secs_f64(10. / 1000.),
@@ -231,6 +359,9 @@ pub async fn create_slave_connections(state: AppState) {
                 )
                 .await;
             }
+            let mut slave_connections = state.slave_connections.lock().await;
+            slaves.append(&mut *slave_connections);
+            *slave_connections = slaves;
         }
     }
 }

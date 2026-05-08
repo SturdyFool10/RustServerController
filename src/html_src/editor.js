@@ -66,6 +66,7 @@ window.RSCApp = window.RSCApp || {};
   }
 
   function sendRequestConfig() {
+    if (!app.hasAnyServerPermission?.("config")) return;
     if (app.state.socket && app.state.socket.readyState === WebSocket.OPEN) {
       app.state.socket.send(JSON.stringify({ type: RSC.messages.requestConfig }));
     } else {
@@ -76,6 +77,7 @@ window.RSCApp = window.RSCApp || {};
   function bindSaveButton() {
     $(".configSave").click(function (e) {
       if (e.which !== 1) return;
+      if (!app.hasAnyServerPermission?.("config")) return;
 
       try {
         const jsonContent = editor ? editor.getValue() : $(".editorText").val();
@@ -105,6 +107,7 @@ window.RSCApp = window.RSCApp || {};
 
   app.initConfigEditor = function () {
     window.config = { state: "NotInit" };
+    if (!app.hasAnyServerPermission?.("config")) return;
     if (typeof require === "function") {
       require(["vs/editor/editor.main"], initMonacoEditor);
     }

@@ -5,7 +5,9 @@ window.RSCApp = window.RSCApp || {};
 
   function serverList() {
     return Array.isArray(window.serverInfoObj?.servers)
-      ? window.serverInfoObj.servers
+      ? window.serverInfoObj.servers.filter((server) =>
+          app.hasServerPermission?.(server, "stats"),
+        )
       : [];
   }
 
@@ -27,6 +29,7 @@ window.RSCApp = window.RSCApp || {};
       specializations: new Map(),
       activeNames: [],
       inactiveNames: [],
+      onlinePlayers: [],
     };
 
     servers.forEach((server) => {
@@ -49,6 +52,17 @@ window.RSCApp = window.RSCApp || {};
       stats.players += Number(info.player_count || 0);
       stats.maxPlayers += Number(info.max_players || 0);
       if (info.ready === true) stats.ready += 1;
+      if (Array.isArray(info.player_list)) {
+        info.player_list.forEach((name) => {
+          if (typeof name === "string" && name.trim()) {
+            stats.onlinePlayers.push({
+              name: name.trim(),
+              server: server.name,
+              specialization,
+            });
+          }
+        });
+      }
     });
 
     return stats;
@@ -91,6 +105,67 @@ window.RSCApp = window.RSCApp || {};
         label.textContent = name;
         value.textContent = String(count);
         item.append(label, value);
+        list.appendChild(item);
+      });
+  }
+
+  function renderSpecializationDistribution(root, stats) {
+    const list = root.querySelector(".statsSpecializationDistribution");
+    if (!list) return;
+    list.replaceChildren();
+
+    const entries = Array.from(stats.specializations.entries()).sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
+    if (entries.length === 0) {
+      const item = document.createElement("li");
+      item.textContent = "No configured servers";
+      list.appendChild(item);
+      return;
+    }
+
+    entries.forEach(([name, count]) => {
+      const item = document.createElement("li");
+      const row = document.createElement("div");
+      const label = document.createElement("span");
+      const value = document.createElement("strong");
+      const meter = document.createElement("div");
+      const fill = document.createElement("span");
+
+      row.className = "statsDistributionHeader";
+      label.textContent = name;
+      value.textContent = `${count} (${percent(count, stats.total)}%)`;
+      meter.className = "statsMeter";
+      fill.style.width = `${percent(count, stats.total)}%`;
+      meter.appendChild(fill);
+      row.append(label, value);
+      item.append(row, meter);
+      list.appendChild(item);
+    });
+  }
+
+  function renderOnlinePlayers(root, players) {
+    const list = root.querySelector(".statsOnlinePlayers");
+    if (!list) return;
+    list.replaceChildren();
+
+    if (!players.length) {
+      const item = document.createElement("li");
+      item.textContent = "No online players";
+      list.appendChild(item);
+      return;
+    }
+
+    players
+      .slice()
+      .sort((left, right) => left.server.localeCompare(right.server) || left.name.localeCompare(right.name))
+      .forEach((player) => {
+        const item = document.createElement("li");
+        const name = document.createElement("strong");
+        const details = document.createElement("span");
+        name.textContent = player.name;
+        details.textContent = `${player.server} | ${player.specialization}`;
+        item.append(name, details);
         list.appendChild(item);
       });
   }
@@ -156,6 +231,41 @@ window.RSCApp = window.RSCApp || {};
     });
 
     description.appendChild(playerList);
+  }
+
+  function renderPlayerHoursChart(description, players) {
+    if (!Array.isArray(players) || players.length === 0) return;
+    const values = players
+      .map((player) => ({
+        name: player.name || "Unknown player",
+        hours: Number(player.total_hours || 0),
+      }))
+      .filter((player) => player.hours > 0)
+      .sort((left, right) => right.hours - left.hours)
+      .slice(0, 8);
+    if (values.length === 0) return;
+
+    const chart = document.createElement("div");
+    chart.className = "statsPlayerHoursChart";
+    const max = Math.max(...values.map((player) => player.hours), 1);
+
+    values.forEach((player) => {
+      const row = document.createElement("div");
+      const label = document.createElement("span");
+      const meter = document.createElement("div");
+      const fill = document.createElement("span");
+      const value = document.createElement("strong");
+
+      label.textContent = player.name;
+      fill.style.width = `${Math.max(2, (player.hours / max) * 100)}%`;
+      value.textContent = formatHours(player.hours);
+      meter.className = "statsMeter";
+      meter.appendChild(fill);
+      row.append(label, meter, value);
+      chart.appendChild(row);
+    });
+
+    description.appendChild(chart);
   }
 
   function renderRecentSessions(description, sessions) {
@@ -271,6 +381,7 @@ window.RSCApp = window.RSCApp || {};
 
   function renderStatDescription(description, label, value) {
     if (label === "Player Activity" || label === "Name Activity") {
+      renderPlayerHoursChart(description, value);
       renderPlayerActivity(description, value);
       return;
     }
@@ -493,6 +604,14 @@ window.RSCApp = window.RSCApp || {};
           <div class="statsMeter"><span data-meter="players"></span></div>
         </div>
       </section>
+      <section class="statsDetails statsDistribution">
+        <h2>Server Mix</h2>
+        <ul class="statsSpecializationDistribution"></ul>
+      </section>
+      <section class="statsDetails">
+        <h2>Online Players</h2>
+        <ul class="statsOnlinePlayers"></ul>
+      </section>
       <section class="statsColumns">
         <div>
           <h2>Specializations</h2>
@@ -553,6 +672,8 @@ window.RSCApp = window.RSCApp || {};
     if (playerMeter) playerMeter.style.width = `${playerPercent}%`;
 
     renderSpecializations(root, stats);
+    renderSpecializationDistribution(root, stats);
+    renderOnlinePlayers(root, stats.onlinePlayers);
     renderSpecializationStats(root, servers);
     renderServerData(root, servers);
     renderArchivedServerStats(root, archivedServerStats());

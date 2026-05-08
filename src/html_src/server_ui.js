@@ -128,6 +128,8 @@ window.RSCApp = window.RSCApp || {};
   }
 
   function sendServerAction(type, serverName) {
+    const server = findServerInfo(serverName);
+    if (!app.hasServerPermission(server, "control")) return;
     app.sendSocketMessage({
       type,
       server_name: serverName,
@@ -164,6 +166,7 @@ window.RSCApp = window.RSCApp || {};
 
       const isStartCommand =
         inputValue.trim().toLowerCase() === RSC.commands.start;
+      if (!app.hasServerPermission(findServerInfo(serverName), "control")) return;
       app.sendSocketMessage({
         type: RSC.messages.stdinInput,
         server_name: serverName,
@@ -259,14 +262,33 @@ window.RSCApp = window.RSCApp || {};
   function syncDropdownState(dropdownElement, server) {
     dropdownElement.classList.toggle("inactiveServer", !server.active);
     dropdownElement.classList.toggle("activeServer", server.active);
+    const canControl = app.hasServerPermission(server, "control");
+    const canConsole = app.hasServerPermission(server, "console");
+    dropdownElement
+      .querySelectorAll(".serverAction, .STDInSubmit, .STDInInput")
+      .forEach((element) => {
+        element.disabled = !canControl;
+        element.hidden = element.classList.contains("serverAction") && !canControl;
+      });
+    dropdownElement.querySelector(".dropdownDrop")?.toggleAttribute("hidden", !canConsole);
+    dropdownElement.querySelector(".dropdownArrow")?.toggleAttribute("hidden", !canConsole);
     setServerTitle(dropdownElement, server);
   }
 
   app.mergeServerInfoSnapshot = function (snapshot) {
+    const visibleNames = new Set((snapshot.servers || []).map((server) => server.name));
+    ensureServerInfoObj().servers.forEach((server) => {
+      if (!visibleNames.has(server.name)) {
+        $("." + serverClassName(server.name, "dropdown")).remove();
+        delete app.state.lastLogLineCount[server.name];
+      }
+    });
     window.serverInfoObj = snapshot;
     ensureServerInfoObj().servers.forEach((server) => {
       addDropdownNoDupe(server.name, !server.active);
-      processServerLogLines(server.name, server.output || "", true);
+      if (app.hasServerPermission(server, "console")) {
+        processServerLogLines(server.name, server.output || "", true);
+      }
     });
     app.updateStats?.();
   };

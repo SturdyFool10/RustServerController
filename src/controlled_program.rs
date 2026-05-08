@@ -88,19 +88,12 @@ impl ControlledProgramDescriptor {
         }
     }
 
-    /// Converts this descriptor into a running [`ControlledProgramInstance`].
-    ///
-    /// Attaches a specialization handler if specified.
-    ///
-    /// # Arguments
-    /// * `registry` - The specialization registry to use for handler lookup.
-    pub fn into_instance(
+    pub async fn into_instance_async(
         self,
         registry: &crate::specializations::SpecializationRegistry,
     ) -> io::Result<ControlledProgramInstance> {
         use std::collections::HashMap;
 
-        // Prepare default environment variables
         let mut envs: HashMap<String, String> = HashMap::new();
         envs.insert("TERM".to_string(), "xterm-256color".to_string());
         envs.insert("COLORTERM".to_string(), "truecolor".to_string());
@@ -125,7 +118,6 @@ impl ControlledProgramDescriptor {
         let crash_prevention = self.crash_prevention;
         let mut specialization_options = self.specialization_options.clone();
 
-        // If specialization exists, allow it to modify envs before process spawn
         if let Some(ref typ) = self.specialized_server_type {
             tracing::trace!("Attempting to get specialization handler for type: {}", typ);
             if let Some(mut handler) = registry.get(typ) {
@@ -148,13 +140,14 @@ impl ControlledProgramDescriptor {
             }
         }
 
-        let mut instance = ControlledProgramInstance::new(
+        let mut instance = ControlledProgramInstance::new_async(
             self.name.as_str(),
             self.exe_path.as_str(),
             self.arguments,
             self.working_dir,
             envs,
-        )?;
+        )
+        .await?;
         instance.specialized_server_type = specialized_server_type;
         instance.specialization_options = specialization_options;
         instance.crash_prevention = crash_prevention;
@@ -163,7 +156,6 @@ impl ControlledProgramDescriptor {
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-        // If a specialization handler was attached, call init before assigning to instance
         if let Some(mut handler) = specialization_handler {
             handler.init(&mut instance);
             instance.specialization_handler = Some(handler);
@@ -244,30 +236,14 @@ impl Drop for ControlledProgramInstance {
 }
 
 impl ControlledProgramInstance {
-    /// Creates a new running instance of a controlled program/server.
-    ///
-    /// Ensures the working directory exists, sets up environment variables, and spawns the process.
-    ///
-    /// # Arguments
-    /// * `name` - The display name of the server/program.
-    /// * `exe_path` - Path to the executable.
-    /// * `arguments` - Command-line arguments.
-    /// * `working_dir` - Working directory for the process.
-    pub fn new(
+    pub async fn new_async(
         name: &str,
         exe_path: &str,
         arguments: Vec<String>,
         working_dir: String,
         envs: std::collections::HashMap<String, String>,
     ) -> io::Result<Self> {
-        use std::fs;
-        use std::path::Path;
-
-        // Ensure the working directory exists, create if it doesn't
-        let working_dir_path = Path::new(&working_dir);
-        if !working_dir_path.exists() {
-            fs::create_dir_all(working_dir_path)?;
-        }
+        tokio::fs::create_dir_all(&working_dir).await?;
 
         let mut process = Command::new(exe_path);
         let mut process = process
@@ -276,7 +252,6 @@ impl ControlledProgramInstance {
             .stderr(Stdio::piped())
             .current_dir(working_dir.clone());
 
-        // Set environment variables from the provided map
         for (key, value) in envs.iter() {
             process = process.env(key, value);
         }

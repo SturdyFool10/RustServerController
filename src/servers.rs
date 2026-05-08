@@ -37,18 +37,16 @@ pub fn broadcast_json<T: serde::Serialize>(state: &AppState, value: &T) {
     }
 }
 
-pub fn create_instance(
+pub async fn create_instance_async(
     state: &AppState,
     desc: ControlledProgramDescriptor,
 ) -> Option<crate::controlled_program::ControlledProgramInstance> {
-    match desc.clone().into_instance(&state.specialization_registry) {
-        Ok(mut instance) => {
-            if let Some(mut handler) = instance.specialization_handler.take() {
-                handler.on_start(&mut instance, state);
-                instance.specialization_handler = Some(handler);
-            }
-            Some(instance)
-        }
+    let mut instance = match desc
+        .clone()
+        .into_instance_async(&state.specialization_registry)
+        .await
+    {
+        Ok(instance) => instance,
         Err(error) => {
             error!("Failed to start server '{}': {}", desc.name, error);
             send_controller_message(
@@ -57,9 +55,15 @@ pub fn create_instance(
                 desc.specialized_server_type,
                 format!("failed to start server: {}", error),
             );
-            None
+            return None;
         }
+    };
+
+    if let Some(mut handler) = instance.specialization_handler.take() {
+        handler.on_start(&mut instance, state);
+        instance.specialization_handler = Some(handler);
     }
+    Some(instance)
 }
 
 pub fn specialization_update(
@@ -136,14 +140,18 @@ pub async fn send_termination_message(
 /// * `_state` - The shared application state.
 #[no_mangle]
 pub async fn start_servers(state: AppState) {
-    let mut config = state.config.lock().await;
-    for server_desc in config.servers.iter_mut() {
-        if server_desc.auto_start {
-            let new_desc = server_desc.clone();
-            let mut servers = state.servers.lock().await;
-            let Some(instance) = create_instance(&state, new_desc) else {
-                continue;
-            };
+    let auto_start_servers = {
+        let config = state.config.lock().await;
+        config
+            .servers
+            .iter()
+            .filter(|server_desc| server_desc.auto_start)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+
+    for server_desc in auto_start_servers {
+        if let Some(instance) = create_instance_async(&state, server_desc).await {
             // After starting a new server, send specialization info update
             if let Some(handler) = instance.specialization_handler.as_ref() {
                 let info = handler.get_status();
@@ -158,8 +166,8 @@ pub async fn start_servers(state: AppState) {
                 );
                 broadcast_json(&state, &update);
             }
+            let mut servers = state.servers.lock().await;
             servers.push(instance);
-            drop(servers);
         }
     }
     tokio::spawn(process_stdout(state.clone()));
@@ -176,8 +184,11 @@ pub async fn process_stdout(state: AppState) {
     loop {
         {
             let mut new_instances = vec![];
-            let mut to_remove = vec![];
-            let mut servers = state.servers.lock().await;
+            let mut retained_servers = vec![];
+            let mut servers = {
+                let mut server_guard = state.servers.lock().await;
+                std::mem::take(&mut *server_guard)
+            };
             for (index, server) in servers.iter_mut().enumerate() {
                 let status = server.process.try_wait();
                 match status {
@@ -236,29 +247,34 @@ pub async fn process_stdout(state: AppState) {
                                 server.specialization_options.clone();
 
                             // Lookup the original crash_prevention setting from config to preserve it
-                            let config = state.config.lock().await;
-                            for server_config in config.servers.iter() {
-                                if server_config.name == server.name {
-                                    descriptor.crash_prevention = server_config.crash_prevention;
-                                    descriptor.specialization_options =
-                                        server_config.specialization_options.clone();
-                                    break;
-                                }
+                            if let Some((crash_prevention, specialization_options)) = {
+                                let config = state.config.lock().await;
+                                config
+                                    .servers
+                                    .iter()
+                                    .find(|server_config| server_config.name == server.name)
+                                    .map(|server_config| {
+                                        (
+                                            server_config.crash_prevention,
+                                            server_config.specialization_options.clone(),
+                                        )
+                                    })
+                            } {
+                                descriptor.crash_prevention = crash_prevention;
+                                descriptor.specialization_options = specialization_options;
                             }
-                            drop(config);
 
                             new_instances.push(descriptor);
                         } else if exit_code != Some(0) {
                             info!("Server ID: {} has crashed, but crash prevention is disabled. Not restarting.", index);
                         }
-                        to_remove.push(index);
                     }
                     Ok(None) => {}
                     Err(_e) => {}
                 }
             }
             for desc in new_instances {
-                let Some(instance) = create_instance(&state, desc) else {
+                let Some(instance) = create_instance_async(&state, desc).await else {
                     continue;
                 };
                 // After starting a new server, send specialization info update
@@ -275,15 +291,15 @@ pub async fn process_stdout(state: AppState) {
                     );
                     broadcast_json(&state, &update);
                 }
-                servers.push(instance);
-            }
-            // Remove servers in reverse order to avoid index shifting
-            to_remove.sort_unstable_by(|a, b| b.cmp(a));
-            for index in to_remove {
-                servers.remove(index);
+                retained_servers.push(instance);
             }
             //all of our process are valid at this point, no need to even be careful about it
-            for server in servers.iter_mut() {
+            for server in servers {
+                if server.active {
+                    retained_servers.push(server);
+                }
+            }
+            for server in retained_servers.iter_mut() {
                 let str = tokio::time::timeout(
                     tokio::time::Duration::from_secs_f64(1. / 10.),
                     server.read_output(),
@@ -333,7 +349,9 @@ pub async fn process_stdout(state: AppState) {
                     }
                 }
             }
-            drop(servers);
+            let mut server_guard = state.servers.lock().await;
+            retained_servers.append(&mut *server_guard);
+            *server_guard = retained_servers;
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }

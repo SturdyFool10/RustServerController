@@ -5,7 +5,10 @@
 use axum::{routing::get, Router};
 use tracing::{error, info};
 
-use crate::{app_state::AppState, websocket::handle_ws_upgrade};
+use crate::{
+    app_state::AppState, configuration::effective_certificate_targets,
+    webserver::start_https_server, websocket::handle_ws_upgrade,
+};
 
 /// Builds the Axum router for the slave node web server.
 ///
@@ -32,7 +35,20 @@ pub async fn start_slave(_state: AppState) {
     let config = _state.config.lock().await;
     let mut address = config.interface.clone();
     address += (":".to_owned() + config.port.clone().as_str()).as_str();
+    let transport = config.web_transport.clone();
+    let cert_targets = effective_certificate_targets(&config);
     drop(config);
+
+    if transport.enable_https {
+        let https_state = _state.clone();
+        let https_router = router.clone();
+        let https_transport = transport.clone();
+        let https_targets = cert_targets.clone();
+        tokio::spawn(async move {
+            start_https_server(https_state, https_router, https_transport, https_targets).await;
+        });
+    }
+
     info!("Starting server on {}", address.replace("0.0.0.0", "*"));
 
     let stateful_router = router.with_state(_state);

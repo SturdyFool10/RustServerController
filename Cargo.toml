@@ -9,7 +9,7 @@ edition = "2021"
 ansi_escapers = "0.2.0"
 async-std = { version = "1.12.0", features = ["tokio03", "tokio02", "tokio1"] }
 axum = { version = "0.8.9", features = ["tracing", "ws", "macros"] }
-axum-server = "0.8.0"
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 axum-extra = "0.10.1"
 colorlab = {git = "https://github.com/SturdyFool10/ColorLab.git"}
 crossterm = "0.29.0"
@@ -19,6 +19,7 @@ h3 = "0.0.8"
 h3-axum = "0.2.0"
 h3-quinn = "0.0.10"
 regex = "1.10.2"
+rcgen = "0.13.2"
 serde = { version = "1.0.183", features = ["derive", "serde_derive"] }
 
 serde_json = { version = "1.0.105", features = ["float_roundtrip"] }
@@ -28,10 +29,11 @@ rmpv = "1.0.0"
 quinn = "0.11.9"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 rustls-acme = { version = "0.15.1", features = ["axum", "tokio", "webpki-roots", "ring"] }
+rustls = "0.23.40"
 tokio = { version = "1.31.0", features = ["full", "tracing"] }
 tokio-stream = { version = "0.1.14", features = ["net"] }
 
-tokio-tungstenite = "0.27.0"
+tokio-tungstenite = { version = "0.27.0", features = ["rustls-tls-webpki-roots"] }
 
 tower = { version = "0.5.2", features = ["full", "tokio"] }
 
@@ -49,8 +51,10 @@ hyper = "1.9.0"
 chrono = { version = "0.4.42", features = ["serde"] }
 
 once_cell = "1.21.3"
+pem = "3.0.6"
 
 colored = "3.0.0"
+ring = "0.17.14"
 
 
 [target.'cfg(target_os = "windows")'.build-dependencies]

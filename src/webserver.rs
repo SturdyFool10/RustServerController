@@ -5,11 +5,11 @@
 use crate::websocket::*;
 use axum::{
     body::Body,
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Response},
-    routing::get,
-    Router,
+    routing::{get, post},
+    Json, Router,
 };
 use axum_extra::response::JavaScript;
 
@@ -18,8 +18,9 @@ use tracing::*;
 
 use crate::{
     app_state::AppState,
-    configuration::{effective_certificate_targets, WebTransportConfig},
+    configuration::{effective_certificate_targets, LocalCertificateConfig, WebTransportConfig},
 };
+use serde::Deserialize;
 
 macro_rules! js_asset {
     ($name:ident, $path:literal) => {
@@ -65,9 +66,90 @@ async fn get_router(_state: AppState) -> Router<AppState> {
         .route("/html/editor.js", get(editor_serve))
         .route("/html/webgl_background.js", get(webgl_background_serve))
         .route("/html/index.js", get(index_js_serve))
+        .route("/themes", get(themes_list))
+        .route("/themes/css", get(theme_css))
+        .route("/auth/status", get(crate::auth::auth_status))
+        .route("/auth/challenge", post(crate::auth::challenge))
+        .route("/auth/login", post(crate::auth::login))
+        .route("/auth/setup", post(crate::auth::setup))
+        .route("/auth/set-password", post(crate::auth::set_password))
+        .route("/auth/request-account", post(crate::auth::request_account))
+        .route("/auth/accounts", get(crate::auth::list_accounts))
+        .route("/auth/admin/create-user", post(crate::auth::create_user))
+        .route(
+            "/auth/admin/approve-request",
+            post(crate::auth::approve_account_request),
+        )
+        .route(
+            "/auth/admin/reject-request",
+            post(crate::auth::reject_account_request),
+        )
+        .route(
+            "/auth/admin/update-user-permissions",
+            post(crate::auth::update_user_permissions),
+        )
+        .route(
+            "/auth/admin/update-permission-model",
+            post(crate::auth::update_permission_model),
+        )
+        .route(
+            "/auth/admin/reset-credential-stores",
+            post(crate::auth::reset_credential_stores),
+        )
+        .route("/auth/logout", post(crate::auth::logout))
+        .route("/oauth/token", post(crate::auth::oauth_token))
         .route("/ws", get(handle_ws_upgrade))
         .route("/favicon.ico", get(handle_icon));
     router
+}
+
+#[derive(Deserialize)]
+struct ThemeCssQuery {
+    theme_name: String,
+}
+
+async fn load_theme_collection(state: &AppState) -> crate::theme::ThemeCollection {
+    let config = state.config.lock().await;
+    let themes_folder = config
+        .themes_folder
+        .clone()
+        .unwrap_or_else(|| "themes".to_string());
+    drop(config);
+
+    crate::theme::ThemeCollection::load_from_directory_async(&themes_folder)
+        .await
+        .unwrap_or_default()
+}
+
+async fn themes_list(State(state): State<AppState>) -> impl IntoResponse {
+    let collection = load_theme_collection(&state).await;
+    Json(crate::messages::ThemesList {
+        r#type: "themesList".to_string(),
+        themes: collection
+            .themes
+            .iter()
+            .map(|theme| theme.name.clone())
+            .collect(),
+    })
+}
+
+async fn theme_css(
+    State(state): State<AppState>,
+    Query(query): Query<ThemeCssQuery>,
+) -> impl IntoResponse {
+    let collection = load_theme_collection(&state).await;
+    let css = collection
+        .themes
+        .iter()
+        .find(|theme| theme.name == query.theme_name)
+        .or_else(|| collection.themes.first())
+        .map(|theme| theme.to_css())
+        .unwrap_or_default();
+    Json(crate::messages::ThemeCSS {
+        r#type: "themeCSS".to_string(),
+        theme_name: query.theme_name,
+        css,
+    })
 }
 /// Serves the favicon for the web UI.
 ///
@@ -152,13 +234,12 @@ async fn start_http3_server(
     use rustls_acme::{caches::DirCache, rustls, AcmeConfig};
     use std::{net::SocketAddr, sync::Arc};
 
-    if !transport.acme.enabled {
-        warn!("HTTP/3 requested, but ACME is disabled; HTTP/3 server not started");
-        return;
-    }
     if cert_targets.is_empty() {
         warn!("HTTP/3 requested, but no certificate_targets are configured; HTTP/3 server not started");
         return;
+    }
+    if !transport.acme.enabled {
+        info!("HTTP/3 requested; enabling ACME for HTTP/3 certificate management");
     }
 
     let config = state.config.lock().await;
@@ -274,26 +355,123 @@ async fn start_http3_server(
     }
 }
 
-async fn start_https_server(
+pub(crate) async fn start_https_server(
     state: AppState,
     router: Router<AppState>,
     transport: WebTransportConfig,
     cert_targets: Vec<String>,
 ) {
+    use axum_server::tls_rustls::RustlsConfig;
     use rustls_acme::{caches::DirCache, AcmeConfig};
-    use std::{net::SocketAddr, sync::Arc};
+    use std::sync::Arc;
 
-    if !transport.acme.enabled {
-        warn!("HTTPS requested, but ACME is disabled; HTTPS server not started");
-        return;
-    }
-    if cert_targets.is_empty() {
-        warn!(
-            "HTTPS requested, but no certificate_targets are configured; HTTPS server not started"
+    let address = match https_bind_address(&state, &transport).await {
+        Some(address) => address,
+        None => return,
+    };
+
+    if transport.acme.enabled {
+        if cert_targets.is_empty() {
+            warn!(
+                "HTTPS requested, but no certificate_targets are configured; HTTPS server not started"
+            );
+            return;
+        }
+
+        let mut acme = AcmeConfig::new(cert_targets.iter().map(String::as_str))
+            .cache(DirCache::new(
+                transport
+                    .acme
+                    .cache_dir
+                    .clone()
+                    .unwrap_or_else(|| "controller_data/acme".to_string()),
+            ))
+            .directory_lets_encrypt(transport.acme.production);
+        if let Some(contact_email) = transport.acme.contact_email.as_deref() {
+            if !contact_email.trim().is_empty() {
+                acme = acme.contact_push(format!("mailto:{}", contact_email.trim()));
+            }
+        }
+        let acme_state = acme.state();
+        let rustls_config = acme_state.default_rustls_config();
+        let acceptor = acme_state.axum_acceptor(Arc::clone(&rustls_config));
+
+        info!(
+            "Starting HTTPS server on {} with certificate targets: {}",
+            address,
+            cert_targets.join(", ")
         );
+        if let Err(error) = axum_server::bind(address)
+            .acceptor(acceptor)
+            .serve(router.with_state(state).into_make_service())
+            .await
+        {
+            error!("HTTPS server stopped with error: {}", error);
+        }
         return;
     }
 
+    let certificate = if transport.local_certificate.enabled {
+        Some(transport.local_certificate.clone())
+    } else if transport.self_signed.enabled || !transport.acme.enabled {
+        match ensure_self_signed_certificate(&transport, &cert_targets, address).await {
+            Some(certificate) => Some(certificate),
+            None => return,
+        }
+    } else {
+        None
+    };
+
+    let Some(certificate) = certificate else {
+        warn!("HTTPS requested, but no certificate mode is available; HTTPS server not started");
+        return;
+    };
+
+    let Some(cert_path) = certificate
+        .cert_path
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+    else {
+        warn!("HTTPS local certificate is enabled, but cert_path is missing");
+        return;
+    };
+    let Some(key_path) = certificate
+        .key_path
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+    else {
+        warn!("HTTPS local certificate is enabled, but key_path is missing");
+        return;
+    };
+
+    let rustls_config = match RustlsConfig::from_pem_file(cert_path, key_path).await {
+        Ok(config) => config,
+        Err(error) => {
+            error!(
+                "Failed to load HTTPS certificate '{}' and key '{}': {}",
+                cert_path, key_path, error
+            );
+            return;
+        }
+    };
+
+    info!(
+        "Starting HTTPS server on {} with certificate file '{}'",
+        address, cert_path
+    );
+    log_certificate_fingerprint(cert_path).await;
+    if let Err(error) = axum_server::bind_rustls(address, rustls_config)
+        .serve(router.with_state(state).into_make_service())
+        .await
+    {
+        error!("HTTPS server stopped with error: {}", error);
+    }
+}
+
+async fn https_bind_address(
+    state: &AppState,
+    transport: &WebTransportConfig,
+) -> Option<std::net::SocketAddr> {
     let config = state.config.lock().await;
     let port = transport
         .https_port
@@ -304,44 +482,147 @@ async fn start_https_server(
     let bind_address = format!("{}:{}", config.interface, port);
     drop(config);
 
-    let address: SocketAddr = match bind_address.parse() {
-        Ok(address) => address,
+    match bind_address.parse::<std::net::SocketAddr>() {
+        Ok(address) => Some(address),
         Err(error) => {
             error!("Invalid HTTPS bind address '{}': {}", bind_address, error);
-            return;
+            None
+        }
+    }
+}
+
+async fn ensure_self_signed_certificate(
+    transport: &WebTransportConfig,
+    cert_targets: &[String],
+    bind_address: std::net::SocketAddr,
+) -> Option<LocalCertificateConfig> {
+    use rcgen::{generate_simple_self_signed, CertifiedKey};
+    use std::path::Path;
+
+    let cert_path = transport
+        .self_signed
+        .cert_path
+        .clone()
+        .unwrap_or_else(|| "controller_data/tls/self_signed_cert.pem".to_string());
+    let key_path = transport
+        .self_signed
+        .key_path
+        .clone()
+        .unwrap_or_else(|| "controller_data/tls/self_signed_key.pem".to_string());
+
+    if Path::new(&cert_path).exists() && Path::new(&key_path).exists() {
+        return Some(LocalCertificateConfig {
+            enabled: true,
+            cert_path: Some(cert_path),
+            key_path: Some(key_path),
+        });
+    }
+
+    let names = self_signed_subject_alt_names(transport, cert_targets, bind_address);
+
+    let CertifiedKey { cert, key_pair } = match generate_simple_self_signed(names.clone()) {
+        Ok(certificate) => certificate,
+        Err(error) => {
+            error!(
+                "Failed to generate self-signed HTTPS certificate for {}: {}",
+                names.join(", "),
+                error
+            );
+            return None;
         }
     };
 
-    let mut acme = AcmeConfig::new(cert_targets.iter().map(String::as_str))
-        .cache(DirCache::new(
-            transport
-                .acme
-                .cache_dir
-                .clone()
-                .unwrap_or_else(|| "controller_data/acme".to_string()),
-        ))
-        .directory_lets_encrypt(transport.acme.production);
-    if let Some(contact_email) = transport.acme.contact_email.as_deref() {
-        if !contact_email.trim().is_empty() {
-            acme = acme.contact_push(format!("mailto:{}", contact_email.trim()));
+    if let Some(parent) = Path::new(&cert_path).parent() {
+        if let Err(error) = tokio::fs::create_dir_all(parent).await {
+            error!(
+                "Failed to create self-signed certificate directory '{}': {}",
+                parent.display(),
+                error
+            );
+            return None;
         }
     }
-    let acme_state = acme.state();
-    let rustls_config = acme_state.default_rustls_config();
-    let acceptor = acme_state.axum_acceptor(Arc::clone(&rustls_config));
+    if let Some(parent) = Path::new(&key_path).parent() {
+        if let Err(error) = tokio::fs::create_dir_all(parent).await {
+            error!(
+                "Failed to create self-signed key directory '{}': {}",
+                parent.display(),
+                error
+            );
+            return None;
+        }
+    }
+
+    if let Err(error) = tokio::fs::write(&cert_path, cert.pem()).await {
+        error!(
+            "Failed to write self-signed certificate '{}': {}",
+            cert_path, error
+        );
+        return None;
+    }
+    if let Err(error) = tokio::fs::write(&key_path, key_pair.serialize_pem()).await {
+        error!("Failed to write self-signed key '{}': {}", key_path, error);
+        return None;
+    }
 
     info!(
-        "Starting HTTPS server on {} with certificate targets: {}",
-        address,
-        cert_targets.join(", ")
+        "Generated self-signed HTTPS certificate '{}' for {}",
+        cert_path,
+        names.join(", ")
     );
-    if let Err(error) = axum_server::bind(address)
-        .acceptor(acceptor)
-        .serve(router.with_state(state).into_make_service())
-        .await
-    {
-        error!("HTTPS server stopped with error: {}", error);
+    Some(LocalCertificateConfig {
+        enabled: true,
+        cert_path: Some(cert_path),
+        key_path: Some(key_path),
+    })
+}
+
+fn self_signed_subject_alt_names(
+    transport: &WebTransportConfig,
+    cert_targets: &[String],
+    bind_address: std::net::SocketAddr,
+) -> Vec<String> {
+    let mut names: Vec<String> = transport
+        .self_signed
+        .subject_alt_names
+        .iter()
+        .chain(cert_targets.iter())
+        .map(|name| name.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|name| !name.is_empty())
+        .collect();
+
+    names.extend([
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ]);
+    if !bind_address.ip().is_unspecified() {
+        names.push(bind_address.ip().to_string());
     }
+
+    names.sort();
+    names.dedup();
+    names
+}
+
+async fn log_certificate_fingerprint(cert_path: &str) {
+    let Ok(cert_pem) = tokio::fs::read_to_string(cert_path).await else {
+        return;
+    };
+    let Ok(cert) = pem::parse(cert_pem) else {
+        return;
+    };
+    let digest = ring::digest::digest(&ring::digest::SHA256, cert.contents());
+    let fingerprint = digest
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{:02X}", byte))
+        .collect::<Vec<_>>()
+        .join(":");
+    info!(
+        "HTTPS certificate SHA-256 fingerprint for pinning: {}",
+        fingerprint
+    );
 }
 /// Serves the main HTML page for the web UI, inlining the CSS.
 ///

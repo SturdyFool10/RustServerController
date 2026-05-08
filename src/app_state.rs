@@ -2,8 +2,9 @@ use std::sync::{atomic::AtomicBool, Arc};
 use tokio::sync::{broadcast, Mutex};
 
 use crate::{
-    configuration::Config, controlled_program::ControlledProgramInstance, master::SlaveConnection,
-    messages::ServerInfo, specializations::SpecializationRegistry,
+    auth::AuthState, configuration::Config, controlled_program::ControlledProgramInstance,
+    credential_store::CredentialStore, master::SlaveConnection, messages::ServerInfo,
+    specializations::SpecializationRegistry,
 };
 
 /// Shared application state for the server controller.
@@ -29,6 +30,10 @@ pub struct AppState {
     pub global_crash_prevention: Arc<AtomicBool>,
     /// Registry of available server specializations.
     pub specialization_registry: Arc<SpecializationRegistry>,
+    /// In-memory authentication sessions.
+    pub auth: AuthState,
+    /// Encrypted credential database.
+    pub credentials: CredentialStore,
 }
 impl AppState {
     /// Creates a new AppState instance.
@@ -41,6 +46,7 @@ impl AppState {
         tx: broadcast::Sender<String>,
         config: Config,
         specialization_registry: Arc<SpecializationRegistry>,
+        credentials: CredentialStore,
     ) -> Self {
         Self {
             servers: Arc::new(Mutex::new(vec![])),
@@ -51,6 +57,8 @@ impl AppState {
             slave_connections: Arc::new(Mutex::new(vec![])),
             global_crash_prevention: Arc::new(AtomicBool::new(true)),
             specialization_registry,
+            auth: AuthState::default(),
+            credentials,
         }
     }
 

@@ -127,15 +127,25 @@ window.RSCApp = window.RSCApp || {};
 
     $(".menuBTN1").click(function (e) {
       if (e.which !== 1) return;
+      if (!app.hasPermission("control")) return;
       app.sendSocketMessage({ type: RSC.messages.terminateServers });
     });
 
-    const classMap = {
-      Servers: ".servers",
-      Configuration: ".config",
-      Stats: ".stat",
-      Administration: ".administration",
-    };
+    const classMap = {};
+    classMap.Servers = ".servers";
+    if (app.hasAnyServerPermission?.("stats")) {
+      classMap.Stats = ".stat";
+    }
+    if (app.hasAnyServerPermission?.("config")) {
+      classMap.Configuration = ".config";
+    }
+    if (app.hasPermission("config")) {
+      classMap.Administration = ".administration";
+    }
+    $("#menu ul li").each(function () {
+      const label = $(this).find("a").text();
+      if (!classMap[label]) $(this).hide();
+    });
     $("#menu ul li a").click(function (e) {
       const targetSelector = classMap[e.target.innerHTML];
       if (!targetSelector) return;

@@ -24,6 +24,49 @@
         <script src="/html/msgpack.min.js"></script>
     </head>
     <body>
+        <div class="authScreen" id="auth-screen" hidden>
+            <form class="authPanel" id="auth-form">
+                <h1 class="authTitle">Rust Server Controller</h1>
+                <div class="authThemeMount" id="auth-theme-mount"></div>
+                <p class="authMode" id="auth-mode">Sign in</p>
+                <label class="authField">
+                    <span>Username</span>
+                    <input
+                        id="auth-username"
+                        autocomplete="username"
+                        required
+                    />
+                </label>
+                <label class="authField">
+                    <span>Password</span>
+                    <input
+                        id="auth-password"
+                        type="password"
+                        autocomplete="current-password"
+                        required
+                    />
+                </label>
+                <label class="authField" id="auth-password-repeat-field" hidden>
+                    <span>Repeat Password</span>
+                    <input
+                        id="auth-password-repeat"
+                        type="password"
+                        autocomplete="new-password"
+                    />
+                </label>
+                <p class="authError" id="auth-error" role="alert"></p>
+                <button type="submit" class="authSubmit" id="auth-submit">
+                    Sign in
+                </button>
+                <button
+                    type="button"
+                    class="authSecondary"
+                    id="auth-request-account"
+                >
+                    Request Account
+                </button>
+            </form>
+        </div>
         <div class="menu" id="menu">
             <ul>
                 <li>

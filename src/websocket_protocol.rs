@@ -88,6 +88,239 @@ pub(crate) async fn build_server_info_message(
     }
 }
 
+fn has_server_permission(
+    session: Option<&crate::auth::AuthSession>,
+    server_uuid: Option<&str>,
+    server_name: &str,
+    permission: &str,
+) -> bool {
+    session
+        .map(|session| {
+            crate::auth::permissions_include_server(
+                &session.permissions,
+                permission,
+                server_uuid,
+                server_name,
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn has_any_server_permission(session: Option<&crate::auth::AuthSession>, permission: &str) -> bool {
+    session
+        .map(|session| {
+            crate::auth::permissions_include(&session.permissions, permission)
+                || session.permissions.iter().any(|value| {
+                    value.starts_with("server:") && value.ends_with(&format!(":{permission}"))
+                })
+        })
+        .unwrap_or(false)
+}
+
+pub(crate) fn filter_config_for_session(
+    mut config: crate::configuration::Config,
+    session: Option<&crate::auth::AuthSession>,
+) -> crate::configuration::Config {
+    if has_permission(session, crate::auth::PERMISSION_ADMIN) {
+        return config;
+    }
+    if has_permission(session, crate::auth::PERMISSION_CONFIG) {
+        config.auth = crate::configuration::AuthConfig::default();
+        return config;
+    }
+    config.servers.retain(|server| {
+        has_server_permission(
+            session,
+            server.server_uuid.as_deref(),
+            &server.name,
+            crate::auth::PERMISSION_VIEW,
+        )
+    });
+    config.auth = crate::configuration::AuthConfig::default();
+    config.slave_connections.clear();
+    config.minecraft_account_filter_detail_groups.clear();
+    config
+}
+
+pub(crate) fn filter_server_info_message_for_session(
+    mut info: ServerInfoMessage,
+    session: Option<&crate::auth::AuthSession>,
+) -> ServerInfoMessage {
+    if has_permission(session, crate::auth::PERMISSION_ADMIN) {
+        return info;
+    }
+    let visible_stats_server_uuids = info
+        .servers
+        .iter()
+        .filter(|server| {
+            has_server_permission(
+                session,
+                server.server_uuid.as_deref(),
+                &server.name,
+                crate::auth::PERMISSION_VIEW,
+            ) && has_server_permission(
+                session,
+                server.server_uuid.as_deref(),
+                &server.name,
+                crate::auth::PERMISSION_STATS,
+            )
+        })
+        .filter_map(|server| server.server_uuid.clone())
+        .collect::<Vec<_>>();
+    info.servers = info
+        .servers
+        .into_iter()
+        .filter_map(|mut server| {
+            if !has_server_permission(
+                session,
+                server.server_uuid.as_deref(),
+                &server.name,
+                crate::auth::PERMISSION_VIEW,
+            ) {
+                return None;
+            }
+            if !has_server_permission(
+                session,
+                server.server_uuid.as_deref(),
+                &server.name,
+                crate::auth::PERMISSION_CONSOLE,
+            ) {
+                server.output.clear();
+            }
+            if !has_server_permission(
+                session,
+                server.server_uuid.as_deref(),
+                &server.name,
+                crate::auth::PERMISSION_STATS,
+            ) {
+                server.specialization_stats = None;
+            }
+            Some(server)
+        })
+        .collect();
+    info.config = filter_config_for_session(info.config, session);
+    info.archived_server_stats =
+        filter_archived_server_stats(info.archived_server_stats, &visible_stats_server_uuids);
+    info
+}
+
+pub(crate) fn filter_server_update_for_session(
+    mut update: ServerSpecializationInfoUpdate,
+    session: Option<&crate::auth::AuthSession>,
+) -> Option<ServerSpecializationInfoUpdate> {
+    if !has_server_permission(
+        session,
+        update.server_uuid.as_deref(),
+        &update.server_name,
+        crate::auth::PERMISSION_VIEW,
+    ) {
+        return None;
+    }
+    if !has_server_permission(
+        session,
+        update.server_uuid.as_deref(),
+        &update.server_name,
+        crate::auth::PERMISSION_STATS,
+    ) {
+        update.stats = None;
+    }
+    Some(update)
+}
+
+pub(crate) fn can_view_console_for_server(
+    session: Option<&crate::auth::AuthSession>,
+    server_uuid: Option<&str>,
+    server_name: &str,
+) -> bool {
+    has_server_permission(
+        session,
+        server_uuid,
+        server_name,
+        crate::auth::PERMISSION_VIEW,
+    ) && has_server_permission(
+        session,
+        server_uuid,
+        server_name,
+        crate::auth::PERMISSION_CONSOLE,
+    )
+}
+
+pub(crate) fn filter_config_info_for_session(
+    mut info: ConfigInfo,
+    session: Option<&crate::auth::AuthSession>,
+) -> ConfigInfo {
+    info.config = filter_config_for_session(info.config, session);
+    info
+}
+
+pub(crate) async fn can_access_server_by_name(
+    state: &AppState,
+    session: Option<&crate::auth::AuthSession>,
+    server_name: &str,
+    permission: &str,
+) -> bool {
+    if has_permission(session, crate::auth::PERMISSION_ADMIN) {
+        return true;
+    }
+    let server_uuid = {
+        let config = state.config.lock().await;
+        config
+            .servers
+            .iter()
+            .find(|server| server.name == server_name)
+            .and_then(|server| server.server_uuid.clone())
+    };
+    has_server_permission(session, server_uuid.as_deref(), server_name, permission)
+}
+
+pub(crate) async fn can_view_console_by_name(
+    state: &AppState,
+    session: Option<&crate::auth::AuthSession>,
+    server_name: &str,
+) -> bool {
+    if has_permission(session, crate::auth::PERMISSION_ADMIN) {
+        return true;
+    }
+    let server_uuid = {
+        let config = state.config.lock().await;
+        config
+            .servers
+            .iter()
+            .find(|server| server.name == server_name)
+            .and_then(|server| server.server_uuid.clone())
+    };
+    can_view_console_for_server(session, server_uuid.as_deref(), server_name)
+}
+
+fn filter_archived_server_stats(
+    value: serde_json::Value,
+    visible_uuids: &[String],
+) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .into_iter()
+                .filter(|item| {
+                    item.get("server_uuid")
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|uuid| visible_uuids.iter().any(|visible| visible == uuid))
+                })
+                .collect(),
+        ),
+        serde_json::Value::Object(mut map) => {
+            map.retain(|key, item| {
+                visible_uuids.iter().any(|visible| visible == key)
+                    || item
+                        .get("server_uuid")
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|uuid| visible_uuids.iter().any(|visible| visible == uuid))
+            });
+            serde_json::Value::Object(map)
+        }
+        other => other,
+    }
+}
+
 async fn send_text_json<T: serde::Serialize>(sender: &WsSender, value: &T) {
     match serde_json::to_string(value) {
         Ok(msg) => {
@@ -125,6 +358,7 @@ async fn send_response<T: serde::Serialize>(sender: &WsSender, value: &T, prefer
 async fn send_server_info(
     sender: &WsSender,
     state: &AppState,
+    session: Option<&crate::auth::AuthSession>,
     request_text: &str,
     prefer_msgpack: bool,
 ) {
@@ -133,6 +367,7 @@ async fn send_server_info(
         .and_then(|val| val.arguments.first().copied())
         .unwrap_or(true);
     let info = build_server_info_message(state, include_output).await;
+    let info = filter_server_info_message_for_session(info, session);
     send_response(sender, &info, prefer_msgpack).await;
 }
 
@@ -152,7 +387,8 @@ async fn load_theme_names(state: &AppState) -> Vec<String> {
         .unwrap_or_else(|| "themes".to_string());
     drop(config);
 
-    ThemeCollection::load_from_directory(&themes_folder)
+    ThemeCollection::load_from_directory_async(&themes_folder)
+        .await
         .unwrap_or_default()
         .themes
         .iter()
@@ -180,7 +416,9 @@ async fn build_theme_css(state: &AppState, theme_name: String) -> ThemeCSS {
         .unwrap_or_else(|| "themes".to_string());
     drop(config);
 
-    let theme_collection = ThemeCollection::load_from_directory(&themes_folder).unwrap_or_default();
+    let theme_collection = ThemeCollection::load_from_directory_async(&themes_folder)
+        .await
+        .unwrap_or_default();
     let css = if let Some(theme) = theme_collection
         .themes
         .iter()
@@ -228,17 +466,27 @@ async fn send_theme_css_for_request(
 pub(crate) async fn handle_client_request(
     sender: &WsSender,
     state: &AppState,
+    session: Option<&crate::auth::AuthSession>,
     event_type: &str,
     request_text: &str,
     prefer_msgpack: bool,
 ) -> bool {
     match event_type {
         "requestInfo" => {
-            send_server_info(sender, state, request_text, prefer_msgpack).await;
+            if session.is_none() {
+                send_auth_required(sender).await;
+                return true;
+            }
+            send_server_info(sender, state, session, request_text, prefer_msgpack).await;
             true
         }
         "getConfig" | "requestConfig" => {
+            if !has_any_server_permission(session, crate::auth::PERMISSION_CONFIG) {
+                send_auth_required(sender).await;
+                return true;
+            }
             let config_info = build_config_info(state).await;
+            let config_info = filter_config_info_for_session(config_info, session);
             send_response(sender, &config_info, prefer_msgpack).await;
             true
         }
@@ -253,4 +501,20 @@ pub(crate) async fn handle_client_request(
         }
         _ => false,
     }
+}
+
+fn has_permission(session: Option<&crate::auth::AuthSession>, permission: &str) -> bool {
+    session
+        .map(|session| crate::auth::permissions_include(&session.permissions, permission))
+        .unwrap_or(false)
+}
+
+async fn send_auth_required(sender: &WsSender) {
+    let _ = sender
+        .lock()
+        .await
+        .send(text_message(
+            r#"{"type":"AuthRequired","authenticated":false}"#.to_string(),
+        ))
+        .await;
 }

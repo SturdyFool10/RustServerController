@@ -33,6 +33,435 @@ window.RSCApp = window.RSCApp || {};
     app.updateAdministration?.();
   }
 
+  const accountPermissions = ["view", "control", "config", "stats", "console", "admin"];
+  let accountPanelRequest = 0;
+
+  function bytesToBase64(bytes) {
+    let binary = "";
+    bytes.forEach((byte) => {
+      binary += String.fromCharCode(byte);
+    });
+    return btoa(binary);
+  }
+
+  async function derivePasswordHash(password, salt) {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(password),
+      "PBKDF2",
+      false,
+      ["deriveBits"],
+    );
+    const bits = await crypto.subtle.deriveBits(
+      {
+        name: "PBKDF2",
+        salt: encoder.encode(salt),
+        iterations: 310000,
+        hash: "SHA-256",
+      },
+      key,
+      256,
+    );
+    return bytesToBase64(new Uint8Array(bits));
+  }
+
+  async function createPasswordPayload(password) {
+    const saltBytes = new Uint8Array(32);
+    crypto.getRandomValues(saltBytes);
+    const password_salt = bytesToBase64(saltBytes);
+    return {
+      password_salt,
+      password_hash: await derivePasswordHash(password, password_salt),
+    };
+  }
+
+  function selectedPermissions(container) {
+    return Array.from(container.querySelectorAll("input[type='checkbox']:checked")).map(
+      (input) => input.value,
+    );
+  }
+
+  function selectedPermissionDecisions(container) {
+    return Array.from(container.querySelectorAll("select[data-permission]"))
+      .map((select) => ({
+        permission: select.dataset.permission,
+        state: select.value,
+      }))
+      .filter((decision) => decision.permission);
+  }
+
+  function selectedGroups(container) {
+    return Array.from(container.querySelectorAll("input[data-group]:checked")).map(
+      (input) => input.dataset.group,
+    );
+  }
+
+  function decisionState(decisions, permission) {
+    return (
+      (decisions || []).find((decision) => decision.permission === permission)?.state || "default"
+    );
+  }
+
+  function renderDecisionSelect(permission, decisions = []) {
+    const select = document.createElement("select");
+    select.dataset.permission = permission;
+    ["default", "granted", "blocked"].forEach((state) => {
+      const option = document.createElement("option");
+      option.value = state;
+      option.textContent = state[0].toUpperCase() + state.slice(1);
+      select.appendChild(option);
+    });
+    select.value = decisionState(decisions, permission);
+    return select;
+  }
+
+  function renderPermissionPicker(decisions = [], groups = [], availableGroups = []) {
+    const picker = document.createElement("div");
+    const global = document.createElement("div");
+    const serverList = document.createElement("div");
+    const groupList = document.createElement("div");
+    picker.className = "accountPermissionPicker";
+    global.className = "accountPermissionGlobal";
+    accountPermissions.forEach((permission) => {
+      const label = document.createElement("label");
+      label.append(document.createTextNode(permission), renderDecisionSelect(permission, decisions));
+      global.appendChild(label);
+    });
+    groupList.className = "accountGroupPicker";
+    availableGroups.forEach((group) => {
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.dataset.group = group.name;
+      checkbox.checked = groups.includes(group.name);
+      label.append(checkbox, document.createTextNode(group.name));
+      groupList.appendChild(label);
+    });
+    serverList.className = "accountServerPermissionList";
+    (config().servers || []).forEach((server) => {
+      const serverId = server.server_uuid || server.name;
+      if (!serverId || !server.name) return;
+      const row = document.createElement("div");
+      const name = document.createElement("p");
+      row.className = "accountServerPermissionRow";
+      name.textContent = server.name;
+      row.appendChild(name);
+      ["view", "control", "config", "stats", "console"].forEach((permission) => {
+        const value = `server:${serverId}:${permission}`;
+        const label = document.createElement("label");
+        label.append(document.createTextNode(permission), renderDecisionSelect(value, decisions));
+        row.appendChild(label);
+      });
+      serverList.appendChild(row);
+    });
+    picker.append(global, groupList, serverList);
+    return picker;
+  }
+
+  function legacyPermissionsToDecisions(permissions = []) {
+    return permissions.map((permission) => ({ permission, state: "granted" }));
+  }
+
+  function formatRequestedAt(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+  }
+
+  function renderPermissionModelEditor(accounts) {
+    const section = document.createElement("section");
+    const title = document.createElement("h3");
+    const defaultsTitle = document.createElement("p");
+    const defaultPicker = renderPermissionPicker(accounts.default_permissions || [], [], []);
+    const groupsTitle = document.createElement("p");
+    const groupList = document.createElement("div");
+    const newGroupName = document.createElement("input");
+    const addGroup = document.createElement("button");
+    const save = document.createElement("button");
+    const status = document.createElement("p");
+
+    section.className = "accountModelEditor";
+    title.textContent = "Permission Model";
+    defaultsTitle.className = "accountMeta";
+    defaultsTitle.textContent =
+      "Defaults: observers can view servers, stats, and console output; modification/admin permissions are blocked unless granted by user or group.";
+    groupsTitle.className = "accountMeta";
+    groupsTitle.textContent = "Groups";
+    groupList.className = "accountList";
+    status.className = "accountPanelStatus";
+    newGroupName.placeholder = "New group name";
+    addGroup.type = "button";
+    addGroup.textContent = "Add Group";
+    save.type = "button";
+    save.textContent = "Save Permission Model";
+
+    const groups = JSON.parse(JSON.stringify(accounts.groups || []));
+    function drawGroups() {
+      groupList.replaceChildren();
+      groups.forEach((group, index) => {
+        const row = document.createElement("div");
+        const name = document.createElement("input");
+        const picker = renderPermissionPicker(group.permissions || [], [], []);
+        const remove = document.createElement("button");
+        row.className = "accountCard";
+        name.value = group.name;
+        remove.type = "button";
+        remove.textContent = "Remove";
+        name.addEventListener("change", () => {
+          group.name = name.value.trim();
+        });
+        remove.addEventListener("click", () => {
+          groups.splice(index, 1);
+          drawGroups();
+        });
+        row.append(name, picker, remove);
+        groupList.appendChild(row);
+      });
+    }
+    drawGroups();
+
+    addGroup.addEventListener("click", () => {
+      const name = newGroupName.value.trim();
+      if (!name) return;
+      groups.push({ name, permissions: [] });
+      newGroupName.value = "";
+      drawGroups();
+    });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      status.textContent = "";
+      try {
+        const nextGroups = Array.from(groupList.querySelectorAll(".accountCard")).map((row, index) => ({
+          name: row.querySelector("input")?.value.trim() || groups[index]?.name || "",
+          permissions: selectedPermissionDecisions(row),
+        })).filter((group) => group.name);
+        await app.authRequest("/auth/admin/update-permission-model", {
+          default_permissions: selectedPermissionDecisions(defaultPicker),
+          groups: nextGroups,
+        });
+        await refreshAccountAdministration();
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        save.disabled = false;
+      }
+    });
+
+    section.append(
+      title,
+      defaultsTitle,
+      defaultPicker,
+      groupsTitle,
+      groupList,
+      newGroupName,
+      addGroup,
+      save,
+      status,
+    );
+    return section;
+  }
+
+  async function refreshAccountAdministration() {
+    app.updateAdministration?.();
+  }
+
+  async function renderAccountAdministration(panel) {
+    if (!app.hasPermission?.("admin")) {
+      panel.remove();
+      return;
+    }
+    const requestId = ++accountPanelRequest;
+    panel.innerHTML = "<h2>Accounts</h2><p class=\"accountPanelStatus\">Loading accounts...</p>";
+    let accounts;
+    try {
+      accounts = await app.authRequest("/auth/accounts");
+    } catch (error) {
+      panel.innerHTML = "<h2>Accounts</h2>";
+      const status = document.createElement("p");
+      status.className = "accountPanelStatus";
+      status.textContent = error.message;
+      panel.appendChild(status);
+      return;
+    }
+    if (requestId !== accountPanelRequest || !panel.isConnected) return;
+
+    panel.innerHTML = "";
+    const title = document.createElement("h2");
+    const createCard = document.createElement("form");
+    const username = document.createElement("input");
+    const password = document.createElement("input");
+    const repeat = document.createElement("input");
+    const permissions = renderPermissionPicker([], [], accounts.groups || []);
+    const submit = document.createElement("button");
+    const reset = document.createElement("button");
+    const status = document.createElement("p");
+    const requestsTitle = document.createElement("h3");
+    const requests = document.createElement("div");
+    const usersTitle = document.createElement("h3");
+    const users = document.createElement("div");
+
+    title.textContent = "Accounts";
+    createCard.className = "accountCreateCard";
+    username.placeholder = "Username";
+    username.required = true;
+    password.type = "password";
+    password.placeholder = "Password";
+    password.autocomplete = "new-password";
+    password.required = true;
+    repeat.type = "password";
+    repeat.placeholder = "Repeat password";
+    repeat.autocomplete = "new-password";
+    repeat.required = true;
+    submit.type = "submit";
+    submit.textContent = "Create Account";
+    reset.type = "button";
+    reset.className = "accountDangerButton";
+    reset.textContent = "Reset Credential Stores";
+    status.className = "accountPanelStatus";
+    createCard.append(username, password, repeat, permissions, submit, reset, status);
+    createCard.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      status.textContent = "";
+      submit.disabled = true;
+      try {
+        if (password.value.length < 8) throw new Error("password must be at least 8 characters");
+        if (password.value !== repeat.value) throw new Error("passwords do not match");
+        await app.authRequest("/auth/admin/create-user", {
+          username: username.value.trim(),
+          ...(await createPasswordPayload(password.value)),
+          permission_overrides: selectedPermissionDecisions(permissions),
+          groups: selectedGroups(permissions),
+        });
+        await refreshAccountAdministration();
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        submit.disabled = false;
+      }
+    });
+    reset.addEventListener("click", async () => {
+      const confirmed = window.confirm(
+        "Reset all credential stores, auth users, pending requests, OAuth clients, and active sessions?",
+      );
+      if (!confirmed) return;
+      reset.disabled = true;
+      status.textContent = "";
+      try {
+        await app.authRequest("/auth/admin/reset-credential-stores", {});
+        window.location.reload();
+      } catch (error) {
+        status.textContent = error.message;
+        reset.disabled = false;
+      }
+    });
+
+    requestsTitle.textContent = "Account Requests";
+    requests.className = "accountList";
+    (accounts.requests || []).forEach((request) => {
+      const row = document.createElement("div");
+      const name = document.createElement("p");
+      const requestedAt = document.createElement("p");
+      const picker = renderPermissionPicker([], [], accounts.groups || []);
+      const accept = document.createElement("button");
+      const reject = document.createElement("button");
+      row.className = "accountCard";
+      name.className = "accountName";
+      name.textContent = request.username;
+      requestedAt.className = "accountMeta";
+      requestedAt.textContent = formatRequestedAt(request.requested_at);
+      accept.type = "button";
+      accept.textContent = "Accept";
+      reject.type = "button";
+      reject.textContent = "Reject";
+      accept.addEventListener("click", async () => {
+        accept.disabled = true;
+        try {
+          await app.authRequest("/auth/admin/approve-request", {
+            username: request.username,
+            permission_overrides: selectedPermissionDecisions(picker),
+            groups: selectedGroups(picker),
+          });
+          await refreshAccountAdministration();
+        } catch (error) {
+          requestedAt.textContent = error.message;
+        } finally {
+          accept.disabled = false;
+        }
+      });
+      reject.addEventListener("click", async () => {
+        reject.disabled = true;
+        try {
+          await app.authRequest("/auth/admin/reject-request", { username: request.username });
+          await refreshAccountAdministration();
+        } catch (error) {
+          requestedAt.textContent = error.message;
+        } finally {
+          reject.disabled = false;
+        }
+      });
+      row.append(name, requestedAt, picker, accept, reject);
+      requests.appendChild(row);
+    });
+    if (!requests.childElementCount) {
+      const empty = document.createElement("p");
+      empty.className = "accountPanelStatus";
+      empty.textContent = "No pending account requests";
+      requests.appendChild(empty);
+    }
+
+    usersTitle.textContent = "Existing Accounts";
+    users.className = "accountList";
+    (accounts.users || []).forEach((user) => {
+      const row = document.createElement("div");
+      const name = document.createElement("p");
+      const meta = document.createElement("p");
+      const picker = renderPermissionPicker(
+        user.permission_overrides?.length
+          ? user.permission_overrides
+          : legacyPermissionsToDecisions(user.permissions || []),
+        user.groups || [],
+        accounts.groups || [],
+      );
+      const save = document.createElement("button");
+      row.className = "accountCard";
+      name.className = "accountName";
+      name.textContent = user.username;
+      meta.className = "accountMeta";
+      meta.textContent = `effective: ${(user.effective_permissions || []).join(", ") || "no permissions"}${
+        user.password_required ? " - password needed" : ""
+      }${user.disabled ? " - disabled" : ""}`;
+      save.type = "button";
+      save.textContent = "Save";
+      save.addEventListener("click", async () => {
+        save.disabled = true;
+        try {
+          await app.authRequest("/auth/admin/update-user-permissions", {
+            username: user.username,
+            permission_overrides: selectedPermissionDecisions(picker),
+            groups: selectedGroups(picker),
+          });
+          await refreshAccountAdministration();
+        } catch (error) {
+          meta.textContent = error.message;
+        } finally {
+          save.disabled = false;
+        }
+      });
+      row.append(name, meta, picker, save);
+      users.appendChild(row);
+    });
+
+    panel.append(
+      title,
+      renderPermissionModelEditor(accounts),
+      createCard,
+      requestsTitle,
+      requests,
+      usersTitle,
+      users,
+    );
+  }
+
   function minecraftServers(cfg) {
     return Array.isArray(cfg.servers)
       ? cfg.servers.filter((server) => server.specialized_server_type === "Minecraft")
@@ -448,6 +877,7 @@ window.RSCApp = window.RSCApp || {};
     const root = document.querySelector(".administrationDashboard");
     if (!root) return null;
     root.innerHTML = `
+      <section class="accountAdminPanel"></section>
       <section class="adminToolbar">
         <input class="adminNewGroupName" placeholder="New group name">
         <button type="button" class="adminCreateGroup">Create Group</button>
@@ -475,6 +905,7 @@ window.RSCApp = window.RSCApp || {};
     const root = ensureMarkup();
     if (!root) return;
     const cfg = config();
+    renderAccountAdministration(root.querySelector(".accountAdminPanel"));
     const groups = root.querySelector(".adminGroups");
     groupList(cfg).forEach((group) => renderGroup(groups, group, cfg));
   };

@@ -45,25 +45,23 @@ window.RSCApp = window.RSCApp || {};
     return null;
   }
 
-  function requestThemesList() {
-    if (!app.state.socket || app.state.socket.readyState !== WebSocket.OPEN) {
+  async function requestThemesList() {
+    if (app.state.socket && app.state.socket.readyState === WebSocket.OPEN) {
+      app.state.socket.send(JSON.stringify({ type: RSC.messages.getThemesList }));
+      return true;
+    }
+    try {
+      const response = await fetch("/themes", { credentials: "same-origin" });
+      if (!response.ok) return false;
+      const payload = await response.json();
+      handleThemesList(payload.themes);
+      return true;
+    } catch (error) {
       return false;
     }
-    app.state.socket.send(JSON.stringify({ type: RSC.messages.getThemesList }));
-    return true;
   }
 
-  function requestThemeCSS(themeName) {
-    if (!app.state.socket || app.state.socket.readyState !== WebSocket.OPEN) {
-      return false;
-    }
-    app.state.socket.send(
-      JSON.stringify({
-        type: RSC.messages.getThemeCSS,
-        theme_name: themeName,
-      }),
-    );
-
+  function setThemeLoading(visible) {
     let loadingIndicator = document.querySelector(RSC.selectors.themeLoading);
     if (!loadingIndicator) {
       const themeContainer = document.querySelector(RSC.selectors.themeContainer);
@@ -75,43 +73,73 @@ window.RSCApp = window.RSCApp || {};
     }
 
     if (loadingIndicator) {
-      loadingIndicator.style.display = "inline";
+      loadingIndicator.style.display = visible ? "inline" : "none";
       loadingIndicator.textContent = RSC.uiText.loading;
     }
-    return true;
+  }
+
+  async function requestThemeCSS(themeName) {
+    if (app.state.socket && app.state.socket.readyState === WebSocket.OPEN) {
+      app.state.socket.send(
+        JSON.stringify({
+          type: RSC.messages.getThemeCSS,
+          theme_name: themeName,
+        }),
+      );
+      setThemeLoading(true);
+      return true;
+    }
+    setThemeLoading(true);
+    try {
+      const response = await fetch(`/themes/css?theme_name=${encodeURIComponent(themeName)}`, {
+        credentials: "same-origin",
+      });
+      if (!response.ok) return false;
+      const payload = await response.json();
+      applyTheme(payload.theme_name || themeName, payload.css || "");
+      return true;
+    } catch (error) {
+      setThemeLoading(false);
+      return false;
+    }
+  }
+
+  function themeMount() {
+    const authScreen = document.getElementById("auth-screen");
+    const authMount = document.getElementById("auth-theme-mount");
+    if (authScreen && !authScreen.hidden && authMount) return authMount;
+    return document.querySelector(RSC.selectors.innerTopBar);
   }
 
   function ensureThemeSelector() {
     let themeSelector = document.getElementById(RSC.selectors.themeSelectorId);
-    if (themeSelector) {
-      themeSelector.replaceChildren();
-      return themeSelector;
+    let themeContainer = document.querySelector(RSC.selectors.themeContainer);
+    const mount = themeMount();
+    if (!themeSelector) {
+      themeSelector = document.createElement("select");
+      themeSelector.id = RSC.selectors.themeSelectorId;
+      themeSelector.addEventListener("change", function () {
+        requestThemeCSS(this.value);
+      });
     }
-
-    themeSelector = document.createElement("select");
-    themeSelector.id = RSC.selectors.themeSelectorId;
-
-    const innerTopBar = document.querySelector(RSC.selectors.innerTopBar);
-    if (!innerTopBar) return themeSelector;
-
-    const themeContainer = document.createElement("div");
-    themeContainer.className = RSC.selectors.themeContainer.slice(1);
-    const label = document.createElement("label");
-    label.htmlFor = RSC.selectors.themeSelectorId;
-    label.textContent = "Theme";
-    themeContainer.appendChild(label);
-    themeContainer.appendChild(themeSelector);
-
-    const loadingIndicator = document.createElement("span");
-    loadingIndicator.className = RSC.selectors.themeLoading.slice(1);
-    loadingIndicator.textContent = RSC.uiText.loading;
-    loadingIndicator.style.display = "none";
-    themeContainer.appendChild(loadingIndicator);
-
-    innerTopBar.appendChild(themeContainer);
-    themeSelector.addEventListener("change", function () {
-      requestThemeCSS(this.value);
-    });
+    if (!themeContainer) {
+      themeContainer = document.createElement("div");
+      themeContainer.className = RSC.selectors.themeContainer.slice(1);
+      const label = document.createElement("label");
+      label.htmlFor = RSC.selectors.themeSelectorId;
+      label.textContent = "Theme";
+      themeContainer.appendChild(label);
+      themeContainer.appendChild(themeSelector);
+      const loadingIndicator = document.createElement("span");
+      loadingIndicator.className = RSC.selectors.themeLoading.slice(1);
+      loadingIndicator.textContent = RSC.uiText.loading;
+      loadingIndicator.style.display = "none";
+      themeContainer.appendChild(loadingIndicator);
+    }
+    if (mount && themeContainer.parentElement !== mount) {
+      mount.appendChild(themeContainer);
+    }
+    themeSelector.replaceChildren();
     return themeSelector;
   }
 

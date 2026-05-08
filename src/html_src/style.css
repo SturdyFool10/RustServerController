@@ -37,6 +37,89 @@ body {
     overflow: hidden;
     background-color: var(--pageBG);
 }
+.authScreen {
+    position: fixed;
+    inset: 0;
+    z-index: 5000;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    box-sizing: border-box;
+    background: var(--bg-dark);
+    color: var(--text);
+}
+.authScreen[hidden] {
+    display: none;
+}
+.authPanel {
+    width: min(420px, 100%);
+    display: grid;
+    gap: 14px;
+    padding: 22px;
+    box-sizing: border-box;
+    border: 1px solid var(--border-muted);
+    border-radius: 8px;
+    background: var(--bg);
+}
+.authTitle {
+    margin: 0;
+    text-align: left;
+    color: var(--text);
+    font-size: 1.4rem;
+}
+.authThemeMount {
+    min-height: 34px;
+}
+.authThemeMount .theme-container {
+    margin: 0;
+}
+.authThemeMount #theme-selector {
+    width: 100%;
+}
+.authMode,
+.authError {
+    margin: 0;
+    color: var(--text-muted);
+}
+.authError {
+    min-height: 1.2em;
+    color: var(--danger);
+}
+.authField {
+    display: grid;
+    gap: 6px;
+    color: var(--text-muted);
+}
+.authField input,
+.authSubmit,
+.authSecondary {
+    min-height: 38px;
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    background: var(--bg-dark);
+    color: var(--text);
+    padding: 8px 10px;
+    box-sizing: border-box;
+}
+.authSubmit {
+    cursor: pointer;
+    background: var(--primary);
+    color: var(--bg-dark);
+    border-color: var(--primary);
+}
+.authSubmit:disabled {
+    cursor: wait;
+    opacity: 0.7;
+}
+.authSecondary {
+    cursor: pointer;
+    background: transparent;
+    color: var(--text);
+}
+.authSecondary:disabled {
+    cursor: wait;
+    opacity: 0.7;
+}
 .menu-icon {
     position: relative;
     top: 0px;
@@ -526,6 +609,9 @@ h1 {
 .statsDetails {
     margin-top: 12px;
 }
+.statsDistribution {
+    min-height: 0;
+}
 .statsColumns h2,
 .statsDetails h2 {
     margin: 0 0 10px;
@@ -543,7 +629,8 @@ h1 {
 .statsColumns li,
 .statsSpecializationDetails li,
 .statsServerData li,
-.statsArchivedServerData li {
+.statsArchivedServerData li,
+.statsOnlinePlayers li {
     display: flex;
     justify-content: space-between;
     gap: 12px;
@@ -551,6 +638,36 @@ h1 {
     color: var(--text);
     font-size: 0.95rem;
     line-height: 1.25;
+}
+.statsSpecializationDistribution li {
+    display: grid;
+    gap: 8px;
+    padding: 10px 0 0;
+    border-top: 1px solid var(--border-muted);
+}
+.statsSpecializationDistribution li:first-child {
+    border-top: 0;
+    padding-top: 0;
+}
+.statsDistributionHeader {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+}
+.statsDistributionHeader span {
+    color: var(--text);
+}
+.statsDistributionHeader strong {
+    color: var(--primary);
+}
+.statsOnlinePlayers strong {
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+.statsOnlinePlayers span {
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
 }
 .statsSpecializationDetails li,
 .statsSpecializationSettings li,
@@ -640,6 +757,26 @@ h1 {
 .statsPlayerActivity span {
     color: var(--text-muted);
     overflow-wrap: anywhere;
+}
+.statsPlayerHoursChart {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+.statsPlayerHoursChart > div {
+    display: grid;
+    grid-template-columns: minmax(110px, 0.35fr) minmax(140px, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    min-width: 0;
+}
+.statsPlayerHoursChart span:first-child {
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+.statsPlayerHoursChart strong {
+    color: var(--secondary);
+    font-size: 0.86rem;
 }
 .statsTimeframes {
     display: grid;
@@ -819,6 +956,7 @@ h1 {
     margin: 90px auto 32px;
     color: var(--text);
 }
+.accountAdminPanel,
 .adminToolbar,
 .adminGroup {
     background: var(--bg-dark);
@@ -831,6 +969,105 @@ h1 {
     display: flex;
     gap: 10px;
     margin-bottom: 12px;
+}
+.accountAdminPanel {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.accountAdminPanel h2,
+.accountAdminPanel h3 {
+    margin: 0;
+    color: var(--secondary);
+    font-weight: 500;
+}
+.accountCreateCard,
+.accountCard {
+    display: grid;
+    grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(220px, 1.4fr) auto auto;
+    gap: 8px;
+    align-items: center;
+}
+.accountCard {
+    grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) minmax(220px, 1.4fr) auto auto;
+    padding: 10px;
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    background: var(--bg);
+}
+.accountList {
+    display: grid;
+    gap: 8px;
+}
+.accountName,
+.accountMeta,
+.accountPanelStatus {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+.accountName {
+    color: var(--text);
+}
+.accountMeta,
+.accountPanelStatus {
+    color: var(--text-muted);
+}
+.accountPermissionPicker {
+    display: grid;
+    gap: 8px;
+    color: var(--text-muted);
+}
+.accountPermissionGlobal {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.accountGroupPicker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.accountPermissionPicker label {
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+}
+.accountPermissionPicker select {
+    min-height: 30px;
+}
+.accountModelEditor {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    background: var(--bg);
+}
+.accountServerPermissionList {
+    display: grid;
+    gap: 6px;
+    max-height: 180px;
+    overflow: auto;
+}
+.accountServerPermissionRow {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) repeat(5, auto);
+    gap: 8px;
+    align-items: center;
+    padding: 6px;
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    background: var(--bg);
+}
+.accountServerPermissionRow p {
+    margin: 0;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+.accountDangerButton {
+    border-color: var(--danger) !important;
+    color: var(--danger) !important;
+    background: transparent !important;
 }
 .adminGroups,
 .adminEntryList {
@@ -920,6 +1157,8 @@ h1 {
 .adminEntryList {
     margin-bottom: 8px;
 }
+.accountAdminPanel input,
+.accountAdminPanel button,
 .adminToolbar input,
 .adminGroup input,
 .adminToolbar button,
@@ -933,6 +1172,7 @@ h1 {
     box-sizing: border-box;
     min-width: 0;
 }
+.accountAdminPanel button,
 .adminToolbar button,
 .adminGroup button {
     cursor: pointer;
@@ -943,6 +1183,8 @@ h1 {
         width: min(100% - 24px, 1200px);
     }
     .adminToolbar,
+    .accountCreateCard,
+    .accountCard,
     .adminGroupHeader,
     .adminEntryPrimary,
     .adminEntrySecondary,
