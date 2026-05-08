@@ -83,10 +83,10 @@ window.RSCApp = window.RSCApp || {};
   }
 
   function selectedPermissionDecisions(container) {
-    return Array.from(container.querySelectorAll("select[data-permission]"))
+    return Array.from(container.querySelectorAll("[data-permission-state]"))
       .map((select) => ({
         permission: select.dataset.permission,
-        state: select.value,
+        state: select.dataset.permissionState,
       }))
       .filter((decision) => decision.permission);
   }
@@ -104,16 +104,30 @@ window.RSCApp = window.RSCApp || {};
   }
 
   function renderDecisionSelect(permission, decisions = []) {
-    const select = document.createElement("select");
-    select.dataset.permission = permission;
+    const control = document.createElement("div");
+    control.className = "permissionDecisionControl";
+    control.dataset.permission = permission;
+    control.dataset.permissionState = decisionState(decisions, permission);
     ["default", "granted", "blocked"].forEach((state) => {
-      const option = document.createElement("option");
-      option.value = state;
-      option.textContent = state[0].toUpperCase() + state.slice(1);
-      select.appendChild(option);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `permissionDecision permissionDecision-${state}`;
+      button.dataset.state = state;
+      button.textContent = state[0].toUpperCase();
+      button.title = state[0].toUpperCase() + state.slice(1);
+      button.setAttribute("aria-label", `${permission} ${button.title}`);
+      button.addEventListener("click", () => {
+        control.dataset.permissionState = state;
+        control.querySelectorAll(".permissionDecision").forEach((item) => {
+          item.classList.toggle("selected", item.dataset.state === state);
+        });
+      });
+      control.appendChild(button);
     });
-    select.value = decisionState(decisions, permission);
-    return select;
+    control.querySelectorAll(".permissionDecision").forEach((item) => {
+      item.classList.toggle("selected", item.dataset.state === control.dataset.permissionState);
+    });
+    return control;
   }
 
   function renderPermissionPicker(decisions = [], groups = [], availableGroups = []) {
@@ -125,6 +139,7 @@ window.RSCApp = window.RSCApp || {};
     global.className = "accountPermissionGlobal";
     accountPermissions.forEach((permission) => {
       const label = document.createElement("label");
+      label.className = "permissionDecisionLabel";
       label.append(document.createTextNode(permission), renderDecisionSelect(permission, decisions));
       global.appendChild(label);
     });
@@ -150,6 +165,7 @@ window.RSCApp = window.RSCApp || {};
       ["view", "control", "config", "stats", "console"].forEach((permission) => {
         const value = `server:${serverId}:${permission}`;
         const label = document.createElement("label");
+        label.className = "permissionDecisionLabel";
         label.append(document.createTextNode(permission), renderDecisionSelect(value, decisions));
         row.appendChild(label);
       });
@@ -184,9 +200,9 @@ window.RSCApp = window.RSCApp || {};
     title.textContent = "Permission Model";
     defaultsTitle.className = "accountMeta";
     defaultsTitle.textContent =
-      "Defaults: observers can view servers, stats, and console output; modification/admin permissions are blocked unless granted by user or group.";
+      "Hierarchy: User overrides -> Groups -> Defaults. Defaults make observers: view, stats, and console are granted; modification/admin permissions are blocked.";
     groupsTitle.className = "accountMeta";
-    groupsTitle.textContent = "Groups";
+    groupsTitle.textContent = "Groups inherit from Defaults unless a group grants or blocks a permission.";
     groupList.className = "accountList";
     status.className = "accountPanelStatus";
     newGroupName.placeholder = "New group name";

@@ -443,6 +443,31 @@ mod tests {
         assert!(!permissions.contains(&PERMISSION_STATS.to_string()));
         assert!(!permissions.contains(&PERMISSION_CONTROL.to_string()));
     }
+
+    #[test]
+    fn actor_cannot_assign_or_edit_above_effective_permissions() {
+        let actor = AuthSession {
+            username: "limited-admin".to_string(),
+            permissions: vec![PERMISSION_ADMIN.to_string(), PERMISSION_VIEW.to_string()],
+            expires_at: Utc::now(),
+            password_required: false,
+        };
+        assert!(can_assign_permission(&actor, PERMISSION_VIEW));
+        assert!(can_assign_permission(&actor, PERMISSION_CONTROL));
+
+        let actor = AuthSession {
+            username: "limited-manager".to_string(),
+            permissions: vec![PERMISSION_VIEW.to_string()],
+            expires_at: Utc::now(),
+            password_required: false,
+        };
+        assert!(can_assign_permission(&actor, PERMISSION_VIEW));
+        assert!(!can_assign_permission(&actor, PERMISSION_CONTROL));
+        assert!(!can_assign_permission_set(
+            &actor,
+            &[PERMISSION_VIEW.to_string(), PERMISSION_CONTROL.to_string()]
+        ));
+    }
 }
 
 #[derive(Serialize)]
@@ -844,6 +869,59 @@ async fn require_admin(headers: &HeaderMap, state: &AppState) -> Result<AuthSess
     Ok(session)
 }
 
+fn can_assign_permission(actor: &AuthSession, permission: &str) -> bool {
+    if permissions_include(&actor.permissions, PERMISSION_ADMIN) {
+        return true;
+    }
+    if actor.permissions.iter().any(|item| item == permission) {
+        return true;
+    }
+    let Some((_, base_permission)) = permission.rsplit_once(':') else {
+        return false;
+    };
+    permissions_include(&actor.permissions, base_permission)
+}
+
+fn can_assign_decisions(actor: &AuthSession, decisions: &[PermissionDecisionConfig]) -> bool {
+    decisions.iter().all(|decision| {
+        decision.state != PermissionDecisionState::Granted
+            || can_assign_permission(actor, &decision.permission)
+    })
+}
+
+fn can_assign_permission_set(actor: &AuthSession, permissions: &[String]) -> bool {
+    permissions
+        .iter()
+        .all(|permission| can_assign_permission(actor, permission))
+}
+
+fn can_assign_groups(actor: &AuthSession, groups: &[String], config: &Config) -> bool {
+    groups.iter().all(|group_name| {
+        let Some(group) = config
+            .auth
+            .groups
+            .iter()
+            .find(|group| group.name == *group_name)
+        else {
+            return false;
+        };
+        can_assign_decisions(actor, &group.permissions)
+    })
+}
+
+fn candidate_user_with_permissions(
+    current: &AuthUserConfig,
+    permissions: Vec<String>,
+    permission_overrides: Vec<PermissionDecisionConfig>,
+    groups: Vec<String>,
+) -> AuthUserConfig {
+    let mut candidate = current.clone();
+    candidate.permissions = permissions;
+    candidate.permission_overrides = permission_overrides;
+    candidate.groups = groups;
+    candidate
+}
+
 pub async fn auth_status(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     let config = state.config.lock().await;
     let setup_required = !auth_users_exist(&config);
@@ -1178,9 +1256,10 @@ pub async fn create_user(
     headers: HeaderMap,
     Json(request): Json<CreateUserRequest>,
 ) -> impl IntoResponse {
-    if let Err(response) = require_admin(&headers, &state).await {
-        return response;
-    }
+    let actor = match require_admin(&headers, &state).await {
+        Ok(session) => session,
+        Err(response) => return response,
+    };
     let username = request.username.trim().to_string();
     if !validate_username(&username)
         || request.password_salt.trim().is_empty()
@@ -1204,6 +1283,45 @@ pub async fn create_user(
         request.permission_overrides
     };
     let groups = request.groups;
+    {
+        let config = state.config.lock().await;
+        if !can_assign_decisions(&actor, &permission_overrides)
+            || !can_assign_groups(&actor, &groups, &config)
+        {
+            return error_response(
+                StatusCode::FORBIDDEN,
+                "cannot grant permissions above your effective permissions",
+            );
+        }
+        let Some(current_user) = config
+            .auth
+            .users
+            .iter()
+            .find(|user| user.username == username)
+        else {
+            return error_response(StatusCode::NOT_FOUND, "user not found");
+        };
+        let current_effective = resolved_permissions(&config, current_user);
+        if !can_assign_permission_set(&actor, &current_effective) {
+            return error_response(
+                StatusCode::FORBIDDEN,
+                "cannot edit a user with effective permissions above your own",
+            );
+        }
+        let candidate = candidate_user_with_permissions(
+            current_user,
+            permissions.clone(),
+            permission_overrides.clone(),
+            groups.clone(),
+        );
+        let candidate_effective = resolved_permissions(&config, &candidate);
+        if !can_assign_permission_set(&actor, &candidate_effective) {
+            return error_response(
+                StatusCode::FORBIDDEN,
+                "cannot assign effective permissions above your own",
+            );
+        }
+    }
     let user = AuthUserConfig {
         username: username.clone(),
         password_salt: request.password_salt,
@@ -1214,6 +1332,16 @@ pub async fn create_user(
         disabled: false,
         password_required: false,
     };
+    {
+        let config = state.config.lock().await;
+        let effective_permissions = resolved_permissions(&config, &user);
+        if !can_assign_permission_set(&actor, &effective_permissions) {
+            return error_response(
+                StatusCode::FORBIDDEN,
+                "cannot create a user with effective permissions above your own",
+            );
+        }
+    }
 
     let config_snapshot = {
         let mut config = state.config.lock().await;
@@ -1262,9 +1390,10 @@ pub async fn approve_account_request(
     headers: HeaderMap,
     Json(request): Json<AccountDecisionRequest>,
 ) -> impl IntoResponse {
-    if let Err(response) = require_admin(&headers, &state).await {
-        return response;
-    }
+    let actor = match require_admin(&headers, &state).await {
+        Ok(session) => session,
+        Err(response) => return response,
+    };
     let username = request.username.trim().to_string();
     let permissions = request.permissions.unwrap_or_default();
     let permission_overrides = if request.permission_overrides.is_empty() {
@@ -1279,6 +1408,37 @@ pub async fn approve_account_request(
         request.permission_overrides
     };
     let groups = request.groups;
+    {
+        let config = state.config.lock().await;
+        if !can_assign_decisions(&actor, &permission_overrides)
+            || !can_assign_groups(&actor, &groups, &config)
+        {
+            return error_response(
+                StatusCode::FORBIDDEN,
+                "cannot grant permissions above your effective permissions",
+            );
+        }
+    }
+    {
+        let config = state.config.lock().await;
+        let candidate = AuthUserConfig {
+            username: username.clone(),
+            password_salt: String::new(),
+            password_hash: String::new(),
+            permissions: permissions.clone(),
+            permission_overrides: permission_overrides.clone(),
+            groups: groups.clone(),
+            disabled: false,
+            password_required: true,
+        };
+        let effective_permissions = resolved_permissions(&config, &candidate);
+        if !can_assign_permission_set(&actor, &effective_permissions) {
+            return error_response(
+                StatusCode::FORBIDDEN,
+                "cannot approve a user with effective permissions above your own",
+            );
+        }
+    }
 
     let config_snapshot = {
         let mut config = state.config.lock().await;
@@ -1361,13 +1521,25 @@ pub async fn update_user_permissions(
     headers: HeaderMap,
     Json(request): Json<UpdateUserPermissionsRequest>,
 ) -> impl IntoResponse {
-    if let Err(response) = require_admin(&headers, &state).await {
-        return response;
-    }
+    let actor = match require_admin(&headers, &state).await {
+        Ok(session) => session,
+        Err(response) => return response,
+    };
     let username = request.username.trim().to_string();
     let permissions = request.permissions;
     let permission_overrides = request.permission_overrides;
     let groups = request.groups;
+    {
+        let config = state.config.lock().await;
+        if !can_assign_decisions(&actor, &permission_overrides)
+            || !can_assign_groups(&actor, &groups, &config)
+        {
+            return error_response(
+                StatusCode::FORBIDDEN,
+                "cannot grant permissions above your effective permissions",
+            );
+        }
+    }
     let config_user = {
         let mut config = state.config.lock().await;
         let Some(user) = config
@@ -1434,8 +1606,46 @@ pub async fn update_permission_model(
     headers: HeaderMap,
     Json(request): Json<UpdatePermissionModelRequest>,
 ) -> impl IntoResponse {
-    if let Err(response) = require_admin(&headers, &state).await {
-        return response;
+    let actor = match require_admin(&headers, &state).await {
+        Ok(session) => session,
+        Err(response) => return response,
+    };
+
+    if !can_assign_decisions(&actor, &request.default_permissions)
+        || !request
+            .groups
+            .iter()
+            .all(|group| can_assign_decisions(&actor, &group.permissions))
+    {
+        return error_response(
+            StatusCode::FORBIDDEN,
+            "cannot grant permissions above your effective permissions",
+        );
+    }
+
+    {
+        let config = state.config.lock().await;
+        for user in &config.auth.users {
+            let effective_permissions = resolved_permissions(&config, user);
+            if !can_assign_permission_set(&actor, &effective_permissions) {
+                return error_response(
+                    StatusCode::FORBIDDEN,
+                    "cannot modify the permission model while it affects users above your permissions",
+                );
+            }
+        }
+        let mut candidate = config.clone();
+        candidate.auth.default_permissions = request.default_permissions.clone();
+        candidate.auth.groups = request.groups.clone();
+        for user in &candidate.auth.users {
+            let effective_permissions = resolved_permissions(&candidate, user);
+            if !can_assign_permission_set(&actor, &effective_permissions) {
+                return error_response(
+                    StatusCode::FORBIDDEN,
+                    "permission model would create users above your permissions",
+                );
+            }
+        }
     }
 
     let config_snapshot = {
