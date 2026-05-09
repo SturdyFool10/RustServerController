@@ -10,6 +10,8 @@ pub mod terraria;
 pub mod vintage_story;
 
 use crate::controlled_program::ControlledProgramInstance;
+use crate::controller_plugins::{PluginCatalog, PluginSpecializationManifest};
+use crate::wasm_plugins::WasmPluginRuntime;
 use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::Arc;
@@ -99,7 +101,7 @@ pub trait ServerSpecialization: Send + Sync {
 }
 
 /// Factory type for creating new specialization instances.
-pub type SpecializationFactory = fn() -> Box<dyn ServerSpecialization>;
+pub type SpecializationFactory = Arc<dyn Fn() -> Box<dyn ServerSpecialization> + Send + Sync>;
 
 /// Thread-safe registry for all available specializations.
 pub struct SpecializationRegistry {
@@ -133,6 +135,10 @@ impl SpecializationRegistry {
     /// * `factory` - The factory function to create new instances.
     pub fn register(&self, name: &str, factory: SpecializationFactory) {
         self.map.insert(name.to_string(), factory);
+    }
+
+    pub fn register_fn(&self, name: &str, factory: fn() -> Box<dyn ServerSpecialization>) {
+        self.register(name, Arc::new(factory));
     }
 
     /// Get a new instance of a specialization by name.
@@ -192,10 +198,141 @@ fn merge_json_defaults(configured: &mut Value, defaults: &Value) {
 /// Registers "Minecraft" and "Terraria" specializations by default.
 pub fn init_builtin_registry() -> Arc<SpecializationRegistry> {
     let registry = Arc::new(SpecializationRegistry::new());
-    registry.register("Minecraft", minecraft::factory);
-    registry.register("Terraria", terraria::factory);
-    registry.register("VintageStory", vintage_story::vintage_story_factory);
+    registry.register_fn("Minecraft", minecraft::factory);
+    registry.register_fn("Terraria", terraria::factory);
+    registry.register_fn("VintageStory", vintage_story::vintage_story_factory);
     registry
+}
+
+pub fn register_plugin_specializations(registry: &SpecializationRegistry, catalog: &PluginCatalog) {
+    for plugin in &catalog.plugins {
+        let wasm = plugin
+            .backend
+            .wasm_module
+            .as_ref()
+            .and_then(|module| WasmPluginRuntime::load(plugin.root_dir.join(module)));
+        for specialization in &plugin.specializations {
+            let plugin_id = plugin.id.clone();
+            let manifest = specialization.clone();
+            let wasm = wasm.clone();
+            registry.register(
+                &specialization.name,
+                Arc::new(move || {
+                    Box::new(ManifestSpecialization {
+                        plugin_id: plugin_id.clone(),
+                        manifest: manifest.clone(),
+                        wasm: wasm.clone(),
+                        status_update: false,
+                    })
+                }),
+            );
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ManifestSpecialization {
+    plugin_id: String,
+    manifest: PluginSpecializationManifest,
+    wasm: Option<WasmPluginRuntime>,
+    status_update: bool,
+}
+
+impl ServerSpecialization for ManifestSpecialization {
+    fn init(&mut self, instance: &mut ControlledProgramInstance) {
+        instance.specialized_server_info = Some(self.get_status());
+        self.status_update = true;
+    }
+
+    fn has_status_update(&self) -> bool {
+        self.status_update
+    }
+
+    fn set_status_update_sent(&mut self) {
+        self.status_update = false;
+    }
+
+    fn parse_output(
+        &mut self,
+        line: String,
+        instance: &mut ControlledProgramInstance,
+    ) -> Option<String> {
+        if let Some(wasm) = &self.wasm {
+            let input = serde_json::json!({
+                "plugin_id": self.plugin_id,
+                "specialization": self.manifest.name,
+                "server": instance.name,
+                "server_uuid": instance.server_uuid,
+                "line": line.clone(),
+                "options": instance.specialization_options,
+            });
+            if let Some(value) = wasm.call_json_hook("rsc_parse_output", &input) {
+                self.status_update = value
+                    .get("status_update")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(self.status_update);
+                if let Some(status) = value.get("status").cloned() {
+                    instance.specialized_server_info = Some(status);
+                }
+                return match value.get("line") {
+                    Some(Value::Null) => None,
+                    Some(Value::String(line)) => Some(line.clone()),
+                    _ => Some(line),
+                };
+            }
+        }
+        Some(line)
+    }
+
+    fn get_status(&self) -> serde_json::Value {
+        if let Some(wasm) = &self.wasm {
+            let input = serde_json::json!({
+                "plugin_id": self.plugin_id,
+                "specialization": self.manifest.name,
+            });
+            if let Some(status) = wasm.call_json_hook("rsc_status", &input) {
+                return status;
+            }
+        }
+        serde_json::json!({
+            "plugin_id": self.plugin_id,
+            "specialization": self.manifest.name,
+            "display_name": if self.manifest.display_name.is_empty() {
+                self.manifest.name.as_str()
+            } else {
+                self.manifest.display_name.as_str()
+            },
+            "description": self.manifest.description,
+            "status": self.manifest.status,
+        })
+    }
+
+    fn get_stats(&self) -> serde_json::Value {
+        if let Some(wasm) = &self.wasm {
+            let input = serde_json::json!({
+                "plugin_id": self.plugin_id,
+                "specialization": self.manifest.name,
+            });
+            if let Some(stats) = wasm.call_json_hook("rsc_stats", &input) {
+                return stats;
+            }
+        }
+        self.manifest.stats.clone()
+    }
+
+    fn default_options(&self) -> serde_json::Value {
+        if let Some(wasm) = &self.wasm {
+            let input = serde_json::json!({
+                "plugin_id": self.plugin_id,
+                "specialization": self.manifest.name,
+                "manifest_defaults": self.manifest.default_options,
+            });
+            if let Some(defaults) = wasm.call_json_hook("rsc_default_options", &input) {
+                return defaults;
+            }
+        }
+        self.manifest.default_options.clone()
+    }
 }
 
 #[cfg(test)]

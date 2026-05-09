@@ -48,6 +48,54 @@ window.RSCApp = window.RSCApp || {};
     Minecraft: new MinecraftSpecialization(),
     VintageStory: new VintageStorySpecialization(),
   };
+  const loadedPluginAssets = new Set();
+
+  app.registerServerSpecialization = function (name, specialization) {
+    if (!name || !specialization || typeof specialization.updateUI !== "function") return;
+    specializationRegistry[name] = specialization;
+    app.updateServerInfoSpecializations?.();
+  };
+
+  app.loadControllerPlugins = async function () {
+    let catalog;
+    try {
+      catalog = await app.authRequest("/plugins");
+    } catch (error) {
+      console.warn("Failed to load controller plugins:", error);
+      return;
+    }
+    for (const plugin of catalog.plugins || []) {
+      for (const style of plugin.frontend?.styles || []) {
+        const href = `/plugins/${encodeURIComponent(plugin.id)}/${style}`;
+        if (loadedPluginAssets.has(href)) continue;
+        loadedPluginAssets.add(href);
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = href;
+        document.head.appendChild(link);
+      }
+      for (const module of plugin.frontend?.modules || []) {
+        const src = `/plugins/${encodeURIComponent(plugin.id)}/${module}`;
+        if (loadedPluginAssets.has(src)) continue;
+        loadedPluginAssets.add(src);
+        await import(src);
+      }
+      for (const specialization of plugin.specializations || []) {
+        if (!specializationRegistry[specialization.name]) {
+          app.registerServerSpecialization(specialization.name, {
+            updateUI(dropdownElement, server) {
+              const serverNameElem = dropdownElement.querySelector(".serverName");
+              if (!serverNameElem) return;
+              const label = specialization.display_name || specialization.name;
+              serverNameElem.textContent = server.active
+                ? `${server.name} (${label})`
+                : `${server.name} ${RSC.uiText.inactiveSuffix}`;
+            },
+          });
+        }
+      }
+    }
+  };
 
   function serverDomKey(serverName) {
     return encodeURIComponent(serverName).replace(/[^a-zA-Z0-9_-]/g, "_");

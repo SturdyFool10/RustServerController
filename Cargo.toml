@@ -55,6 +55,9 @@ pem = "3.0.6"
 
 colored = "3.0.0"
 ring = "0.17.14"
+url = "2.5.4"
+webauthn-rs = "0.6.1-dev"
+wasmtime = "44.0.1"
 
 
 [target.'cfg(target_os = "windows")'.build-dependencies]

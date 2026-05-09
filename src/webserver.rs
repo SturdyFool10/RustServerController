@@ -5,8 +5,8 @@
 use crate::websocket::*;
 use axum::{
     body::Body,
-    extract::{Query, State},
-    http::StatusCode,
+    extract::{Path as AxumPath, Query, State},
+    http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -68,12 +68,42 @@ async fn get_router(_state: AppState) -> Router<AppState> {
         .route("/html/index.js", get(index_js_serve))
         .route("/themes", get(themes_list))
         .route("/themes/css", get(theme_css))
+        .route("/plugins", get(plugins_list))
+        .route("/plugins/{plugin_id}/{*asset}", get(plugin_asset))
         .route("/auth/status", get(crate::auth::auth_status))
+        .route(
+            "/auth/webauthn/settings",
+            get(crate::auth::webauthn_settings),
+        )
         .route("/auth/challenge", post(crate::auth::challenge))
         .route("/auth/login", post(crate::auth::login))
         .route("/auth/setup", post(crate::auth::setup))
         .route("/auth/set-password", post(crate::auth::set_password))
         .route("/auth/request-account", post(crate::auth::request_account))
+        .route(
+            "/auth/webauthn/register/start",
+            post(crate::auth::start_webauthn_registration),
+        )
+        .route(
+            "/auth/webauthn/register/finish",
+            post(crate::auth::finish_webauthn_registration),
+        )
+        .route(
+            "/auth/webauthn/authenticate/start",
+            post(crate::auth::start_webauthn_authentication),
+        )
+        .route(
+            "/auth/webauthn/authenticate/finish",
+            post(crate::auth::finish_webauthn_authentication),
+        )
+        .route(
+            "/auth/webauthn/credentials",
+            get(crate::auth::list_webauthn_credentials),
+        )
+        .route(
+            "/auth/webauthn/credentials/delete",
+            post(crate::auth::delete_webauthn_credential),
+        )
         .route("/auth/accounts", get(crate::auth::list_accounts))
         .route("/auth/admin/create-user", post(crate::auth::create_user))
         .route(
@@ -101,6 +131,65 @@ async fn get_router(_state: AppState) -> Router<AppState> {
         .route("/ws", get(handle_ws_upgrade))
         .route("/favicon.ico", get(handle_icon));
     router
+}
+
+async fn load_plugin_catalog(state: &AppState) -> crate::controller_plugins::PluginCatalog {
+    let plugins_folder = {
+        let config = state.config.lock().await;
+        config.plugins_folder.clone()
+    };
+    crate::controller_plugins::load_plugin_catalog(plugins_folder.as_deref()).await
+}
+
+async fn plugins_list(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    if crate::auth::auth_session_from_headers(&headers, &state)
+        .await
+        .is_none()
+    {
+        return crate::auth::error_response(StatusCode::UNAUTHORIZED, "authentication required");
+    }
+    let catalog = load_plugin_catalog(&state).await;
+    Json(crate::controller_plugins::public_catalog(&catalog)).into_response()
+}
+
+async fn plugin_asset(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((plugin_id, asset)): AxumPath<(String, String)>,
+) -> impl IntoResponse {
+    if crate::auth::auth_session_from_headers(&headers, &state)
+        .await
+        .is_none()
+    {
+        return crate::auth::error_response(StatusCode::UNAUTHORIZED, "authentication required");
+    }
+    let catalog = load_plugin_catalog(&state).await;
+    let Some((_plugin, path)) =
+        crate::controller_plugins::find_declared_asset(&catalog, &plugin_id, &asset)
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(bytes) = tokio::fs::read(&path).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let content_type = if asset.ends_with(".js") {
+        "text/javascript; charset=utf-8"
+    } else if asset.ends_with(".css") {
+        "text/css; charset=utf-8"
+    } else {
+        "application/octet-stream"
+    };
+    match Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", content_type)
+        .body(Body::from(bytes))
+    {
+        Ok(response) => response,
+        Err(error) => {
+            error!("Failed to build plugin asset response: {}", error);
+            Response::new(Body::empty())
+        }
+    }
 }
 
 #[derive(Deserialize)]

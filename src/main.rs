@@ -24,6 +24,8 @@ mod configuration;
 
 mod controlled_program;
 
+mod controller_plugins;
+
 mod credential_store;
 
 mod files;
@@ -50,6 +52,8 @@ mod websocket;
 
 mod websocket_protocol;
 
+mod wasm_plugins;
+
 /// Main async entry point for the application.
 ///
 /// Loads configuration, initializes logging, ensures the themes directory exists,
@@ -64,7 +68,10 @@ async fn main() -> Result<(), String> {
     // Ensure themes directory exists with default themes
     ensure_themes_directory(&config);
     let (tx, _rx) = broadcast::channel(100);
+    let plugin_catalog =
+        controller_plugins::load_plugin_catalog(config.plugins_folder.as_deref()).await;
     let specialization_registry = specializations::init_builtin_registry();
+    specializations::register_plugin_specializations(&specialization_registry, &plugin_catalog);
     configuration::apply_specialization_option_defaults(&mut config, &specialization_registry);
     configuration::ensure_server_uuids(&mut config);
     configuration::ensure_account_filter_group_uuids(&mut config);

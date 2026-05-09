@@ -1,9 +1,2 @@
-work on making sure that we are using non-blocking variants of things when we can
-add standard statistics in a graphically pleasing way to the stats page
-add specialization statistics so specializations can add information to the stats page
-add specialization settings so specializations can have their own settings
-add statistics to the Minecraft, Terraria, and VintageStory specialization so server operators can see who plays when and how many hours they have played
 WASM API for modifying existing specializations, adding new specializations, and removing specializations, we want to be able to override functionality but be able to call the default implementation so people can just add one thing to something and keep the rest if they want to
-switch to HTTPS and either self-sign certs or use a trusted CA in a way that allows for auto-renewal
-add a secure authentication system which needs to be 0 trust, and support security keys as both a way to auth without username / password(auth purely by security key needs to be a setting), and as a 2FA method(WebAuthn)
-add code to work with free certificate authorities to get signed certificates that browsers will trust automatically, figure out what is involved in the process(let's encrypt?)
+add WebAuthn/security-key authentication as both passwordless login (when enabled) and 2FA for password logins

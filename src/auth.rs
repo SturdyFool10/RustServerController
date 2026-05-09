@@ -4,6 +4,7 @@ use crate::{
         AccountRequestConfig, AuthGroupConfig, AuthUserConfig, Config, PermissionDecisionConfig,
         PermissionDecisionState,
     },
+    credential_store::WebAuthnCredentialRecord,
 };
 use axum::{
     extract::State,
@@ -16,6 +17,11 @@ use ring::{digest, rand};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::Mutex;
+use webauthn_rs::prelude::{
+    CreationChallengeResponse, Passkey, PasskeyAuthentication, PasskeyRegistration,
+    PublicKeyCredential, RegisterPublicKeyCredential, RequestChallengeResponse, Url, Uuid,
+    Webauthn, WebauthnBuilder,
+};
 
 pub const PERMISSION_VIEW: &str = "view";
 pub const PERMISSION_CONTROL: &str = "control";
@@ -52,12 +58,36 @@ pub struct AuthState {
     sessions: Arc<Mutex<HashMap<String, AuthSession>>>,
     challenges: Arc<Mutex<HashMap<String, AuthChallenge>>>,
     oauth_sessions: Arc<Mutex<HashMap<String, OAuthSession>>>,
+    webauthn_registrations: Arc<Mutex<HashMap<String, WebAuthnRegistrationChallenge>>>,
+    webauthn_authentications: Arc<Mutex<HashMap<String, WebAuthnAuthenticationChallenge>>>,
 }
 
 #[derive(Clone, Debug)]
 struct AuthChallenge {
     username: String,
     expires_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug)]
+struct WebAuthnRegistrationChallenge {
+    username: String,
+    label: String,
+    state: PasskeyRegistration,
+    expires_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug)]
+struct WebAuthnAuthenticationChallenge {
+    username: String,
+    state: PasskeyAuthentication,
+    expires_at: DateTime<Utc>,
+    mode: WebAuthnAuthenticationMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WebAuthnAuthenticationMode {
+    Passwordless,
+    SecondFactor,
 }
 
 #[derive(Deserialize)]
@@ -94,6 +124,71 @@ pub struct AuthStatusResponse {
     username: Option<String>,
     permissions: Vec<String>,
     password_required: bool,
+    #[serde(default)]
+    webauthn_required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    webauthn: Option<WebAuthnAuthenticationStartResponse>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WebAuthnSettingsResponse {
+    enabled: bool,
+    passwordless_enabled: bool,
+    require_2fa_for_password_login: bool,
+}
+
+#[derive(Deserialize)]
+pub struct WebAuthnRegistrationStartRequest {
+    label: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WebAuthnRegistrationStartResponse {
+    registration_id: String,
+    public_key: CreationChallengeResponse,
+}
+
+#[derive(Deserialize)]
+pub struct WebAuthnRegistrationFinishRequest {
+    registration_id: String,
+    credential: RegisterPublicKeyCredential,
+}
+
+#[derive(Serialize)]
+pub struct WebAuthnCredentialResponse {
+    id: String,
+    label: String,
+    created_at: String,
+    last_used_at: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct WebAuthnCredentialsResponse {
+    credentials: Vec<WebAuthnCredentialResponse>,
+}
+
+#[derive(Deserialize)]
+pub struct DeleteWebAuthnCredentialRequest {
+    id: String,
+}
+
+#[derive(Deserialize)]
+pub struct WebAuthnAuthenticationStartRequest {
+    username: String,
+    #[serde(default)]
+    second_factor: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WebAuthnAuthenticationStartResponse {
+    authentication_id: String,
+    public_key: RequestChallengeResponse,
+}
+
+#[derive(Deserialize)]
+pub struct WebAuthnAuthenticationFinishRequest {
+    authentication_id: String,
+    credential: PublicKeyCredential,
 }
 
 #[derive(Deserialize)]
@@ -350,6 +445,7 @@ mod tests {
 
         let login_response = login(
             State(state.clone()),
+            HeaderMap::new(),
             Json(LoginRequest {
                 username: "pending_user".to_string(),
                 nonce: challenge.nonce,
@@ -475,7 +571,7 @@ struct AuthErrorResponse {
     error: String,
 }
 
-fn error_response(status: StatusCode, message: &str) -> Response {
+pub(crate) fn error_response(status: StatusCode, message: &str) -> Response {
     (
         status,
         Json(AuthErrorResponse {
@@ -922,6 +1018,215 @@ fn candidate_user_with_permissions(
     candidate
 }
 
+fn origin_from_headers(config: &Config, headers: &HeaderMap) -> Option<String> {
+    if let Some(origin) = config.auth.webauthn.origin.as_deref().map(str::trim) {
+        if !origin.is_empty() {
+            return Some(origin.to_string());
+        }
+    }
+    if let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+    {
+        return Some(origin.to_string());
+    }
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())?
+        .trim();
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|scheme| *scheme == "https" || *scheme == "http")
+        .unwrap_or(if config.web_transport.enable_https {
+            "https"
+        } else {
+            "http"
+        });
+    Some(format!("{}://{}", scheme, host))
+}
+
+fn build_webauthn(config: &Config, headers: &HeaderMap) -> Result<Webauthn, Response> {
+    let Some(origin_text) = origin_from_headers(config, headers) else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "WebAuthn origin could not be determined",
+        ));
+    };
+    let origin = Url::parse(&origin_text).map_err(|_| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "WebAuthn origin must be an absolute URL",
+        )
+    })?;
+    let rp_id = config
+        .auth
+        .webauthn
+        .relying_party_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .or_else(|| origin.domain())
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "WebAuthn requires a configured relying_party_id for this origin",
+            )
+        })?;
+    WebauthnBuilder::new(rp_id, &origin)
+        .map(|builder| {
+            builder
+                .rp_name(&config.auth.webauthn.relying_party_name)
+                .allow_any_port(true)
+        })
+        .and_then(|builder| builder.build())
+        .map_err(|error| {
+            tracing::warn!("Invalid WebAuthn configuration: {}", error);
+            error_response(StatusCode::BAD_REQUEST, "invalid WebAuthn configuration")
+        })
+}
+
+fn stable_user_uuid(username: &str) -> Uuid {
+    let hash = digest::digest(&digest::SHA256, username.as_bytes());
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&hash.as_ref()[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x50;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{:02x}", byte)).collect()
+}
+
+fn passkeys_for_user(state: &AppState, username: &str) -> Vec<(WebAuthnCredentialRecord, Passkey)> {
+    state
+        .credentials
+        .webauthn_credentials(username)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|record| {
+            serde_json::from_value::<Passkey>(record.passkey.clone())
+                .ok()
+                .map(|passkey| (record, passkey))
+        })
+        .collect()
+}
+
+async fn start_webauthn_challenge_for_user(
+    state: &AppState,
+    headers: &HeaderMap,
+    username: String,
+    mode: WebAuthnAuthenticationMode,
+) -> Result<WebAuthnAuthenticationStartResponse, Response> {
+    let webauthn = {
+        let config = state.config.lock().await;
+        if !config.auth.webauthn.enabled {
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                "WebAuthn is disabled",
+            ));
+        }
+        if mode == WebAuthnAuthenticationMode::Passwordless
+            && !config.auth.webauthn.passwordless_enabled
+        {
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                "passwordless WebAuthn is disabled",
+            ));
+        }
+        if !config
+            .auth
+            .users
+            .iter()
+            .any(|user| !user.disabled && user.username == username)
+        {
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid username or security key",
+            ));
+        }
+        build_webauthn(&config, headers)?
+    };
+    let passkeys = passkeys_for_user(state, &username)
+        .into_iter()
+        .map(|(_, passkey)| passkey)
+        .collect::<Vec<_>>();
+    if passkeys.is_empty() {
+        return Err(error_response(
+            StatusCode::UNAUTHORIZED,
+            "invalid username or security key",
+        ));
+    }
+    let (public_key, authentication) =
+        webauthn
+            .start_passkey_authentication(&passkeys)
+            .map_err(|error| {
+                tracing::warn!("Failed to start WebAuthn authentication: {}", error);
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "failed to start WebAuthn authentication",
+                )
+            })?;
+    let authentication_id = uuid::Uuid::new_v4().to_string();
+    state.auth.webauthn_authentications.lock().await.insert(
+        authentication_id.clone(),
+        WebAuthnAuthenticationChallenge {
+            username,
+            state: authentication,
+            expires_at: Utc::now() + Duration::seconds(CHALLENGE_TTL_SECONDS),
+            mode,
+        },
+    );
+    Ok(WebAuthnAuthenticationStartResponse {
+        authentication_id,
+        public_key,
+    })
+}
+
+async fn issue_browser_session(
+    state: AppState,
+    cookie: String,
+    expires_at: DateTime<Utc>,
+    user_meta: AuthUserConfig,
+    permissions: Vec<String>,
+) -> Response {
+    let session = AuthSession {
+        username: user_meta.username,
+        permissions,
+        expires_at,
+        password_required: user_meta.password_required,
+    };
+    let token = uuid::Uuid::new_v4().to_string();
+    state
+        .auth
+        .sessions
+        .lock()
+        .await
+        .insert(token.clone(), session.clone());
+
+    let mut headers = HeaderMap::new();
+    if let Ok(value) = set_cookie(&cookie, &token, expires_at).parse() {
+        headers.insert(header::SET_COOKIE, value);
+    }
+    (
+        headers,
+        Json(AuthStatusResponse {
+            authenticated: true,
+            setup_required: false,
+            username: Some(session.username),
+            permissions: session.permissions,
+            password_required: session.password_required,
+            webauthn_required: false,
+            webauthn: None,
+        }),
+    )
+        .into_response()
+}
+
 pub async fn auth_status(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     let config = state.config.lock().await;
     let setup_required = !auth_users_exist(&config);
@@ -934,6 +1239,8 @@ pub async fn auth_status(State(state): State<AppState>, headers: HeaderMap) -> i
             username: Some(session.username),
             permissions: session.permissions,
             password_required: session.password_required,
+            webauthn_required: false,
+            webauthn: None,
         })
         .into_response()
     } else {
@@ -943,9 +1250,329 @@ pub async fn auth_status(State(state): State<AppState>, headers: HeaderMap) -> i
             username: None,
             permissions: vec![],
             password_required: false,
+            webauthn_required: false,
+            webauthn: None,
         })
         .into_response()
     }
+}
+
+pub async fn webauthn_settings(State(state): State<AppState>) -> impl IntoResponse {
+    let config = state.config.lock().await;
+    Json(WebAuthnSettingsResponse {
+        enabled: config.auth.webauthn.enabled,
+        passwordless_enabled: config.auth.webauthn.passwordless_enabled,
+        require_2fa_for_password_login: config.auth.webauthn.require_2fa_for_password_login,
+    })
+    .into_response()
+}
+
+pub async fn start_webauthn_registration(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<WebAuthnRegistrationStartRequest>,
+) -> impl IntoResponse {
+    let Some(session) = session_from_headers(&headers, &state).await else {
+        return error_response(StatusCode::UNAUTHORIZED, "authentication required");
+    };
+    if session.password_required {
+        return error_response(StatusCode::FORBIDDEN, "password setup required first");
+    }
+
+    let (webauthn, existing) = {
+        let config = state.config.lock().await;
+        if !config.auth.webauthn.enabled {
+            return error_response(StatusCode::FORBIDDEN, "WebAuthn is disabled");
+        }
+        let webauthn = match build_webauthn(&config, &headers) {
+            Ok(webauthn) => webauthn,
+            Err(response) => return response,
+        };
+        let existing = state
+            .credentials
+            .webauthn_credentials(&session.username)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|record| serde_json::from_value::<Passkey>(record.passkey).ok())
+            .map(|passkey| passkey.cred_id().clone())
+            .collect::<Vec<_>>();
+        (webauthn, existing)
+    };
+
+    let label = request
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .unwrap_or("Security key")
+        .chars()
+        .take(80)
+        .collect::<String>();
+    let user_id = stable_user_uuid(&session.username);
+    let (public_key, registration) = match webauthn.start_passkey_registration(
+        user_id,
+        &session.username,
+        &session.username,
+        Some(existing),
+    ) {
+        Ok(challenge) => challenge,
+        Err(error) => {
+            tracing::warn!("Failed to start WebAuthn registration: {}", error);
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "failed to start WebAuthn registration",
+            );
+        }
+    };
+    let registration_id = uuid::Uuid::new_v4().to_string();
+    state.auth.webauthn_registrations.lock().await.insert(
+        registration_id.clone(),
+        WebAuthnRegistrationChallenge {
+            username: session.username,
+            label,
+            state: registration,
+            expires_at: Utc::now() + Duration::seconds(CHALLENGE_TTL_SECONDS),
+        },
+    );
+
+    Json(WebAuthnRegistrationStartResponse {
+        registration_id,
+        public_key,
+    })
+    .into_response()
+}
+
+pub async fn finish_webauthn_registration(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<WebAuthnRegistrationFinishRequest>,
+) -> impl IntoResponse {
+    let Some(session) = session_from_headers(&headers, &state).await else {
+        return error_response(StatusCode::UNAUTHORIZED, "authentication required");
+    };
+    let challenge = state
+        .auth
+        .webauthn_registrations
+        .lock()
+        .await
+        .remove(&request.registration_id);
+    let Some(challenge) = challenge else {
+        return error_response(StatusCode::UNAUTHORIZED, "WebAuthn challenge expired");
+    };
+    if challenge.username != session.username || challenge.expires_at <= Utc::now() {
+        return error_response(StatusCode::UNAUTHORIZED, "WebAuthn challenge expired");
+    }
+    let webauthn = {
+        let config = state.config.lock().await;
+        if !config.auth.webauthn.enabled {
+            return error_response(StatusCode::FORBIDDEN, "WebAuthn is disabled");
+        }
+        match build_webauthn(&config, &headers) {
+            Ok(webauthn) => webauthn,
+            Err(response) => return response,
+        }
+    };
+    let passkey = match webauthn.finish_passkey_registration(&request.credential, &challenge.state)
+    {
+        Ok(passkey) => passkey,
+        Err(error) => {
+            tracing::warn!("Failed to finish WebAuthn registration: {}", error);
+            return error_response(StatusCode::UNAUTHORIZED, "invalid WebAuthn registration");
+        }
+    };
+    let id = bytes_to_hex(passkey.cred_id());
+    let passkey = match serde_json::to_value(passkey) {
+        Ok(passkey) => passkey,
+        Err(error) => {
+            tracing::error!("Failed to encode WebAuthn credential: {}", error);
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to save WebAuthn credential",
+            );
+        }
+    };
+    let record = WebAuthnCredentialRecord {
+        id,
+        username: session.username,
+        label: challenge.label,
+        created_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        last_used_at: None,
+        passkey,
+    };
+    if let Err(error) = state.credentials.upsert_webauthn_credential(&record) {
+        tracing::error!("Failed to save WebAuthn credential: {}", error);
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to save WebAuthn credential",
+        );
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+
+pub async fn list_webauthn_credentials(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let Some(session) = session_from_headers(&headers, &state).await else {
+        return error_response(StatusCode::UNAUTHORIZED, "authentication required");
+    };
+    let credentials = match state.credentials.webauthn_credentials(&session.username) {
+        Ok(credentials) => credentials,
+        Err(error) => {
+            tracing::error!("Failed to list WebAuthn credentials: {}", error);
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to load WebAuthn credentials",
+            );
+        }
+    };
+    Json(WebAuthnCredentialsResponse {
+        credentials: credentials
+            .into_iter()
+            .map(|credential| WebAuthnCredentialResponse {
+                id: credential.id,
+                label: credential.label,
+                created_at: credential.created_at,
+                last_used_at: credential.last_used_at,
+            })
+            .collect(),
+    })
+    .into_response()
+}
+
+pub async fn delete_webauthn_credential(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<DeleteWebAuthnCredentialRequest>,
+) -> impl IntoResponse {
+    let Some(session) = session_from_headers(&headers, &state).await else {
+        return error_response(StatusCode::UNAUTHORIZED, "authentication required");
+    };
+    match state
+        .credentials
+        .delete_webauthn_credential(&session.username, request.id.trim())
+    {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => error_response(StatusCode::NOT_FOUND, "WebAuthn credential not found"),
+        Err(error) => {
+            tracing::error!("Failed to delete WebAuthn credential: {}", error);
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to delete WebAuthn credential",
+            )
+        }
+    }
+}
+
+pub async fn start_webauthn_authentication(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<WebAuthnAuthenticationStartRequest>,
+) -> impl IntoResponse {
+    let username = request.username.trim().to_string();
+    if username.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "username is required");
+    }
+    if request.second_factor {
+        return error_response(
+            StatusCode::FORBIDDEN,
+            "second-factor WebAuthn challenges must start after password verification",
+        );
+    }
+    match start_webauthn_challenge_for_user(
+        &state,
+        &headers,
+        username,
+        WebAuthnAuthenticationMode::Passwordless,
+    )
+    .await
+    {
+        Ok(challenge) => Json(challenge).into_response(),
+        Err(response) => response,
+    }
+}
+
+pub async fn finish_webauthn_authentication(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<WebAuthnAuthenticationFinishRequest>,
+) -> impl IntoResponse {
+    let challenge = state
+        .auth
+        .webauthn_authentications
+        .lock()
+        .await
+        .remove(&request.authentication_id);
+    let Some(challenge) = challenge else {
+        return error_response(StatusCode::UNAUTHORIZED, "WebAuthn challenge expired");
+    };
+    if challenge.expires_at <= Utc::now() {
+        return error_response(StatusCode::UNAUTHORIZED, "WebAuthn challenge expired");
+    }
+    let (webauthn, cookie, expires_at, user_meta, effective_permissions) = {
+        let config = state.config.lock().await;
+        if !config.auth.webauthn.enabled {
+            return error_response(StatusCode::FORBIDDEN, "WebAuthn is disabled");
+        }
+        if challenge.mode == WebAuthnAuthenticationMode::Passwordless
+            && !config.auth.webauthn.passwordless_enabled
+        {
+            return error_response(StatusCode::FORBIDDEN, "passwordless WebAuthn is disabled");
+        }
+        let Some(user_meta) = config
+            .auth
+            .users
+            .iter()
+            .find(|user| !user.disabled && user.username == challenge.username)
+            .cloned()
+        else {
+            return error_response(StatusCode::UNAUTHORIZED, "invalid username or security key");
+        };
+        let webauthn = match build_webauthn(&config, &headers) {
+            Ok(webauthn) => webauthn,
+            Err(response) => return response,
+        };
+        let cookie = cookie_name(&config);
+        let expires_at = Utc::now() + session_ttl(&config);
+        let effective_permissions = resolved_permissions(&config, &user_meta);
+        (
+            webauthn,
+            cookie,
+            expires_at,
+            user_meta,
+            effective_permissions,
+        )
+    };
+    let result = match webauthn.finish_passkey_authentication(&request.credential, &challenge.state)
+    {
+        Ok(result) => result,
+        Err(error) => {
+            tracing::warn!("Failed to finish WebAuthn authentication: {}", error);
+            return error_response(StatusCode::UNAUTHORIZED, "invalid username or security key");
+        }
+    };
+    let mut matched = false;
+    for (mut record, mut passkey) in passkeys_for_user(&state, &challenge.username) {
+        if passkey.update_credential(&result).is_some() {
+            matched = true;
+            record.last_used_at =
+                Some(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+            match serde_json::to_value(passkey) {
+                Ok(value) => {
+                    record.passkey = value;
+                    if let Err(error) = state.credentials.upsert_webauthn_credential(&record) {
+                        tracing::error!("Failed to update WebAuthn credential: {}", error);
+                    }
+                }
+                Err(error) => tracing::error!("Failed to encode WebAuthn credential: {}", error),
+            }
+            break;
+        }
+    }
+    if !matched {
+        return error_response(StatusCode::UNAUTHORIZED, "invalid username or security key");
+    }
+    issue_browser_session(state, cookie, expires_at, user_meta, effective_permissions).await
 }
 
 pub async fn challenge(
@@ -1000,6 +1627,7 @@ pub async fn challenge(
 
 pub async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<LoginRequest>,
 ) -> impl IntoResponse {
     let config = state.config.lock().await;
@@ -1018,6 +1646,8 @@ pub async fn login(
         return error_response(StatusCode::UNAUTHORIZED, "invalid username or password");
     };
     let effective_permissions = resolved_permissions(&config, &user_meta);
+    let require_webauthn_2fa =
+        config.auth.webauthn.enabled && config.auth.webauthn.require_2fa_for_password_login;
     drop(config);
 
     let challenge = state.auth.challenges.lock().await.remove(&request.nonce);
@@ -1047,36 +1677,33 @@ pub async fn login(
             return error_response(StatusCode::UNAUTHORIZED, "invalid username or password");
         }
     }
-    let session = AuthSession {
-        username: user_meta.username.clone(),
-        permissions: effective_permissions,
-        expires_at,
-        password_required: user_meta.password_required,
-    };
-
-    let token = uuid::Uuid::new_v4().to_string();
-    state
-        .auth
-        .sessions
-        .lock()
+    if require_webauthn_2fa
+        && !user_meta.password_required
+        && !passkeys_for_user(&state, &request.username).is_empty()
+    {
+        let webauthn = match start_webauthn_challenge_for_user(
+            &state,
+            &headers,
+            request.username,
+            WebAuthnAuthenticationMode::SecondFactor,
+        )
         .await
-        .insert(token.clone(), session.clone());
-
-    let mut headers = HeaderMap::new();
-    if let Ok(value) = set_cookie(&cookie, &token, expires_at).parse() {
-        headers.insert(header::SET_COOKIE, value);
-    }
-    (
-        headers,
-        Json(AuthStatusResponse {
-            authenticated: true,
+        {
+            Ok(challenge) => challenge,
+            Err(response) => return response,
+        };
+        return Json(AuthStatusResponse {
+            authenticated: false,
             setup_required: false,
-            username: Some(session.username),
-            permissions: session.permissions,
-            password_required: session.password_required,
-        }),
-    )
-        .into_response()
+            username: Some(user_meta.username),
+            permissions: vec![],
+            password_required: false,
+            webauthn_required: true,
+            webauthn: Some(webauthn),
+        })
+        .into_response();
+    }
+    issue_browser_session(state, cookie, expires_at, user_meta, effective_permissions).await
 }
 
 pub async fn setup(
@@ -1165,6 +1792,8 @@ pub async fn setup(
             username: Some(session.username),
             permissions: session.permissions,
             password_required: false,
+            webauthn_required: false,
+            webauthn: None,
         }),
     )
         .into_response()
@@ -1762,6 +2391,8 @@ pub async fn set_password(
         username: Some(session.username),
         permissions: session.permissions,
         password_required: false,
+        webauthn_required: false,
+        webauthn: None,
     })
     .into_response()
 }

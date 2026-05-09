@@ -33,6 +33,57 @@ $(document).ready(async function () {
       .join("");
   }
 
+  function base64UrlToArrayBuffer(value) {
+    const padded = `${value}${"=".repeat((4 - (value.length % 4)) % 4)}`;
+    const binary = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes.buffer;
+  }
+
+  function arrayBufferToBase64Url(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    bytes.forEach((byte) => {
+      binary += String.fromCharCode(byte);
+    });
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+
+  function prepareWebAuthnCreateOptions(challenge) {
+    const options = challenge.publicKey;
+    options.challenge = base64UrlToArrayBuffer(options.challenge);
+    options.user.id = base64UrlToArrayBuffer(options.user.id);
+    (options.excludeCredentials || []).forEach((credential) => {
+      credential.id = base64UrlToArrayBuffer(credential.id);
+    });
+    return { publicKey: options };
+  }
+
+  function prepareWebAuthnRequestOptions(challenge) {
+    const options = challenge.publicKey;
+    options.challenge = base64UrlToArrayBuffer(options.challenge);
+    (options.allowCredentials || []).forEach((credential) => {
+      credential.id = base64UrlToArrayBuffer(credential.id);
+    });
+    return { publicKey: options, mediation: challenge.mediation };
+  }
+
+  function credentialToJson(credential) {
+    const response = {};
+    for (const key of Object.keys(credential.response)) {
+      const value = credential.response[key];
+      response[key] = value instanceof ArrayBuffer ? arrayBufferToBase64Url(value) : value;
+    }
+    return {
+      id: credential.id,
+      rawId: arrayBufferToBase64Url(credential.rawId),
+      response,
+      type: credential.type,
+      extensions: credential.getClientExtensionResults(),
+    };
+  }
+
   async function derivePasswordHash(password, salt) {
     const encoder = new TextEncoder();
     const key = await crypto.subtle.importKey(
@@ -94,6 +145,19 @@ $(document).ready(async function () {
     };
   }
 
+  async function finishWebAuthnAuthentication(challenge) {
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+      throw new Error("security keys are not available in this browser");
+    }
+    const credential = await navigator.credentials.get(
+      prepareWebAuthnRequestOptions(challenge.public_key || challenge.publicKey),
+    );
+    return app.authRequest("/auth/webauthn/authenticate/finish", {
+      authentication_id: challenge.authentication_id || challenge.authenticationId,
+      credential: credentialToJson(credential),
+    });
+  }
+
   function validatePasswordPair(password, repeated) {
     if (password.length < 8) {
       throw new Error("password must be at least 8 characters");
@@ -117,8 +181,32 @@ $(document).ready(async function () {
     els.passwordRepeatField.hidden = !setup;
     els.passwordRepeat.required = setup;
     els.requestAccount.hidden = setup;
+    let passkey = document.getElementById("auth-passkey");
+    if (!passkey) {
+      passkey = document.createElement("button");
+      passkey.id = "auth-passkey";
+      passkey.type = "button";
+      passkey.textContent = "Sign in with security key";
+      els.requestAccount.parentElement.insertBefore(passkey, els.requestAccount);
+    }
+    passkey.hidden = setup;
     els.error.textContent = "";
     app.requestThemesList?.();
+    passkey.onclick = async function () {
+      passkey.disabled = true;
+      els.error.textContent = "";
+      try {
+        const username = els.username.value.trim();
+        if (!username) throw new Error("username is required");
+        const challenge = await app.authRequest("/auth/webauthn/authenticate/start", { username });
+        const auth = await finishWebAuthnAuthentication(challenge);
+        await startAuthenticatedApp(auth);
+      } catch (error) {
+        els.error.textContent = error.message;
+      } finally {
+        passkey.disabled = false;
+      }
+    };
     els.requestAccount.onclick = async function () {
       els.requestAccount.disabled = true;
       els.error.textContent = "";
@@ -149,6 +237,11 @@ $(document).ready(async function () {
         const auth = await app.authRequest(setup ? "/auth/setup" : "/auth/login", payload);
         els.password.value = "";
         els.passwordRepeat.value = "";
+        if (auth.webauthn_required && auth.webauthn) {
+          const updatedAuth = await finishWebAuthnAuthentication(auth.webauthn);
+          await startAuthenticatedApp(updatedAuth);
+          return;
+        }
         if (auth.password_required) {
           showSetPassword(auth);
           return;
@@ -268,6 +361,7 @@ $(document).ready(async function () {
   async function startAuthenticatedApp(auth) {
     app.state.auth = auth;
     hideLogin();
+    await app.loadControllerPlugins?.();
     openSocket();
     app.initConfigEditor();
     app.initNavigation();

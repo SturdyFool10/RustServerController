@@ -1,6 +1,7 @@
 use crate::configuration::{AuthUserConfig, OAuthClientConfig};
 use ring::{aead, rand};
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -11,6 +12,16 @@ use std::{
 pub struct CredentialStore {
     db_path: PathBuf,
     key: Arc<[u8; 32]>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WebAuthnCredentialRecord {
+    pub id: String,
+    pub username: String,
+    pub label: String,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+    pub passkey: serde_json::Value,
 }
 
 impl CredentialStore {
@@ -111,9 +122,53 @@ impl CredentialStore {
         self.with_connection(|connection| {
             connection.execute_batch(
                 "DELETE FROM auth_users;
-                 DELETE FROM oauth_clients;",
+                 DELETE FROM oauth_clients;
+                 DELETE FROM webauthn_credentials;",
             )?;
             Ok(())
+        })
+    }
+
+    pub fn upsert_webauthn_credential(
+        &self,
+        credential: &WebAuthnCredentialRecord,
+    ) -> rusqlite::Result<()> {
+        let payload = self.encrypt_json(credential)?;
+        self.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO webauthn_credentials (id, username, payload)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(id) DO UPDATE SET username = excluded.username, payload = excluded.payload",
+                params![credential.id, credential.username, payload],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn webauthn_credentials(
+        &self,
+        username: &str,
+    ) -> rusqlite::Result<Vec<WebAuthnCredentialRecord>> {
+        let payloads = self.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT payload FROM webauthn_credentials WHERE username = ?1 ORDER BY created_at ASC",
+            )?;
+            let rows = statement.query_map(params![username], |row| row.get::<_, Vec<u8>>(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        })?;
+        payloads
+            .into_iter()
+            .map(|payload| self.decrypt_json(&payload))
+            .collect()
+    }
+
+    pub fn delete_webauthn_credential(&self, username: &str, id: &str) -> rusqlite::Result<bool> {
+        self.with_connection(|connection| {
+            let changed = connection.execute(
+                "DELETE FROM webauthn_credentials WHERE username = ?1 AND id = ?2",
+                params![username, id],
+            )?;
+            Ok(changed > 0)
         })
     }
 
@@ -217,6 +272,11 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
         );
         CREATE TABLE IF NOT EXISTS oauth_clients (
             client_id TEXT PRIMARY KEY NOT NULL,
+            payload BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS webauthn_credentials (
+            id TEXT PRIMARY KEY NOT NULL,
+            username TEXT NOT NULL,
             payload BLOB NOT NULL
         );",
     )

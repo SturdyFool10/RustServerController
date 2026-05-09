@@ -75,6 +75,8 @@ pub struct AuthConfig {
     pub account_requests: Vec<AccountRequestConfig>,
     #[serde(default)]
     pub oauth_clients: Vec<OAuthClientConfig>,
+    #[serde(default)]
+    pub webauthn: WebAuthnConfig,
 }
 
 fn default_auth_cookie_name() -> String {
@@ -123,8 +125,42 @@ impl Default for AuthConfig {
             groups: vec![],
             account_requests: vec![],
             oauth_clients: vec![],
+            webauthn: WebAuthnConfig::default(),
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct WebAuthnConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub passwordless_enabled: bool,
+    #[serde(default)]
+    pub require_2fa_for_password_login: bool,
+    #[serde(default = "default_webauthn_rp_name")]
+    pub relying_party_name: String,
+    #[serde(default)]
+    pub relying_party_id: Option<String>,
+    #[serde(default)]
+    pub origin: Option<String>,
+}
+
+impl Default for WebAuthnConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            passwordless_enabled: false,
+            require_2fa_for_password_login: false,
+            relying_party_name: default_webauthn_rp_name(),
+            relying_party_id: None,
+            origin: None,
+        }
+    }
+}
+
+fn default_webauthn_rp_name() -> String {
+    "Rust Server Controller".to_string()
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -405,6 +441,10 @@ pub struct Config {
     /// Optional path to the themes folder.
     pub themes_folder: Option<String>,
 
+    /// Optional path to installable controller plugins.
+    #[serde(default = "default_plugins_folder")]
+    pub plugins_folder: Option<String>,
+
     #[serde(default)]
     pub web_transport: WebTransportConfig,
 
@@ -428,6 +468,8 @@ impl Config {
         self.servers = new_config.servers.clone();
 
         self.themes_folder = new_config.themes_folder.clone();
+
+        self.plugins_folder = new_config.plugins_folder.clone();
 
         self.web_transport = new_config.web_transport.clone();
 
@@ -489,6 +531,8 @@ impl Default for Config {
 
             themes_folder: Some("themes".to_string()),
 
+            plugins_folder: default_plugins_folder(),
+
             web_transport: WebTransportConfig::default(),
 
             auth: AuthConfig::default(),
@@ -496,6 +540,10 @@ impl Default for Config {
             minecraft_account_filter_detail_groups: vec![],
         }
     }
+}
+
+fn default_plugins_folder() -> Option<String> {
+    Some("controller_plugins".to_string())
 }
 
 #[cfg(test)]
