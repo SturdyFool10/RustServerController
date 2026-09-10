@@ -281,6 +281,149 @@ window.RSCApp = window.RSCApp || {};
     app.updateAdministration?.();
   }
 
+  function normalizeAccessAddress(value) {
+    return String(value || "")
+      .trim()
+      .replace(/\.$/, "")
+      .toLowerCase();
+  }
+
+  let networkPanelRequest = 0;
+
+  async function renderNetworkPanel(panel) {
+    if (!panel || !app.hasPermission?.("admin")) {
+      panel?.remove();
+      return;
+    }
+    const requestId = ++networkPanelRequest;
+    panel.innerHTML = "<h2>HTTPS / Let's Encrypt</h2><p class=\"accountPanelStatus\">Loading network status...</p>";
+    let status;
+    try {
+      status = await app.authRequest("/auth/admin/network-status");
+    } catch (error) {
+      panel.innerHTML = "<h2>HTTPS / Let's Encrypt</h2>";
+      const errorStatus = document.createElement("p");
+      errorStatus.className = "accountPanelStatus";
+      errorStatus.textContent = error.message;
+      panel.appendChild(errorStatus);
+      return;
+    }
+    if (requestId !== networkPanelRequest || !panel.isConnected) return;
+
+    const rawTargets = Array.isArray(config().web_transport?.acme?.certificate_targets)
+      ? config().web_transport.acme.certificate_targets
+      : [];
+    const removed = new Set(
+      rawTargets
+        .filter((entry) => entry.trim().startsWith("-"))
+        .map((entry) => normalizeAccessAddress(entry.trim().slice(1))),
+    );
+    const extras = rawTargets.filter((entry) => !entry.trim().startsWith("-"));
+
+    panel.innerHTML = "";
+    const title = document.createElement("h2");
+    const acmeStatus = document.createElement("p");
+    const acmeTargets = document.createElement("p");
+    const addressesTitle = document.createElement("h3");
+    const addressesHint = document.createElement("p");
+    const addressList = document.createElement("div");
+    const extraTitle = document.createElement("h3");
+    const extraHint = document.createElement("p");
+    const extraTargets = document.createElement("textarea");
+    const save = document.createElement("button");
+    const saveStatus = document.createElement("p");
+
+    title.textContent = "HTTPS / Let's Encrypt";
+    acmeStatus.className = "accountMeta";
+    acmeStatus.textContent = status.acme_enabled
+      ? `ACME is enabled (${status.acme_production ? "production" : "staging"})${
+          status.acme_contact_email ? `, contact: ${status.acme_contact_email}` : ""
+        }${status.acme_cache_present ? ", certificate cache present" : ", no cached certificate yet"}`
+      : "ACME (Let's Encrypt) is disabled; self-signed certificates are used for HTTPS instead.";
+    acmeTargets.className = "accountMeta";
+    acmeTargets.textContent = status.acme_effective_targets?.length
+      ? `Certificates will be requested for: ${status.acme_effective_targets.join(", ")}`
+      : "No public domains configured; Let's Encrypt certificates cannot be issued yet.";
+
+    addressesTitle.textContent = "Detected access addresses";
+    addressesHint.className = "accountMeta";
+    addressesHint.textContent =
+      "These addresses were detected on this machine's network interfaces. Click one to exclude it from the web UI's expected access addresses.";
+    addressList.className = "networkAddressList";
+    (status.detected_addresses || []).forEach((address) => {
+      const normalized = normalizeAccessAddress(address);
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "networkAddressChip";
+      chip.classList.add(removed.has(normalized) ? "networkAddressChip-excluded" : "networkAddressChip-included");
+      chip.textContent = address;
+      chip.title = removed.has(normalized)
+        ? "Excluded - click to include"
+        : "Included - click to exclude";
+      chip.addEventListener("click", () => {
+        const cfg = cloneConfig();
+        cfg.web_transport = cfg.web_transport || {};
+        cfg.web_transport.acme = cfg.web_transport.acme || {};
+        const targets = Array.isArray(cfg.web_transport.acme.certificate_targets)
+          ? cfg.web_transport.acme.certificate_targets.slice()
+          : [];
+        const withoutThis = targets.filter(
+          (entry) => normalizeAccessAddress(entry.replace(/^-/, "")) !== normalized,
+        );
+        if (!removed.has(normalized)) {
+          withoutThis.push(`-${address}`);
+        }
+        cfg.web_transport.acme.certificate_targets = withoutThis;
+        sendConfig(cfg);
+      });
+      addressList.appendChild(chip);
+    });
+    if (!(status.detected_addresses || []).length) {
+      const empty = document.createElement("p");
+      empty.className = "accountPanelStatus";
+      empty.textContent = "No network addresses were detected.";
+      addressList.appendChild(empty);
+    }
+
+    extraTitle.textContent = "Additional domains";
+    extraHint.className = "accountMeta";
+    extraHint.textContent =
+      "Add public domain names the web UI should also be reachable at (one per line), for example when using a real domain with Let's Encrypt.";
+    extraTargets.rows = 3;
+    extraTargets.placeholder = "example.com";
+    extraTargets.value = extras.join("\n");
+    save.type = "button";
+    save.textContent = "Save Additional Domains";
+    saveStatus.className = "accountPanelStatus";
+    save.addEventListener("click", () => {
+      const cfg = cloneConfig();
+      cfg.web_transport = cfg.web_transport || {};
+      cfg.web_transport.acme = cfg.web_transport.acme || {};
+      const removalEntries = rawTargets.filter((entry) => entry.trim().startsWith("-"));
+      const newExtras = extraTargets.value
+        .split(/[\n,]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      cfg.web_transport.acme.certificate_targets = [...removalEntries, ...newExtras];
+      sendConfig(cfg);
+      saveStatus.textContent = "Saved";
+    });
+
+    panel.append(
+      title,
+      acmeStatus,
+      acmeTargets,
+      addressesTitle,
+      addressesHint,
+      addressList,
+      extraTitle,
+      extraHint,
+      extraTargets,
+      save,
+      saveStatus,
+    );
+  }
+
   async function renderAccountAdministration(panel) {
     if (!app.hasPermission?.("admin")) {
       panel.remove();
@@ -894,6 +1037,7 @@ window.RSCApp = window.RSCApp || {};
     if (!root) return null;
     root.innerHTML = `
       <section class="accountAdminPanel"></section>
+      <section class="accountAdminPanel networkTlsPanel"></section>
       <section class="adminToolbar">
         <input class="adminNewGroupName" placeholder="New group name">
         <button type="button" class="adminCreateGroup">Create Group</button>
@@ -922,6 +1066,7 @@ window.RSCApp = window.RSCApp || {};
     if (!root) return;
     const cfg = config();
     renderAccountAdministration(root.querySelector(".accountAdminPanel"));
+    renderNetworkPanel(root.querySelector(".networkTlsPanel"));
     const groups = root.querySelector(".adminGroups");
     groupList(cfg).forEach((group) => renderGroup(groups, group, cfg));
   };

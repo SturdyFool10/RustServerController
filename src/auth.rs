@@ -932,10 +932,22 @@ pub async fn oauth_session_from_headers(
         .cloned()
 }
 
+fn insecure_mode_session() -> AuthSession {
+    AuthSession {
+        username: "insecure-mode".to_string(),
+        permissions: vec![PERMISSION_ADMIN.to_string()],
+        expires_at: Utc::now() + Duration::days(365),
+        password_required: false,
+    }
+}
+
 pub async fn auth_session_from_headers(
     headers: &HeaderMap,
     state: &AppState,
 ) -> Option<AuthSession> {
+    if state.config.lock().await.insecure_mode {
+        return Some(insecure_mode_session());
+    }
     if let Some(session) = session_from_headers(headers, state).await {
         return Some(session);
     }
@@ -1230,7 +1242,22 @@ async fn issue_browser_session(
 pub async fn auth_status(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     let config = state.config.lock().await;
     let setup_required = !auth_users_exist(&config);
+    let insecure_mode = config.insecure_mode;
     drop(config);
+
+    if insecure_mode {
+        let session = insecure_mode_session();
+        return Json(AuthStatusResponse {
+            authenticated: true,
+            setup_required: false,
+            username: Some(session.username),
+            permissions: session.permissions,
+            password_required: false,
+            webauthn_required: false,
+            webauthn: None,
+        })
+        .into_response();
+    }
 
     if let Some(session) = session_from_headers(&headers, &state).await {
         Json(AuthStatusResponse {
@@ -1255,6 +1282,53 @@ pub async fn auth_status(State(state): State<AppState>, headers: HeaderMap) -> i
         })
         .into_response()
     }
+}
+
+#[derive(Serialize)]
+pub struct NetworkStatusResponse {
+    detected_addresses: Vec<String>,
+    effective_access_addresses: Vec<String>,
+    acme_enabled: bool,
+    acme_production: bool,
+    acme_contact_email: Option<String>,
+    acme_certificate_targets: Vec<String>,
+    acme_effective_targets: Vec<String>,
+    acme_cache_present: bool,
+}
+
+pub async fn network_status(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    if let Err(response) = require_admin(&headers, &state).await {
+        return response;
+    }
+
+    let config = state.config.lock().await.clone();
+    let detected_addresses = crate::configuration::detect_local_addresses();
+    let effective_access_addresses =
+        crate::configuration::effective_access_addresses(&config, &detected_addresses);
+    let acme_effective_targets = crate::configuration::effective_certificate_targets(&config);
+    let cache_dir = config
+        .web_transport
+        .acme
+        .cache_dir
+        .clone()
+        .unwrap_or_else(|| "controller_data/acme".to_string());
+
+    let acme_cache_present = match tokio::fs::read_dir(&cache_dir).await {
+        Ok(mut entries) => entries.next_entry().await.ok().flatten().is_some(),
+        Err(_) => false,
+    };
+
+    Json(NetworkStatusResponse {
+        detected_addresses,
+        effective_access_addresses,
+        acme_enabled: config.web_transport.acme.enabled,
+        acme_production: config.web_transport.acme.production,
+        acme_contact_email: config.web_transport.acme.contact_email.clone(),
+        acme_certificate_targets: config.web_transport.acme.certificate_targets.clone(),
+        acme_effective_targets,
+        acme_cache_present,
+    })
+    .into_response()
 }
 
 pub async fn webauthn_settings(State(state): State<AppState>) -> impl IntoResponse {

@@ -88,6 +88,13 @@ async fn main() -> Result<(), String> {
                 )
             })?;
     }
+    if config.insecure_mode {
+        warn!(
+            "insecure_mode is enabled: all authentication and permissions are DISABLED. \
+             Every request is treated as a fully-privileged administrator. \
+             Only use this on a trusted, isolated network."
+        );
+    }
     let slave: bool = config.slave;
     let mut app_state =
         app_state::AppState::new(tx, config, specialization_registry, credential_store);

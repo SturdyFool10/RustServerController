@@ -36,6 +36,9 @@ pub async fn start_slave(_state: AppState) {
     let mut address = config.interface.clone();
     address += (":".to_owned() + config.port.clone().as_str()).as_str();
     let transport = config.web_transport.clone();
+    let detected_addresses = crate::configuration::detect_local_addresses();
+    let access_addresses =
+        crate::configuration::effective_access_addresses(&config, &detected_addresses);
     let cert_targets = effective_certificate_targets(&config);
     drop(config);
 
@@ -44,8 +47,16 @@ pub async fn start_slave(_state: AppState) {
         let https_router = router.clone();
         let https_transport = transport.clone();
         let https_targets = cert_targets.clone();
+        let https_access_addresses = access_addresses.clone();
         tokio::spawn(async move {
-            start_https_server(https_state, https_router, https_transport, https_targets).await;
+            start_https_server(
+                https_state,
+                https_router,
+                https_transport,
+                https_targets,
+                https_access_addresses,
+            )
+            .await;
         });
     }
 

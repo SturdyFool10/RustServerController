@@ -1192,6 +1192,7 @@ h1 {
 }
 .accountAdminPanel input,
 .accountAdminPanel button,
+.accountAdminPanel textarea,
 .adminToolbar input,
 .adminGroup input,
 .adminToolbar button,
@@ -1204,6 +1205,34 @@ h1 {
     padding: 6px 8px;
     box-sizing: border-box;
     min-width: 0;
+}
+.accountAdminPanel textarea {
+    width: 100%;
+    font-family: inherit;
+    resize: vertical;
+}
+.networkAddressList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.networkAddressChip {
+    min-height: 30px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border-muted);
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+.networkAddressChip-included {
+    background: var(--success);
+    border-color: var(--success);
+    color: var(--bg-dark);
+}
+.networkAddressChip-excluded {
+    background: var(--bg);
+    color: var(--text-muted);
+    text-decoration: line-through;
 }
 .accountAdminPanel button,
 .adminToolbar button,

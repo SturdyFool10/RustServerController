@@ -265,18 +265,80 @@ impl Default for AcmeCertificateConfig {
     }
 }
 
-pub fn effective_certificate_targets(config: &Config) -> Vec<String> {
-    let mut targets: Vec<String> = config
-        .web_transport
-        .acme
-        .certificate_targets
+/// Enumerates non-loopback IP addresses of the machine's network interfaces,
+/// for use as suggested defaults for where the web UI is reachable.
+pub fn detect_local_addresses() -> Vec<String> {
+    let mut addresses = vec!["localhost".to_string()];
+    if let Ok(interfaces) = if_addrs::get_if_addrs() {
+        for interface in interfaces {
+            if interface.is_loopback() {
+                continue;
+            }
+            addresses.push(interface.ip().to_string());
+        }
+    }
+    addresses.sort();
+    addresses.dedup();
+    addresses
+}
+
+fn normalize_access_address(value: &str) -> String {
+    value.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// Let's Encrypt's standard ACME profile can only issue certificates for DNS
+/// names, never for bare IP addresses (public or private), so any such entry
+/// (and `localhost`, which is never publicly resolvable) must be excluded from
+/// the ACME target list.
+fn is_ip_address_or_localhost(value: &str) -> bool {
+    value == "localhost" || value.parse::<std::net::IpAddr>().is_ok()
+}
+
+/// Combines auto-detected local network addresses with the manually configured
+/// `certificate_targets` list, which doubles as the "addresses the web UI is
+/// expected to be reachable at". Entries prefixed with `-` remove a detected
+/// address from the effective set instead of adding a new target.
+pub fn effective_access_addresses(config: &Config, detected: &[String]) -> Vec<String> {
+    let mut removed: Vec<String> = Vec::new();
+    let mut added: Vec<String> = Vec::new();
+    for entry in &config.web_transport.acme.certificate_targets {
+        let trimmed = entry.trim();
+        if let Some(address) = trimmed.strip_prefix('-') {
+            let normalized = normalize_access_address(address);
+            if !normalized.is_empty() {
+                removed.push(normalized);
+            }
+        } else {
+            let normalized = normalize_access_address(trimmed);
+            if !normalized.is_empty() {
+                added.push(normalized);
+            }
+        }
+    }
+
+    let mut targets: Vec<String> = detected
         .iter()
-        .map(|target| target.trim().trim_end_matches('.').to_ascii_lowercase())
-        .filter(|target| !target.is_empty())
+        .map(|address| normalize_access_address(address))
+        .filter(|address| !address.is_empty() && !removed.contains(address))
+        .chain(added)
         .collect();
     targets.sort();
     targets.dedup();
     targets
+}
+
+/// Certificate targets suitable for ACME/Let's Encrypt: the effective access
+/// addresses, minus IP addresses and `localhost`, since Let's Encrypt's
+/// standard ACME profile can only issue certificates for DNS names.
+pub fn effective_certificate_targets(config: &Config) -> Vec<String> {
+    certificate_targets_from(config, &detect_local_addresses())
+}
+
+fn certificate_targets_from(config: &Config, detected: &[String]) -> Vec<String> {
+    effective_access_addresses(config, detected)
+        .into_iter()
+        .filter(|target| !is_ip_address_or_localhost(target))
+        .collect()
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
@@ -451,6 +513,12 @@ pub struct Config {
     #[serde(default)]
     pub auth: AuthConfig,
 
+    /// When enabled, all authentication and permission checks are bypassed and every
+    /// request is treated as a fully-privileged administrator. Intended only for
+    /// trusted local/offline networks that have no need for accounts.
+    #[serde(default)]
+    pub insecure_mode: bool,
+
     #[serde(default)]
     pub minecraft_account_filter_detail_groups: Vec<MinecraftAccountFilterDetailGroup>,
 }
@@ -474,6 +542,8 @@ impl Config {
         self.web_transport = new_config.web_transport.clone();
 
         self.auth = new_config.auth.clone();
+
+        self.insecure_mode = new_config.insecure_mode;
 
         self.slave = new_config.slave;
 
@@ -536,6 +606,8 @@ impl Default for Config {
             web_transport: WebTransportConfig::default(),
 
             auth: AuthConfig::default(),
+
+            insecure_mode: false,
 
             minecraft_account_filter_detail_groups: vec![],
         }
@@ -685,8 +757,63 @@ mod tests {
         };
 
         assert_eq!(
-            effective_certificate_targets(&config),
+            certificate_targets_from(&config, &[]),
             vec!["example.com".to_string(), "play.example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn effective_access_addresses_applies_removal_prefix() {
+        let config = Config {
+            web_transport: WebTransportConfig {
+                acme: AcmeCertificateConfig {
+                    certificate_targets: vec![
+                        "-192.168.1.5".to_string(),
+                        "play.example.com".to_string(),
+                    ],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        let detected = vec![
+            "localhost".to_string(),
+            "192.168.1.5".to_string(),
+            "192.168.1.10".to_string(),
+        ];
+
+        assert_eq!(
+            effective_access_addresses(&config, &detected),
+            vec![
+                "192.168.1.10".to_string(),
+                "localhost".to_string(),
+                "play.example.com".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn certificate_targets_from_excludes_private_and_loopback_addresses() {
+        let config = Config {
+            web_transport: WebTransportConfig {
+                acme: AcmeCertificateConfig {
+                    certificate_targets: vec!["play.example.com".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        let detected = vec![
+            "localhost".to_string(),
+            "192.168.1.10".to_string(),
+            "10.0.0.5".to_string(),
+        ];
+
+        assert_eq!(
+            certificate_targets_from(&config, &detected),
+            vec!["play.example.com".to_string()]
         );
     }
 }

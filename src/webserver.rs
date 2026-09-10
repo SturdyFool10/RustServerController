@@ -105,6 +105,10 @@ async fn get_router(_state: AppState) -> Router<AppState> {
             post(crate::auth::delete_webauthn_credential),
         )
         .route("/auth/accounts", get(crate::auth::list_accounts))
+        .route(
+            "/auth/admin/network-status",
+            get(crate::auth::network_status),
+        )
         .route("/auth/admin/create-user", post(crate::auth::create_user))
         .route(
             "/auth/admin/approve-request",
@@ -274,6 +278,9 @@ pub async fn start_web_server(_state: AppState) {
     let mut address = config.interface.clone();
     address += (":".to_owned() + config.port.clone().as_str()).as_str();
     let transport = config.web_transport.clone();
+    let detected_addresses = crate::configuration::detect_local_addresses();
+    let access_addresses =
+        crate::configuration::effective_access_addresses(&config, &detected_addresses);
     let cert_targets = effective_certificate_targets(&config);
     drop(config);
 
@@ -282,8 +289,16 @@ pub async fn start_web_server(_state: AppState) {
         let https_router = router.clone();
         let https_transport = transport.clone();
         let https_targets = cert_targets.clone();
+        let https_access_addresses = access_addresses.clone();
         tokio::spawn(async move {
-            start_https_server(https_state, https_router, https_transport, https_targets).await;
+            start_https_server(
+                https_state,
+                https_router,
+                https_transport,
+                https_targets,
+                https_access_addresses,
+            )
+            .await;
         });
     }
 
@@ -449,6 +464,7 @@ pub(crate) async fn start_https_server(
     router: Router<AppState>,
     transport: WebTransportConfig,
     cert_targets: Vec<String>,
+    access_addresses: Vec<String>,
 ) {
     use axum_server::tls_rustls::RustlsConfig;
     use rustls_acme::{caches::DirCache, AcmeConfig};
@@ -503,7 +519,7 @@ pub(crate) async fn start_https_server(
     let certificate = if transport.local_certificate.enabled {
         Some(transport.local_certificate.clone())
     } else if transport.self_signed.enabled || !transport.acme.enabled {
-        match ensure_self_signed_certificate(&transport, &cert_targets, address).await {
+        match ensure_self_signed_certificate(&transport, &access_addresses, address).await {
             Some(certificate) => Some(certificate),
             None => return,
         }
@@ -582,7 +598,7 @@ async fn https_bind_address(
 
 async fn ensure_self_signed_certificate(
     transport: &WebTransportConfig,
-    cert_targets: &[String],
+    access_addresses: &[String],
     bind_address: std::net::SocketAddr,
 ) -> Option<LocalCertificateConfig> {
     use rcgen::{generate_simple_self_signed, CertifiedKey};
@@ -607,7 +623,7 @@ async fn ensure_self_signed_certificate(
         });
     }
 
-    let names = self_signed_subject_alt_names(transport, cert_targets, bind_address);
+    let names = self_signed_subject_alt_names(transport, access_addresses, bind_address);
 
     let CertifiedKey { cert, key_pair } = match generate_simple_self_signed(names.clone()) {
         Ok(certificate) => certificate,
@@ -668,14 +684,14 @@ async fn ensure_self_signed_certificate(
 
 fn self_signed_subject_alt_names(
     transport: &WebTransportConfig,
-    cert_targets: &[String],
+    access_addresses: &[String],
     bind_address: std::net::SocketAddr,
 ) -> Vec<String> {
     let mut names: Vec<String> = transport
         .self_signed
         .subject_alt_names
         .iter()
-        .chain(cert_targets.iter())
+        .chain(access_addresses.iter())
         .map(|name| name.trim().trim_end_matches('.').to_ascii_lowercase())
         .filter(|name| !name.is_empty())
         .collect();
