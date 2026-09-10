@@ -200,14 +200,14 @@ window.RSCApp = window.RSCApp || {};
     title.textContent = "Permission Model";
     defaultsTitle.className = "accountMeta";
     defaultsTitle.textContent =
-      "Hierarchy: User overrides -> Groups -> Defaults. Defaults make observers: view, stats, and console are granted; modification/admin permissions are blocked.";
+      "Hierarchy: User overrides -> Roles -> Defaults. Defaults make observers: view, stats, and console are granted; modification/admin permissions are blocked.";
     groupsTitle.className = "accountMeta";
-    groupsTitle.textContent = "Groups inherit from Defaults unless a group grants or blocks a permission.";
+    groupsTitle.textContent = "Roles inherit from Defaults unless a role grants or blocks a permission.";
     groupList.className = "accountList";
     status.className = "accountPanelStatus";
-    newGroupName.placeholder = "New group name";
+    newGroupName.placeholder = "New role name";
     addGroup.type = "button";
-    addGroup.textContent = "Add Group";
+    addGroup.textContent = "Add Role";
     save.type = "button";
     save.textContent = "Save Permission Model";
 
@@ -1032,12 +1032,48 @@ window.RSCApp = window.RSCApp || {};
     container.appendChild(card);
   }
 
+  function renderMinecraftWhitelistToggles(container, cfg) {
+    if (!container) return;
+    container.replaceChildren();
+    const servers = minecraftServers(cfg);
+    if (!servers.length) {
+      const empty = document.createElement("p");
+      empty.className = "accountPanelStatus";
+      empty.textContent = "No Minecraft servers configured";
+      container.appendChild(empty);
+      return;
+    }
+    servers.forEach((server) => {
+      const label = document.createElement("label");
+      const toggle = document.createElement("input");
+      toggle.type = "checkbox";
+      toggle.checked = !!server.specialization_options?.whitelist_enabled;
+      toggle.title = "Reject any Minecraft player not on this server's whitelist";
+      toggle.addEventListener("change", () => {
+        const next = cloneConfig();
+        const target = minecraftServers(next).find((item) => item.name === server.name);
+        if (target) {
+          target.specialization_options = target.specialization_options || {};
+          target.specialization_options.whitelist_enabled = toggle.checked;
+        }
+        sendConfig(next);
+      });
+      label.append(toggle, document.createTextNode(`Enforce whitelist for ${server.name}`));
+      container.appendChild(label);
+    });
+  }
+
   function ensureMarkup() {
     const root = document.querySelector(".administrationDashboard");
     if (!root) return null;
     root.innerHTML = `
       <section class="accountAdminPanel"></section>
       <section class="accountAdminPanel networkTlsPanel"></section>
+      <section class="accountAdminPanel minecraftWhitelistPanel">
+        <h2>Minecraft Whitelist</h2>
+        <p class="accountMeta">Groups here grant Minecraft game accounts (player usernames) whitelist and ban access to specific servers - separate from the web UI user Roles above.</p>
+        <div class="minecraftWhitelistToggles"></div>
+      </section>
       <section class="adminToolbar">
         <input class="adminNewGroupName" placeholder="New group name">
         <button type="button" class="adminCreateGroup">Create Group</button>
@@ -1067,6 +1103,7 @@ window.RSCApp = window.RSCApp || {};
     const cfg = config();
     renderAccountAdministration(root.querySelector(".accountAdminPanel"));
     renderNetworkPanel(root.querySelector(".networkTlsPanel"));
+    renderMinecraftWhitelistToggles(root.querySelector(".minecraftWhitelistToggles"), cfg);
     const groups = root.querySelector(".adminGroups");
     groupList(cfg).forEach((group) => renderGroup(groups, group, cfg));
   };

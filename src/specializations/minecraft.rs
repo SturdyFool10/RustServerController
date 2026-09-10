@@ -49,16 +49,17 @@ impl ServerSpecialization for MinecraftSpecialization {
 
         _env: &mut std::collections::HashMap<String, String>,
 
-        _descriptor: &crate::controlled_program::ControlledProgramDescriptor,
+        descriptor: &crate::controlled_program::ControlledProgramDescriptor,
     ) {
-
-        // Default: do nothing for Minecraft
+        let enabled = account_filter_whitelist_enabled(descriptor.specialization_options.as_ref());
+        set_server_properties_whitelist(&descriptor.working_dir, enabled);
     }
 
     fn default_options(&self) -> serde_json::Value {
         json!({
             "auto_accept_eula": true,
             "account_filter_groups": [],
+            "whitelist_enabled": false,
         })
     }
 
@@ -326,11 +327,11 @@ impl MinecraftSpecialization {
         state: AppState,
     ) {
         self.stop_account_filter_watcher();
-        let Some(group_ids) = account_filter_group_ids(instance.specialization_options.as_ref())
-        else {
-            return;
-        };
-        if group_ids.is_empty() {
+        let group_ids =
+            account_filter_group_ids(instance.specialization_options.as_ref()).unwrap_or_default();
+        let whitelist_enabled =
+            account_filter_whitelist_enabled(instance.specialization_options.as_ref());
+        if group_ids.is_empty() && !whitelist_enabled {
             return;
         }
 
@@ -398,6 +399,8 @@ async fn watch_account_filter_files(
     let mut interval = tokio::time::interval(Duration::from_millis(500));
     let mut expiry_interval = tokio::time::interval(Duration::from_secs(30));
     let mut live_snapshot = fan_out_account_filters_for_state(&state, &group_ids).await;
+    let mut whitelist_enabled = current_server_whitelist_enabled(&state, &server_name).await;
+    apply_whitelist_enabled_command(&state, &server_name, whitelist_enabled).await;
 
     loop {
         tokio::select! {
@@ -409,6 +412,11 @@ async fn watch_account_filter_files(
                     apply_live_account_filter_commands(&state, &server_name, &live_snapshot, &next_live_snapshot).await;
                     live_snapshot = next_live_snapshot;
                     snapshot = filter_file_snapshot_async(&working_dir).await;
+                }
+                let next_whitelist_enabled = current_server_whitelist_enabled(&state, &server_name).await;
+                if next_whitelist_enabled != whitelist_enabled {
+                    apply_whitelist_enabled_command(&state, &server_name, next_whitelist_enabled).await;
+                    whitelist_enabled = next_whitelist_enabled;
                 }
             }
             _ = expiry_interval.tick() => {
@@ -424,6 +432,21 @@ async fn watch_account_filter_files(
             }
         }
     }
+}
+
+async fn current_server_whitelist_enabled(state: &AppState, server_name: &str) -> bool {
+    let config = state.config.lock().await;
+    config
+        .servers
+        .iter()
+        .find(|server| server.name == server_name)
+        .map(|server| account_filter_whitelist_enabled(server.specialization_options.as_ref()))
+        .unwrap_or(false)
+}
+
+async fn apply_whitelist_enabled_command(state: &AppState, server_name: &str, enabled: bool) {
+    let command = if enabled { "whitelist on" } else { "whitelist off" };
+    send_minecraft_console_command(state, server_name, command.to_string()).await;
 }
 
 async fn sync_account_filters_for_state(
@@ -994,6 +1017,42 @@ async fn read_minecraft_filter_file_async<T: serde::de::DeserializeOwned>(
         .ok()
         .and_then(|contents| serde_json::from_str::<Vec<T>>(&contents).ok())
         .unwrap_or_default()
+}
+
+fn account_filter_whitelist_enabled(options: Option<&Value>) -> bool {
+    options
+        .and_then(|options| options.get("whitelist_enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn set_server_properties_whitelist(working_dir: &str, enabled: bool) {
+    let mut path = working_dir.to_string();
+    if !(path.ends_with('/') || path.ends_with('\\')) {
+        path.push('/');
+    }
+    path.push_str("server.properties");
+
+    let existing = crate::files::read_file(&path).unwrap_or_default();
+    let value = if enabled { "true" } else { "false" };
+    let mut found = false;
+    let mut lines: Vec<String> = existing
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("white-list=") {
+                found = true;
+                format!("white-list={}", value)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+    if !found {
+        lines.push(format!("white-list={}", value));
+    }
+    if let Err(error) = std::fs::write(&path, lines.join("\n") + "\n") {
+        tracing::warn!("Failed to update white-list in '{}': {}", path, error);
+    }
 }
 
 fn account_filter_group_ids(options: Option<&Value>) -> Option<Vec<String>> {

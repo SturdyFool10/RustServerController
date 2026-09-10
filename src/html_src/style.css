@@ -90,6 +90,9 @@ body {
     gap: 6px;
     color: var(--text-muted);
 }
+.authField[hidden] {
+    display: none;
+}
 .authField input,
 .authSubmit,
 .authSecondary {
@@ -1038,6 +1041,17 @@ h1 {
 .accountMeta,
 .accountPanelStatus {
     color: var(--text-muted);
+}
+.minecraftWhitelistToggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    color: var(--text);
+}
+.minecraftWhitelistToggles label {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
 }
 .accountPermissionPicker {
     display: grid;

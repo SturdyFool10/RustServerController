@@ -648,6 +648,7 @@ mod tests {
             Some(json!({
                 "auto_accept_eula": true,
                 "account_filter_groups": [],
+                "whitelist_enabled": false,
             }))
         );
     }
@@ -671,6 +672,7 @@ mod tests {
             Some(json!({
                 "auto_accept_eula": false,
                 "account_filter_groups": [],
+                "whitelist_enabled": false,
             }))
         );
     }

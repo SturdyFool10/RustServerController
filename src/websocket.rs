@@ -558,36 +558,14 @@ async fn apply_config_change(
         return;
     }
 
-    let mut servers_to_stop = {
+    let running_servers = {
         let mut servers = state.servers.lock().await;
         std::mem::take(&mut *servers)
     };
 
-    for server in servers_to_stop.iter_mut() {
-        let exit_code = server.stop().await;
-        send_termination_message(
-            &state,
-            server.name.clone(),
-            exit_code
-                .map(|code| code.to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
-            server.specialized_server_type.clone(),
-        )
-        .await;
-        let update = specialization_update(
-            server.name.clone(),
-            Some(server.server_uuid.clone()),
-            serde_json::Value::Null,
-            None,
-            server.specialization_options.clone(),
-            server.specialized_server_type.clone().unwrap_or_default(),
-            false,
-        );
-        broadcast_json(&state, &update);
-    }
-
-    let (config_info, auto_start_servers, config_snapshot) = {
+    let (config_info, auto_start_servers, config_snapshot, still_running, servers_to_stop) = {
         let mut config = state.config.lock().await;
+        let old_servers = config.servers.clone();
 
         if global_config {
             let auth = config.auth.clone();
@@ -613,10 +591,40 @@ async fn apply_config_change(
             &state.specialization_registry,
         );
 
+        // Only restart instances whose process-affecting descriptor fields actually
+        // changed (or that were removed). Unrelated config edits - e.g. adding a
+        // whitelist entry to a group - must not kick every running server.
+        let mut still_running = Vec::new();
+        let mut servers_to_stop = Vec::new();
+        for instance in running_servers {
+            let new_desc = find_descriptor_for_instance(&instance, &config.servers);
+            let old_desc = find_descriptor_for_instance(&instance, &old_servers);
+            let needs_restart = match (old_desc, new_desc) {
+                (_, None) => true,
+                (Some(old), Some(new)) => descriptor_requires_restart(old, new),
+                (None, Some(_)) => false,
+            };
+            if needs_restart {
+                servers_to_stop.push(instance);
+            } else {
+                still_running.push(instance);
+            }
+        }
+
+        let running_uuids: std::collections::HashSet<&str> = still_running
+            .iter()
+            .map(|instance| instance.server_uuid.as_str())
+            .collect();
         let auto_start_servers = config
             .servers
             .iter()
             .filter(|desc| desc.auto_start)
+            .filter(|desc| {
+                !desc
+                    .server_uuid
+                    .as_deref()
+                    .is_some_and(|uuid| running_uuids.contains(uuid))
+            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -625,8 +633,42 @@ async fn apply_config_change(
             r#type: "ConfigInfo".to_owned(),
             config: config_snapshot.clone(),
         };
-        (config_info, auto_start_servers, config_snapshot)
+        (
+            config_info,
+            auto_start_servers,
+            config_snapshot,
+            still_running,
+            servers_to_stop,
+        )
     };
+
+    {
+        let mut servers = state.servers.lock().await;
+        *servers = still_running;
+    }
+
+    for mut server in servers_to_stop {
+        let exit_code = server.stop().await;
+        send_termination_message(
+            &state,
+            server.name.clone(),
+            exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+            server.specialized_server_type.clone(),
+        )
+        .await;
+        let update = specialization_update(
+            server.name.clone(),
+            Some(server.server_uuid.clone()),
+            serde_json::Value::Null,
+            None,
+            server.specialization_options.clone(),
+            server.specialized_server_type.clone().unwrap_or_default(),
+            false,
+        );
+        broadcast_json(&state, &update);
+    }
 
     if let Err(error) = config_snapshot
         .update_config_file_async("config.json")
@@ -645,6 +687,30 @@ async fn apply_config_change(
             servers.push(instance);
         }
     }
+}
+
+/// Finds the descriptor in `descriptors` that corresponds to a running instance,
+/// matched by stable server UUID first and falling back to name.
+fn find_descriptor_for_instance<'a>(
+    instance: &crate::controlled_program::ControlledProgramInstance,
+    descriptors: &'a [crate::controlled_program::ControlledProgramDescriptor],
+) -> Option<&'a crate::controlled_program::ControlledProgramDescriptor> {
+    descriptors
+        .iter()
+        .find(|desc| desc.server_uuid.as_deref() == Some(instance.server_uuid.as_str()))
+        .or_else(|| descriptors.iter().find(|desc| desc.name == instance.name))
+}
+
+/// Whether a descriptor change requires stopping and recreating the process -
+/// i.e. a change to a field that affects how the process is launched.
+fn descriptor_requires_restart(
+    old: &crate::controlled_program::ControlledProgramDescriptor,
+    new: &crate::controlled_program::ControlledProgramDescriptor,
+) -> bool {
+    old.exe_path != new.exe_path
+        || old.arguments != new.arguments
+        || old.working_dir != new.working_dir
+        || old.specialized_server_type != new.specialized_server_type
 }
 
 async fn apply_scoped_config_change(
