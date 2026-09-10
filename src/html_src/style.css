@@ -699,6 +699,7 @@ h1 {
 .statsArchivedServerData dt {
     color: var(--text-muted);
     font-size: 0.8rem;
+    min-width: 0;
 }
 .statsSpecializationDetails dd,
 .statsSpecializationSettings dd,
@@ -707,6 +708,14 @@ h1 {
     margin: 2px 0 0;
     color: var(--text);
     overflow-wrap: anywhere;
+    min-width: 0;
+}
+.statsSpecializationDetails dt.statsDetailWide,
+.statsSpecializationDetails dd.statsDetailWide {
+    grid-column: 1 / -1;
+}
+.statsSpecializationDetails dt.statsDetailWide {
+    margin-top: 6px;
 }
 .statsColumns li span,
 .statsColumns li {
@@ -952,8 +961,17 @@ h1 {
 }
 
 .administrationDashboard {
-    width: min(1200px, calc(100% - 48px));
-    margin: 90px auto 32px;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 70px;
+    height: calc(100% - 70px);
+    max-width: 1200px;
+    margin: 0 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 18px 24px 32px;
+    box-sizing: border-box;
     color: var(--text);
 }
 .accountAdminPanel,
@@ -984,12 +1002,21 @@ h1 {
 .accountCreateCard,
 .accountCard {
     display: grid;
-    grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(220px, 1.4fr) auto auto;
+    grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) auto auto;
     gap: 8px;
     align-items: center;
+    max-width: 100%;
+}
+.accountCreateCard > *,
+.accountCard > * {
+    min-width: 0;
+}
+.accountCreateCard .accountPermissionPicker,
+.accountCard .accountPermissionPicker {
+    grid-column: 1 / -1;
 }
 .accountCard {
-    grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) minmax(220px, 1.4fr) auto auto;
+    grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) auto auto auto;
     padding: 10px;
     border: 1px solid var(--border-muted);
     border-radius: 6px;
@@ -1016,6 +1043,7 @@ h1 {
     display: grid;
     gap: 8px;
     color: var(--text-muted);
+    min-width: 0;
 }
 .accountPermissionGlobal {
     display: flex;
@@ -1112,6 +1140,11 @@ h1 {
     grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) auto;
     gap: 8px;
     align-items: center;
+}
+.adminGroupHeader > *,
+.adminEntryPrimary > *,
+.adminEntrySecondary > * {
+    min-width: 0;
 }
 .adminEntryCard {
     display: grid;
@@ -1242,7 +1275,7 @@ h1 {
 
 @media (max-width: 720px) {
     .administrationDashboard {
-        width: min(100% - 24px, 1200px);
+        padding: 14px 12px 24px;
     }
     .adminToolbar,
     .accountCreateCard,

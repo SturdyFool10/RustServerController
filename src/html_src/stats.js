@@ -297,6 +297,13 @@ window.RSCApp = window.RSCApp || {};
     description.appendChild(sessionList);
   }
 
+  const WIDE_STAT_LABELS = new Set([
+    "Player Activity",
+    "Name Activity",
+    "Recent Sessions",
+    "Timeframe Stats",
+  ]);
+
   function timeframeLabel(name) {
     const labels = {
       day: "Rolling Day",
@@ -434,6 +441,10 @@ window.RSCApp = window.RSCApp || {};
           const term = document.createElement("dt");
           const description = document.createElement("dd");
           term.textContent = label;
+          if (WIDE_STAT_LABELS.has(label)) {
+            term.classList.add("statsDetailWide");
+            description.classList.add("statsDetailWide");
+          }
           renderStatDescription(description, label, value);
           detailList.append(term, description);
         });
