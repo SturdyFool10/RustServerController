@@ -17,6 +17,12 @@ window.RSCApp = window.RSCApp || {};
       : [];
   }
 
+  function globalPlayerActivity() {
+    return Array.isArray(window.serverInfoObj?.global_player_activity)
+      ? window.serverInfoObj.global_player_activity
+      : [];
+  }
+
   function aggregateStats(servers) {
     const stats = {
       total: servers.length,
@@ -170,6 +176,60 @@ window.RSCApp = window.RSCApp || {};
       });
   }
 
+  function renderGlobalUserActivity(root, players) {
+    const list = root.querySelector(".statsUserActivity");
+    if (!list) return;
+    list.replaceChildren();
+
+    if (!players.length) {
+      const item = document.createElement("li");
+      item.textContent = "No observed players yet";
+      list.appendChild(item);
+      return;
+    }
+
+    players.forEach((player) => {
+      const item = document.createElement("li");
+      item.className = "statsUserActivityCard";
+
+      const header = document.createElement("div");
+      header.className = "statsUserActivityHeader";
+      const name = document.createElement("strong");
+      name.textContent = player.name || "Unknown player";
+      const badge = document.createElement("span");
+      badge.className = player.online
+        ? "statsBadge statsBadge-online"
+        : "statsBadge statsBadge-offline";
+      badge.textContent = player.online ? "Online" : "Offline";
+      const totalHours = document.createElement("span");
+      totalHours.className = "statsUserActivityTotal";
+      totalHours.textContent = `${formatHours(player.total_hours)} total`;
+      header.append(name, badge, totalHours);
+
+      const serverList = document.createElement("ul");
+      serverList.className = "statsUserActivityServers";
+      (Array.isArray(player.servers) ? player.servers : []).forEach((server) => {
+        const serverItem = document.createElement("li");
+        const serverBadge = document.createElement("span");
+        serverBadge.className = server.online
+          ? "statsBadge statsBadge-online"
+          : "statsBadge statsBadge-offline";
+        serverBadge.textContent = server.online ? "On now" : "Away";
+        const serverName = document.createElement("span");
+        serverName.className = "statsUserActivityServerName";
+        serverName.textContent = server.server_name || "Unknown server";
+        const serverMeta = document.createElement("span");
+        serverMeta.className = "statsUserActivityServerMeta";
+        serverMeta.textContent = `${formatHours(server.total_hours)} - last joined ${formatTimestamp(server.last_joined_at)}`;
+        serverItem.append(serverBadge, serverName, serverMeta);
+        serverList.appendChild(serverItem);
+      });
+
+      item.append(header, serverList);
+      list.appendChild(item);
+    });
+  }
+
   function formatStatValue(value) {
     if (typeof value === "boolean") return value ? "yes" : "no";
     if (Array.isArray(value)) {
@@ -297,12 +357,7 @@ window.RSCApp = window.RSCApp || {};
     description.appendChild(sessionList);
   }
 
-  const WIDE_STAT_LABELS = new Set([
-    "Player Activity",
-    "Name Activity",
-    "Recent Sessions",
-    "Timeframe Stats",
-  ]);
+  const WIDE_STAT_LABELS = new Set(["User Activity", "Recent Sessions", "Timeframe Stats"]);
 
   function timeframeLabel(name) {
     const labels = {
@@ -337,7 +392,9 @@ window.RSCApp = window.RSCApp || {};
   function renderTimeframeStats(description, stats) {
     const wrapper = document.createElement("div");
     wrapper.className = "statsTimeframes";
-    const entries = Object.entries(stats || {});
+    // `stats` is an ordered array (day, week, month, year) from the backend -
+    // do not sort or use Object.entries, which would lose that order.
+    const entries = Array.isArray(stats) ? stats : [];
 
     if (!entries.length) {
       wrapper.textContent = "No timeframe data yet";
@@ -345,7 +402,7 @@ window.RSCApp = window.RSCApp || {};
       return;
     }
 
-    entries.forEach(([name, value]) => {
+    entries.forEach((value) => {
       const card = document.createElement("section");
       const heading = document.createElement("h3");
       const metrics = document.createElement("dl");
@@ -354,7 +411,7 @@ window.RSCApp = window.RSCApp || {};
         : [];
       const busyByHour = Array.isArray(value.busy_by_hour) ? value.busy_by_hour : [];
 
-      heading.textContent = timeframeLabel(name);
+      heading.textContent = timeframeLabel(value.name);
       metrics.innerHTML = `
         <dt>Logged Hours</dt><dd>${formatHours(value.logged_hours)}</dd>
         <dt>Distinct Names</dt><dd>${value.distinct_names ?? 0}</dd>
@@ -387,7 +444,7 @@ window.RSCApp = window.RSCApp || {};
   }
 
   function renderStatDescription(description, label, value) {
-    if (label === "Player Activity" || label === "Name Activity") {
+    if (label === "User Activity") {
       renderPlayerHoursChart(description, value);
       renderPlayerActivity(description, value);
       return;
@@ -424,19 +481,7 @@ window.RSCApp = window.RSCApp || {};
 
       if (server.specialization_stats) {
         const detailList = document.createElement("dl");
-        if (server.server_uuid) {
-          const term = document.createElement("dt");
-          const description = document.createElement("dd");
-          const uuidButton = document.createElement("button");
-          term.textContent = "Server UUID";
-          uuidButton.type = "button";
-          uuidButton.className = "statsUuidButton";
-          uuidButton.textContent = server.server_uuid;
-          uuidButton.title = "Copy server UUID";
-          uuidButton.addEventListener("click", () => copyText(server.server_uuid));
-          description.appendChild(uuidButton);
-          detailList.append(term, description);
-        }
+        appendUuidRow(detailList, server.server_uuid);
         Object.entries(server.specialization_stats).forEach(([label, value]) => {
           const term = document.createElement("dt");
           const description = document.createElement("dd");
@@ -478,19 +523,7 @@ window.RSCApp = window.RSCApp || {};
 
       if (server.specialization_options) {
         const detailList = document.createElement("dl");
-        if (server.server_uuid) {
-          const term = document.createElement("dt");
-          const description = document.createElement("dd");
-          const uuidButton = document.createElement("button");
-          term.textContent = "Server UUID";
-          uuidButton.type = "button";
-          uuidButton.className = "statsUuidButton";
-          uuidButton.textContent = server.server_uuid;
-          uuidButton.title = "Copy server UUID";
-          uuidButton.addEventListener("click", () => copyText(server.server_uuid));
-          description.appendChild(uuidButton);
-          detailList.append(term, description);
-        }
+        appendUuidRow(detailList, server.server_uuid);
         Object.entries(server.specialization_options).forEach(([label, value]) => {
           const term = document.createElement("dt");
           const description = document.createElement("dd");
@@ -511,6 +544,8 @@ window.RSCApp = window.RSCApp || {};
     const description = document.createElement("dd");
     const uuidButton = document.createElement("button");
     term.textContent = "Server UUID";
+    term.classList.add("statsUuidTerm");
+    description.classList.add("statsUuidDescription");
     uuidButton.type = "button";
     uuidButton.className = "statsUuidButton";
     uuidButton.textContent = uuid;
@@ -623,6 +658,11 @@ window.RSCApp = window.RSCApp || {};
         <h2>Online Players</h2>
         <ul class="statsOnlinePlayers"></ul>
       </section>
+      <section class="statsDetails">
+        <h2>User Activity</h2>
+        <p class="accountMeta">Every known player across all Minecraft servers this controller manages, and which server(s) they're on.</p>
+        <ul class="statsUserActivity"></ul>
+      </section>
       <section class="statsColumns">
         <div>
           <h2>Specializations</h2>
@@ -685,6 +725,7 @@ window.RSCApp = window.RSCApp || {};
     renderSpecializations(root, stats);
     renderSpecializationDistribution(root, stats);
     renderOnlinePlayers(root, stats.onlinePlayers);
+    renderGlobalUserActivity(root, globalPlayerActivity());
     renderSpecializationStats(root, servers);
     renderServerData(root, servers);
     renderArchivedServerStats(root, archivedServerStats());

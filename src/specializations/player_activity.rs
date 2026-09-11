@@ -1,5 +1,5 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -14,11 +14,18 @@ struct PlayerActivity {
     active_session_id: Option<i64>,
 }
 
+/// Minimum time between periodic player-count samples, so `player_count_samples`
+/// accumulates enough resolution over hours/days/weeks for the rolling day/week/
+/// month/year windows to genuinely diverge instead of all reading the same
+/// handful of join/leave-triggered samples.
+const PERIODIC_SAMPLE_INTERVAL_SECONDS: i64 = 5 * 60;
+
 /// Tracks in-memory name sessions for a single running server instance.
 #[derive(Clone, Debug, Default)]
 pub struct PlayerActivityTracker {
     players: BTreeMap<String, PlayerActivity>,
     store: Option<PlayerActivityStore>,
+    last_periodic_sample_at: Option<DateTime<Utc>>,
 }
 
 impl PlayerActivityTracker {
@@ -39,6 +46,7 @@ impl PlayerActivityTracker {
                 let tracker = Self {
                     players,
                     store: Some(store),
+                    last_periodic_sample_at: None,
                 };
                 tracker.record_player_count();
                 tracker
@@ -185,14 +193,14 @@ impl PlayerActivityTracker {
 
     pub fn timeframe_stats(&self) -> Value {
         let Some(store) = &self.store else {
-            return Value::Object(serde_json::Map::new());
+            return Value::Array(Vec::new());
         };
 
         match store.timeframe_stats() {
-            Ok(stats) => stats,
+            Ok(stats) => Value::Array(stats),
             Err(error) => {
                 tracing::warn!("Failed to load player timeframe stats: {}", error);
-                Value::Object(serde_json::Map::new())
+                Value::Array(Vec::new())
             }
         }
     }
@@ -205,6 +213,23 @@ impl PlayerActivityTracker {
         if let Err(error) = store.record_player_count(self.online_count()) {
             tracing::warn!("Failed to persist player count sample: {}", error);
         }
+    }
+
+    /// Records a player-count sample if at least `PERIODIC_SAMPLE_INTERVAL_SECONDS`
+    /// has passed since the last one. Call this frequently (e.g. on every log
+    /// line) from callers that don't otherwise have a timer; join/leave events
+    /// alone are too sparse to give the rolling day/week/month/year windows
+    /// enough resolution to differ from each other.
+    pub fn maybe_sample_periodic(&mut self) {
+        let now = Utc::now();
+        let due = self
+            .last_periodic_sample_at
+            .is_none_or(|last| (now - last).num_seconds() >= PERIODIC_SAMPLE_INTERVAL_SECONDS);
+        if !due {
+            return;
+        }
+        self.last_periodic_sample_at = Some(now);
+        self.record_player_count();
     }
 }
 
@@ -230,11 +255,44 @@ pub fn migrate_server_name_to_uuid(server_name: &str, server_uuid: &str) {
     }
 }
 
+/// Records the current name for a known player UUID (e.g. observed from a
+/// Minecraft server's `usercache.json`), migrating all recorded activity from
+/// any previously-known name for that UUID. Returns the previous name if a
+/// rename was detected and migrated, so callers can also update any other
+/// name-keyed records (e.g. whitelist/ban list entries) that reference it.
+pub fn sync_player_identity(uuid: &str, name: &str) -> Option<String> {
+    let uuid = uuid.trim();
+    let name = name.trim();
+    if uuid.is_empty() || name.is_empty() {
+        return None;
+    }
+    match PlayerActivityStore::sync_player_identity(database_path(), uuid, name) {
+        Ok(renamed_from) => renamed_from,
+        Err(error) => {
+            tracing::warn!("Failed to sync player identity for '{}': {}", name, error);
+            None
+        }
+    }
+}
+
 pub fn archived_server_stats(active_server_uuids: &[String]) -> Value {
     match PlayerActivityStore::archived_server_stats(database_path(), active_server_uuids) {
         Ok(stats) => Value::Array(stats),
         Err(error) => {
             tracing::warn!("Failed to load archived player activity stats: {}", error);
+            Value::Array(Vec::new())
+        }
+    }
+}
+
+/// Aggregates player activity across every server sharing this controller's
+/// activity database, one entry per distinct player name, listing which
+/// server(s) they're associated with (and currently online on).
+pub fn global_player_activity() -> Value {
+    match PlayerActivityStore::global_player_activity(database_path()) {
+        Ok(players) => Value::Array(players),
+        Err(error) => {
+            tracing::warn!("Failed to load global player activity: {}", error);
             Value::Array(Vec::new())
         }
     }
@@ -371,6 +429,55 @@ impl PlayerActivityStore {
                 params![server_name],
             )?;
             tx.commit()
+        })
+    }
+
+    fn sync_player_identity(
+        db_path: PathBuf,
+        uuid: &str,
+        name: &str,
+    ) -> rusqlite::Result<Option<String>> {
+        let store = Self {
+            db_path,
+            server_uuid: String::new(),
+            display_name: String::new(),
+            specialization: String::new(),
+        };
+        store.with_connection(|connection| {
+            initialize_schema(connection)?;
+            let previous_name: Option<String> = connection
+                .query_row(
+                    "SELECT name FROM player_identities WHERE uuid = ?1",
+                    params![uuid],
+                    |row| row.get(0),
+                )
+                .optional()?;
+
+            connection.execute(
+                "INSERT INTO player_identities (uuid, name, updated_at)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(uuid) DO UPDATE SET
+                    name = excluded.name,
+                    updated_at = excluded.updated_at",
+                params![uuid, name, format_timestamp(Some(Utc::now()))],
+            )?;
+
+            let Some(previous_name) = previous_name else {
+                return Ok(None);
+            };
+            if previous_name == name {
+                return Ok(None);
+            }
+
+            let tx = connection.transaction()?;
+            for table in ["player_activity", "player_activity_sessions"] {
+                tx.execute(
+                    &format!("UPDATE {table} SET player_name = ?1 WHERE player_name = ?2"),
+                    params![name, previous_name],
+                )?;
+            }
+            tx.commit()?;
+            Ok(Some(previous_name))
         })
     }
 
@@ -553,7 +660,11 @@ impl PlayerActivityStore {
         })
     }
 
-    fn timeframe_stats(&self) -> rusqlite::Result<Value> {
+    /// Returns rolling-window stats ordered smallest-to-largest window
+    /// (day, week, month, year). This is a `Vec`, not a `serde_json::Map`,
+    /// because `Map` is backed by a `BTreeMap` and would silently
+    /// re-sort the windows alphabetically (day, month, week, year).
+    fn timeframe_stats(&self) -> rusqlite::Result<Vec<Value>> {
         let now = Utc::now();
         let timeframes = [
             ("day", ChronoDuration::days(1)),
@@ -561,14 +672,18 @@ impl PlayerActivityStore {
             ("month", ChronoDuration::days(30)),
             ("year", ChronoDuration::days(365)),
         ];
-        let mut stats = serde_json::Map::new();
+        let mut stats = Vec::with_capacity(timeframes.len());
 
         for (name, duration) in timeframes {
             let start = now - duration;
-            stats.insert(name.to_string(), self.timeframe_summary(start, now)?);
+            let mut summary = self.timeframe_summary(start, now)?;
+            if let Some(object) = summary.as_object_mut() {
+                object.insert("name".to_string(), Value::String(name.to_string()));
+            }
+            stats.push(summary);
         }
 
-        Ok(Value::Object(stats))
+        Ok(stats)
     }
 
     fn timeframe_summary(
@@ -796,6 +911,119 @@ impl PlayerActivityStore {
         Ok(archives)
     }
 
+    fn global_player_activity(db_path: PathBuf) -> rusqlite::Result<Vec<Value>> {
+        let store = Self {
+            db_path,
+            server_uuid: String::new(),
+            display_name: String::new(),
+            specialization: String::new(),
+        };
+        store.with_connection(|connection| {
+            initialize_schema(connection)?;
+            let mut statement = connection.prepare(
+                "SELECT pa.player_name,
+                        pa.server_name,
+                        COALESCE(s.display_name, pa.server_name) AS server_display_name,
+                        pa.specialization,
+                        pa.total_seconds,
+                        pa.current_session_started_at,
+                        pa.last_joined_at,
+                        pa.last_left_at,
+                        pa.session_count
+                   FROM player_activity pa
+                   LEFT JOIN player_activity_servers s ON s.server_uuid = pa.server_name
+                  ORDER BY pa.player_name, server_display_name",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, i64>(8)?,
+                ))
+            })?;
+
+            let mut players: Vec<(String, Vec<Value>)> = Vec::new();
+            for row in rows {
+                let (
+                    player_name,
+                    server_uuid,
+                    server_display_name,
+                    specialization,
+                    total_seconds,
+                    current_session_started_at,
+                    last_joined_at,
+                    last_left_at,
+                    session_count,
+                ) = row?;
+                let entry = json!({
+                    "server_uuid": server_uuid,
+                    "server_name": server_display_name,
+                    "specialization": specialization,
+                    "online": current_session_started_at.is_some(),
+                    "total_seconds": total_seconds,
+                    "total_hours": seconds_to_hours(total_seconds),
+                    "last_joined_at": last_joined_at,
+                    "last_left_at": last_left_at,
+                    "session_count": session_count,
+                });
+                match players.last_mut() {
+                    Some((name, servers)) if *name == player_name => servers.push(entry),
+                    _ => players.push((player_name, vec![entry])),
+                }
+            }
+
+            let mut summaries: Vec<(bool, Option<DateTime<Utc>>, Value)> = players
+                .into_iter()
+                .map(|(player_name, servers)| {
+                    let online = servers
+                        .iter()
+                        .any(|server| server.get("online").and_then(Value::as_bool) == Some(true));
+                    let total_seconds: i64 = servers
+                        .iter()
+                        .filter_map(|server| server.get("total_seconds").and_then(Value::as_i64))
+                        .sum();
+                    let last_joined_at = servers
+                        .iter()
+                        .filter_map(|server| {
+                            server
+                                .get("last_joined_at")
+                                .and_then(Value::as_str)
+                                .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                        })
+                        .max();
+                    let sort_key = last_joined_at.map(|value| value.with_timezone(&Utc));
+                    let summary = json!({
+                        "name": player_name,
+                        "online": online,
+                        "total_seconds": total_seconds,
+                        "total_hours": seconds_to_hours(total_seconds),
+                        "last_joined_at": last_joined_at.map(|value| value.to_rfc3339()),
+                        "servers": servers,
+                    });
+                    (online, sort_key, summary)
+                })
+                .collect();
+
+            summaries.sort_by(|left, right| {
+                right
+                    .0
+                    .cmp(&left.0)
+                    .then_with(|| right.1.cmp(&left.1))
+            });
+
+            Ok(summaries
+                .into_iter()
+                .map(|(_, _, summary)| summary)
+                .collect())
+        })
+    }
+
     fn delete_server_stats(db_path: PathBuf, server_uuid: &str) -> rusqlite::Result<()> {
         let store = Self {
             db_path,
@@ -924,6 +1152,12 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
         DROP INDEX IF EXISTS idx_player_count_samples_lookup;
         CREATE INDEX IF NOT EXISTS idx_player_count_samples_lookup
             ON player_count_samples (server_name, sampled_at);
+
+        CREATE TABLE IF NOT EXISTS player_identities (
+            uuid TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            updated_at TEXT
+        );
         "#,
     )
 }
@@ -1090,6 +1324,7 @@ mod tests {
         let mut tracker = PlayerActivityTracker {
             players: store.load_players()?,
             store: Some(store),
+        last_periodic_sample_at: None,
         };
 
         assert!(tracker.player_joined("PlayerOne"));
@@ -1100,6 +1335,7 @@ mod tests {
         let reloaded_tracker = PlayerActivityTracker {
             players: reloaded_store.load_players()?,
             store: Some(reloaded_store),
+        last_periodic_sample_at: None,
         };
 
         assert_eq!(reloaded_tracker.known_player_count(), 1);
@@ -1111,13 +1347,20 @@ mod tests {
             Some(1)
         );
         let timeframe_stats = reloaded_tracker.timeframe_stats();
-        assert!(timeframe_stats
-            .get("day")
-            .and_then(|stats| stats.get("logged_hours"))
-            .is_some());
-        assert!(timeframe_stats
-            .get("day")
-            .and_then(|stats| stats.get("player_count_samples"))
+        let timeframe_names: Vec<&str> = timeframe_stats
+            .as_array()
+            .expect("timeframe stats should be an array")
+            .iter()
+            .filter_map(|entry| entry.get("name").and_then(Value::as_str))
+            .collect();
+        assert_eq!(timeframe_names, vec!["day", "week", "month", "year"]);
+        let day = timeframe_stats
+            .as_array()
+            .and_then(|entries| entries.first())
+            .expect("day stats should be present");
+        assert!(day.get("logged_hours").is_some());
+        assert!(day
+            .get("player_count_samples")
             .and_then(|samples| samples.as_array())
             .is_some_and(|samples| !samples.is_empty()));
 
@@ -1147,6 +1390,7 @@ mod tests {
             let mut tracker = PlayerActivityTracker {
                 players: store.load_players()?,
                 store: Some(store),
+            last_periodic_sample_at: None,
             };
             assert!(tracker.player_joined("SharedName"));
             assert!(tracker.player_left("SharedName"));
@@ -1176,6 +1420,7 @@ mod tests {
         let server_one_tracker = PlayerActivityTracker {
             players: server_one_store.load_players()?,
             store: Some(server_one_store),
+        last_periodic_sample_at: None,
         };
         assert_eq!(server_one_tracker.known_player_count(), 1);
         assert_eq!(
@@ -1235,7 +1480,10 @@ mod tests {
         })?;
 
         let stats = store.timeframe_stats()?;
-        let week = stats.get("week").expect("week stats should be present");
+        let week = stats
+            .iter()
+            .find(|entry| entry.get("name").and_then(Value::as_str) == Some("week"))
+            .expect("week stats should be present");
         let start = parse_timestamp(
             week.get("start")
                 .and_then(Value::as_str)
@@ -1270,6 +1518,7 @@ mod tests {
         let mut archived_tracker = PlayerActivityTracker {
             players: archived_store.load_players()?,
             store: Some(archived_store),
+        last_periodic_sample_at: None,
         };
         assert!(archived_tracker.player_joined("ArchivedName"));
         assert!(archived_tracker.player_left("ArchivedName"));

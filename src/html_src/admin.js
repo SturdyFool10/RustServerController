@@ -1044,22 +1044,46 @@ window.RSCApp = window.RSCApp || {};
       return;
     }
     servers.forEach((server) => {
-      const label = document.createElement("label");
-      const toggle = document.createElement("input");
-      toggle.type = "checkbox";
-      toggle.checked = !!server.specialization_options?.whitelist_enabled;
-      toggle.title = "Reject any Minecraft player not on this server's whitelist";
-      toggle.addEventListener("change", () => {
+      const row = document.createElement("div");
+      row.className = "minecraftWhitelistToggleRow";
+
+      const nameLabel = document.createElement("strong");
+      nameLabel.textContent = server.name;
+
+      const whitelistLabel = document.createElement("label");
+      const whitelistToggle = document.createElement("input");
+      whitelistToggle.type = "checkbox";
+      whitelistToggle.checked = !!server.specialization_options?.controller_controlled_whitelist;
+      whitelistToggle.title = "Reject any Minecraft player not on this server's whitelist";
+      whitelistToggle.addEventListener("change", () => {
         const next = cloneConfig();
         const target = minecraftServers(next).find((item) => item.name === server.name);
         if (target) {
           target.specialization_options = target.specialization_options || {};
-          target.specialization_options.whitelist_enabled = toggle.checked;
+          target.specialization_options.controller_controlled_whitelist = whitelistToggle.checked;
         }
         sendConfig(next);
       });
-      label.append(toggle, document.createTextNode(`Enforce whitelist for ${server.name}`));
-      container.appendChild(label);
+      whitelistLabel.append(whitelistToggle, document.createTextNode("Controller-controlled whitelist"));
+
+      const banLabel = document.createElement("label");
+      const banToggle = document.createElement("input");
+      banToggle.type = "checkbox";
+      banToggle.checked = !!server.specialization_options?.controller_controlled_ban_list;
+      banToggle.title = "Let the controller push this server's ban list and IP ban list to the server";
+      banToggle.addEventListener("change", () => {
+        const next = cloneConfig();
+        const target = minecraftServers(next).find((item) => item.name === server.name);
+        if (target) {
+          target.specialization_options = target.specialization_options || {};
+          target.specialization_options.controller_controlled_ban_list = banToggle.checked;
+        }
+        sendConfig(next);
+      });
+      banLabel.append(banToggle, document.createTextNode("Controller-controlled ban list"));
+
+      row.append(nameLabel, whitelistLabel, banLabel);
+      container.appendChild(row);
     });
   }
 

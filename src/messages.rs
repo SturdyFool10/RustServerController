@@ -73,6 +73,10 @@ pub struct ServerInfoMessage {
     /// Stats retained for server UUIDs no longer present in the current config.
     #[serde(default)]
     pub archived_server_stats: serde_json::Value,
+    /// Player activity aggregated across every server sharing this controller's
+    /// activity database, one entry per distinct player name.
+    #[serde(default)]
+    pub global_player_activity: serde_json::Value,
     /// The current configuration.
     pub config: crate::configuration::Config,
 }

@@ -242,7 +242,7 @@ impl ServerSpecialization for VintageStoryServerSpecialization {
             "Config Found": self.config_found,
             "Observed Names": self.player_activity.known_player_count(),
             "Total Session Hours": self.player_activity.total_hours(),
-            "Name Activity": self.player_activity.summaries(),
+            "User Activity": self.player_activity.summaries(),
             "Recent Sessions": self.player_activity.recent_sessions(25),
             "Timeframe Stats": self.player_activity.timeframe_stats(),
         })

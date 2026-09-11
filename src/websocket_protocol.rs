@@ -84,6 +84,7 @@ pub(crate) async fn build_server_info_message(
         archived_server_stats: crate::specializations::player_activity::archived_server_stats(
             &active_server_uuids,
         ),
+        global_player_activity: crate::specializations::player_activity::global_player_activity(),
         config,
     }
 }
@@ -201,6 +202,8 @@ pub(crate) fn filter_server_info_message_for_session(
     info.config = filter_config_for_session(info.config, session);
     info.archived_server_stats =
         filter_archived_server_stats(info.archived_server_stats, &visible_stats_server_uuids);
+    info.global_player_activity =
+        filter_global_player_activity(info.global_player_activity, &visible_stats_server_uuids);
     info
 }
 
@@ -319,6 +322,42 @@ fn filter_archived_server_stats(
         }
         other => other,
     }
+}
+
+/// Filters each player's per-server breakdown down to servers the session can
+/// view stats for, dropping players left with no visible servers.
+fn filter_global_player_activity(
+    value: serde_json::Value,
+    visible_uuids: &[String],
+) -> serde_json::Value {
+    let serde_json::Value::Array(players) = value else {
+        return value;
+    };
+    serde_json::Value::Array(
+        players
+            .into_iter()
+            .filter_map(|mut player| {
+                let servers = player.get_mut("servers")?.take();
+                let serde_json::Value::Array(servers) = servers else {
+                    return None;
+                };
+                let visible_servers: Vec<serde_json::Value> = servers
+                    .into_iter()
+                    .filter(|server| {
+                        server
+                            .get("server_uuid")
+                            .and_then(|value| value.as_str())
+                            .is_some_and(|uuid| visible_uuids.iter().any(|visible| visible == uuid))
+                    })
+                    .collect();
+                if visible_servers.is_empty() {
+                    return None;
+                }
+                player["servers"] = serde_json::Value::Array(visible_servers);
+                Some(player)
+            })
+            .collect(),
+    )
 }
 
 async fn send_text_json<T: serde::Serialize>(sender: &WsSender, value: &T) {

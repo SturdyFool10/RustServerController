@@ -672,6 +672,77 @@ h1 {
     color: var(--text-muted);
     overflow-wrap: anywhere;
 }
+.statsUserActivity {
+    display: grid;
+    gap: 10px;
+}
+.statsUserActivityCard {
+    border: 1px solid var(--border-muted);
+    border-radius: 8px;
+    background: var(--bg);
+    padding: 10px 12px;
+}
+.statsUserActivityHeader {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+.statsUserActivityHeader strong {
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+.statsUserActivityTotal {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-left: auto;
+}
+.statsBadge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border: 1px solid transparent;
+}
+.statsBadge-online {
+    background: color-mix(in srgb, var(--success) 20%, transparent);
+    border-color: var(--success);
+    color: var(--success);
+}
+.statsBadge-offline {
+    background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+    border-color: var(--border-muted);
+    color: var(--text-muted);
+}
+.statsUserActivityServers {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+}
+.statsUserActivityServers li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--bg-dark);
+}
+.statsUserActivityServerName {
+    color: var(--text);
+    font-weight: 500;
+    overflow-wrap: anywhere;
+}
+.statsUserActivityServerMeta {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    margin-left: auto;
+    overflow-wrap: anywhere;
+}
 .statsSpecializationDetails li,
 .statsSpecializationSettings li,
 .statsServerData li,
@@ -720,6 +791,16 @@ h1 {
 .statsSpecializationDetails dt.statsDetailWide {
     margin-top: 6px;
 }
+.statsUuidTerm {
+    grid-column: 1;
+}
+.statsUuidDescription {
+    grid-column: 2 / -1;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    min-width: 0;
+}
 .statsColumns li span,
 .statsColumns li {
     overflow-wrap: anywhere;
@@ -741,6 +822,13 @@ h1 {
     max-width: 100%;
     overflow-wrap: anywhere;
     cursor: pointer;
+}
+.statsUuidButton {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: "Roboto Mono", "Consolas", monospace;
+    font-size: 0.85em;
 }
 .statsArchiveActions {
     display: flex;
@@ -1043,15 +1131,29 @@ h1 {
     color: var(--text-muted);
 }
 .minecraftWhitelistToggles {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 18px;
+    display: grid;
+    gap: 8px;
     color: var(--text);
 }
-.minecraftWhitelistToggles label {
+.minecraftWhitelistToggleRow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    align-items: center;
+    padding: 8px 10px;
+    border: 1px solid var(--border-muted);
+    border-radius: 6px;
+    background: var(--bg-dark);
+}
+.minecraftWhitelistToggleRow strong {
+    color: var(--secondary);
+    min-width: 120px;
+}
+.minecraftWhitelistToggleRow label {
     display: inline-flex;
     gap: 6px;
     align-items: center;
+    color: var(--text-muted);
 }
 .accountPermissionPicker {
     display: grid;

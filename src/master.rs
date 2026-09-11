@@ -195,6 +195,7 @@ impl SlaveConnection {
                 r#type: "".to_string(),
                 servers: vec![],
                 archived_server_stats: serde_json::Value::Array(Vec::new()),
+                global_player_activity: serde_json::Value::Array(Vec::new()),
                 config: Config::default(),
             };
             let mut _sinfo: ServerInfoMessage = def.clone();

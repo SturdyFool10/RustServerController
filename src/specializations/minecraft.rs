@@ -51,15 +51,20 @@ impl ServerSpecialization for MinecraftSpecialization {
 
         descriptor: &crate::controlled_program::ControlledProgramDescriptor,
     ) {
-        let enabled = account_filter_whitelist_enabled(descriptor.specialization_options.as_ref());
-        set_server_properties_whitelist(&descriptor.working_dir, enabled);
+        // Only touch server.properties when the controller is actually managing the
+        // whitelist; leave it untouched otherwise so a disabled toggle doesn't
+        // silently overwrite an admin's own manual white-list setting.
+        if account_filter_flags(descriptor.specialization_options.as_ref()).whitelist {
+            set_server_properties_whitelist(&descriptor.working_dir, true);
+        }
     }
 
     fn default_options(&self) -> serde_json::Value {
         json!({
             "auto_accept_eula": true,
             "account_filter_groups": [],
-            "whitelist_enabled": false,
+            "controller_controlled_whitelist": false,
+            "controller_controlled_ban_list": false,
         })
     }
 
@@ -204,6 +209,8 @@ impl ServerSpecialization for MinecraftSpecialization {
 
         self.last_status_update |= status_update;
 
+        self.player_activity.maybe_sample_periodic();
+
         // Colorize the line using bracket counting
 
         Some(colorize_minecraft_log_line(&line))
@@ -313,7 +320,7 @@ impl ServerSpecialization for MinecraftSpecialization {
             "Online Names": self.player_list.len(),
             "Observed Names": self.player_activity.known_player_count(),
             "Total Session Hours": self.player_activity.total_hours(),
-            "Name Activity": self.player_activity.summaries(),
+            "User Activity": self.player_activity.summaries(),
             "Recent Sessions": self.player_activity.recent_sessions(25),
             "Timeframe Stats": self.player_activity.timeframe_stats(),
         })
@@ -329,9 +336,8 @@ impl MinecraftSpecialization {
         self.stop_account_filter_watcher();
         let group_ids =
             account_filter_group_ids(instance.specialization_options.as_ref()).unwrap_or_default();
-        let whitelist_enabled =
-            account_filter_whitelist_enabled(instance.specialization_options.as_ref());
-        if group_ids.is_empty() && !whitelist_enabled {
+        let flags = account_filter_flags(instance.specialization_options.as_ref());
+        if group_ids.is_empty() && !flags.whitelist && !flags.ban_list {
             return;
         }
 
@@ -342,7 +348,6 @@ impl MinecraftSpecialization {
         self.account_filter_watcher = Some(tokio::spawn(watch_account_filter_files(
             server_name,
             working_dir,
-            group_ids,
             state,
             stop_rx,
         )));
@@ -371,59 +376,70 @@ struct AccountFilterSnapshot {
     ip_bans: BTreeSet<String>,
 }
 
-pub async fn sync_configured_account_filters_async(config: &Config) {
+pub async fn sync_configured_account_filters_async(state: &AppState) {
+    let config = state.config.lock().await.clone();
     for server in config
         .servers
         .iter()
         .filter(|server| server.specialized_server_type.as_deref() == Some("Minecraft"))
     {
-        let Some(group_ids) = account_filter_group_ids(server.specialization_options.as_ref())
-        else {
-            continue;
-        };
-        if group_ids.is_empty() {
+        let group_ids =
+            account_filter_group_ids(server.specialization_options.as_ref()).unwrap_or_default();
+        let flags = account_filter_flags(server.specialization_options.as_ref());
+        if group_ids.is_empty() || (!flags.whitelist && !flags.ban_list) {
             continue;
         }
-        write_effective_filter_files_async(config, &server.working_dir, &group_ids).await;
+        resolve_missing_account_filter_uuids(state, &group_ids).await;
+        let config = state.config.lock().await.clone();
+        write_effective_filter_files_async(&config, &server.working_dir, &group_ids, flags).await;
     }
 }
 
 async fn watch_account_filter_files(
     server_name: String,
     working_dir: String,
-    group_ids: Vec<String>,
     state: AppState,
     mut stop: watch::Receiver<bool>,
 ) {
     let mut snapshot = filter_file_snapshot_async(&working_dir).await;
     let mut interval = tokio::time::interval(Duration::from_millis(500));
     let mut expiry_interval = tokio::time::interval(Duration::from_secs(30));
-    let mut live_snapshot = fan_out_account_filters_for_state(&state, &group_ids).await;
-    let mut whitelist_enabled = current_server_whitelist_enabled(&state, &server_name).await;
-    apply_whitelist_enabled_command(&state, &server_name, whitelist_enabled).await;
+    let (mut group_ids, mut flags) = current_server_filter_config(&state, &server_name).await;
+    resolve_missing_account_filter_uuids(&state, &group_ids).await;
+    let mut live_snapshot = fan_out_account_filters_for_state(&state, &group_ids, flags).await;
+    // Only assert the "on" state at startup; never assert "off" here, since we
+    // don't know whether the server's existing whitelist state was set up
+    // outside the controller entirely. A live toggle-off (below) still applies,
+    // since that's an explicit admin action while the controller is watching.
+    if flags.whitelist {
+        apply_whitelist_enabled_command(&state, &server_name, true).await;
+    }
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
                 let next_snapshot = filter_file_snapshot_async(&working_dir).await;
-                if next_snapshot != snapshot {
-                    tracing::debug!("Minecraft account filter files changed for '{}'; syncing groups", server_name);
-                    let next_live_snapshot = sync_account_filters_for_state(&state, &working_dir, &group_ids).await;
+                let (next_group_ids, next_flags) = current_server_filter_config(&state, &server_name).await;
+                if next_snapshot != snapshot || next_group_ids != group_ids || next_flags != flags {
+                    tracing::debug!("Minecraft account filter state changed for '{}'; syncing", server_name);
+                    resolve_missing_account_filter_uuids(&state, &next_group_ids).await;
+                    let next_live_snapshot = sync_account_filters_for_state(&state, &working_dir, &next_group_ids, next_flags).await;
                     apply_live_account_filter_commands(&state, &server_name, &live_snapshot, &next_live_snapshot).await;
                     live_snapshot = next_live_snapshot;
                     snapshot = filter_file_snapshot_async(&working_dir).await;
                 }
-                let next_whitelist_enabled = current_server_whitelist_enabled(&state, &server_name).await;
-                if next_whitelist_enabled != whitelist_enabled {
-                    apply_whitelist_enabled_command(&state, &server_name, next_whitelist_enabled).await;
-                    whitelist_enabled = next_whitelist_enabled;
+                if next_flags.whitelist != flags.whitelist {
+                    apply_whitelist_enabled_command(&state, &server_name, next_flags.whitelist).await;
                 }
+                group_ids = next_group_ids;
+                flags = next_flags;
             }
             _ = expiry_interval.tick() => {
-                let next_live_snapshot = fan_out_account_filters_for_state(&state, &group_ids).await;
+                let next_live_snapshot = fan_out_account_filters_for_state(&state, &group_ids, flags).await;
                 apply_live_account_filter_commands(&state, &server_name, &live_snapshot, &next_live_snapshot).await;
                 live_snapshot = next_live_snapshot;
                 snapshot = filter_file_snapshot_async(&working_dir).await;
+                sync_usercache_identities(&state, &working_dir).await;
             }
             changed = stop.changed() => {
                 if changed.is_err() || *stop.borrow() {
@@ -434,14 +450,92 @@ async fn watch_account_filter_files(
     }
 }
 
-async fn current_server_whitelist_enabled(state: &AppState, server_name: &str) -> bool {
+#[derive(serde::Deserialize)]
+struct UsercacheEntry {
+    name: String,
+    uuid: String,
+}
+
+/// Watches a vanilla Minecraft server's own `usercache.json` (which it
+/// maintains automatically for every player that has ever connected) to
+/// catch when a known player's name changes, migrating their activity
+/// history and any whitelist/ban list entries referencing their UUID over
+/// to the new name.
+async fn sync_usercache_identities(state: &AppState, working_dir: &str) {
+    let path = Path::new(working_dir).join("usercache.json");
+    let Ok(contents) = tokio::fs::read_to_string(&path).await else {
+        return;
+    };
+    let Ok(entries) = serde_json::from_str::<Vec<UsercacheEntry>>(&contents) else {
+        return;
+    };
+
+    let mut renames = Vec::new();
+    for entry in entries {
+        if let Some(previous_name) =
+            super::player_activity::sync_player_identity(&entry.uuid, &entry.name)
+        {
+            renames.push((entry.uuid, previous_name, entry.name));
+        }
+    }
+    if renames.is_empty() {
+        return;
+    }
+
+    let config_snapshot = {
+        let mut config = state.config.lock().await;
+        let mut changed = false;
+        for (uuid, _, new_name) in &renames {
+            for group in &mut config.minecraft_account_filter_detail_groups {
+                for entry in group.whitelist.iter_mut().chain(group.ban_list.iter_mut()) {
+                    if entry.uuid.as_deref() == Some(uuid.as_str()) && entry.name != *new_name {
+                        entry.name = new_name.clone();
+                        changed = true;
+                    }
+                }
+            }
+        }
+        changed.then(|| config.clone())
+    };
+
+    if let Some(config_snapshot) = config_snapshot {
+        if let Err(error) = config_snapshot
+            .update_config_file_async("config.json")
+            .await
+        {
+            tracing::warn!(
+                "Failed to persist Minecraft name-change migration: {}",
+                error
+            );
+        }
+        let message = ConfigInfo {
+            r#type: "ConfigInfo".to_string(),
+            config: config_snapshot,
+        };
+        broadcast_json(state, &message);
+    }
+
+    for (_, old_name, new_name) in renames {
+        tracing::info!(
+            "Detected Minecraft name change '{}' -> '{}'; migrated activity and filter-list data",
+            old_name,
+            new_name
+        );
+    }
+}
+
+async fn current_server_filter_config(
+    state: &AppState,
+    server_name: &str,
+) -> (Vec<String>, AccountFilterFlags) {
     let config = state.config.lock().await;
-    config
-        .servers
-        .iter()
-        .find(|server| server.name == server_name)
-        .map(|server| account_filter_whitelist_enabled(server.specialization_options.as_ref()))
-        .unwrap_or(false)
+    let Some(server) = config.servers.iter().find(|server| server.name == server_name) else {
+        return (Vec::new(), AccountFilterFlags::default());
+    };
+    let group_ids =
+        account_filter_group_ids(server.specialization_options.as_ref()).unwrap_or_default();
+    let flags = account_filter_flags(server.specialization_options.as_ref());
+    (group_ids, flags)
 }
 
 async fn apply_whitelist_enabled_command(state: &AppState, server_name: &str, enabled: bool) {
@@ -453,6 +547,7 @@ async fn sync_account_filters_for_state(
     state: &AppState,
     working_dir: &str,
     group_ids: &[String],
+    flags: AccountFilterFlags,
 ) -> AccountFilterSnapshot {
     let mut config_snapshot = {
         let config = state.config.lock().await;
@@ -461,7 +556,7 @@ async fn sync_account_filters_for_state(
     let changed =
         merge_instance_filter_files_into_groups_async(&mut config_snapshot, working_dir, group_ids)
             .await;
-    let snapshot = effective_account_filter_snapshot(&config_snapshot, group_ids);
+    let snapshot = effective_account_filter_snapshot(&config_snapshot, group_ids, flags);
     fan_out_effective_filter_files_async(&config_snapshot, group_ids).await;
 
     if changed {
@@ -492,12 +587,13 @@ async fn sync_account_filters_for_state(
 async fn fan_out_account_filters_for_state(
     state: &AppState,
     group_ids: &[String],
+    flags: AccountFilterFlags,
 ) -> AccountFilterSnapshot {
     let config = {
         let config = state.config.lock().await;
         config.clone()
     };
-    let snapshot = effective_account_filter_snapshot(&config, group_ids);
+    let snapshot = effective_account_filter_snapshot(&config, group_ids, flags);
     fan_out_effective_filter_files_async(&config, group_ids).await;
     snapshot
 }
@@ -586,15 +682,16 @@ async fn fan_out_effective_filter_files_async(config: &Config, group_ids: &[Stri
                 .iter()
                 .any(|group| group_ids.contains(group))
             {
-                Some((server.working_dir.clone(), server_group_ids))
+                let flags = account_filter_flags(server.specialization_options.as_ref());
+                Some((server.working_dir.clone(), server_group_ids, flags))
             } else {
                 None
             }
         })
         .collect();
 
-    for (working_dir, server_group_ids) in minecraft_servers {
-        write_effective_filter_files_async(config, &working_dir, &server_group_ids).await;
+    for (working_dir, server_group_ids, flags) in minecraft_servers {
+        write_effective_filter_files_async(config, &working_dir, &server_group_ids, flags).await;
     }
 }
 
@@ -704,25 +801,30 @@ fn selected_account_filter_groups<'a>(
 fn effective_account_filter_snapshot(
     config: &Config,
     group_ids: &[String],
+    flags: AccountFilterFlags,
 ) -> AccountFilterSnapshot {
     let mut snapshot = AccountFilterSnapshot::default();
     for group in selected_account_filter_groups(config, group_ids) {
-        for entry in &group.whitelist {
-            let name = entry.name.trim();
-            if !name.is_empty() && account_entry_is_active(entry.expires.as_deref()) {
-                snapshot.whitelist.insert(name.to_string());
+        if flags.whitelist {
+            for entry in &group.whitelist {
+                let name = entry.name.trim();
+                if !name.is_empty() && account_entry_is_active(entry.expires.as_deref()) {
+                    snapshot.whitelist.insert(name.to_string());
+                }
             }
         }
-        for entry in &group.ban_list {
-            let name = entry.name.trim();
-            if !name.is_empty() && account_entry_is_active(entry.expires.as_deref()) {
-                snapshot.bans.insert(name.to_string());
+        if flags.ban_list {
+            for entry in &group.ban_list {
+                let name = entry.name.trim();
+                if !name.is_empty() && account_entry_is_active(entry.expires.as_deref()) {
+                    snapshot.bans.insert(name.to_string());
+                }
             }
-        }
-        for entry in &group.banned_ips {
-            let ip = entry.ip.trim();
-            if !ip.is_empty() && account_entry_is_active(entry.expires.as_deref()) {
-                snapshot.ip_bans.insert(ip.to_string());
+            for entry in &group.banned_ips {
+                let ip = entry.ip.trim();
+                if !ip.is_empty() && account_entry_is_active(entry.expires.as_deref()) {
+                    snapshot.ip_bans.insert(ip.to_string());
+                }
             }
         }
     }
@@ -730,84 +832,11 @@ fn effective_account_filter_snapshot(
 }
 
 #[cfg(test)]
-fn write_effective_filter_files(config: &Config, working_dir: &str, group_ids: &[String]) {
-    let selected = selected_account_filter_groups(config, group_ids);
-    if selected.is_empty() {
-        return;
-    }
-
-    let mut whitelist = BTreeMap::new();
-    let mut bans = BTreeMap::new();
-    let mut ip_bans = BTreeMap::new();
-    for group in selected {
-        for entry in &group.whitelist {
-            if !entry.name.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
-                whitelist.insert(entry.name.to_ascii_lowercase(), entry);
-            }
-        }
-        for entry in &group.ban_list {
-            if !entry.name.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
-                bans.insert(entry.name.to_ascii_lowercase(), entry);
-            }
-        }
-        for entry in &group.banned_ips {
-            if !entry.ip.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
-                ip_bans.insert(entry.ip.clone(), entry);
-            }
-        }
-    }
-
-    if let Err(error) = write_minecraft_filter_file(
-        working_dir,
-        "whitelist.json",
-        whitelist.values().map(|entry| {
-            json!({
-                "uuid": entry.uuid.clone().unwrap_or_default(),
-                "name": entry.name,
-            })
-        }),
-    ) {
-        tracing::warn!("Failed to sync Minecraft whitelist: {}", error);
-    }
-
-    if let Err(error) = write_minecraft_filter_file(
-        working_dir,
-        "banned-players.json",
-        bans.values().map(|entry| {
-            json!({
-                "uuid": entry.uuid.clone().unwrap_or_default(),
-                "name": entry.name,
-                "created": minecraft_timestamp_or_default(entry.created.as_deref(), "1970-01-01 00:00:00 +0000"),
-                "source": entry.source.clone().unwrap_or_else(|| "RustServerController".to_string()),
-                "expires": minecraft_timestamp_or_default(entry.expires.as_deref(), "forever"),
-                "reason": entry.reason.clone().unwrap_or_else(|| "Banned by administrator".to_string()),
-            })
-        }),
-    ) {
-        tracing::warn!("Failed to sync Minecraft ban list: {}", error);
-    }
-
-    if let Err(error) = write_minecraft_filter_file(
-        working_dir,
-        "banned-ips.json",
-        ip_bans.values().map(|entry| {
-            json!({
-                "ip": entry.ip,
-                "created": minecraft_timestamp_or_default(entry.created.as_deref(), "1970-01-01 00:00:00 +0000"),
-                "source": entry.source.clone().unwrap_or_else(|| "RustServerController".to_string()),
-                "expires": minecraft_timestamp_or_default(entry.expires.as_deref(), "forever"),
-                "reason": entry.reason.clone().unwrap_or_else(|| "Banned by administrator".to_string()),
-            })
-        }),
-    ) {
-        tracing::warn!("Failed to sync Minecraft IP ban list: {}", error);
-    }
-}
-
-async fn write_effective_filter_files_async(
+fn write_effective_filter_files(
     config: &Config,
     working_dir: &str,
     group_ids: &[String],
+    flags: AccountFilterFlags,
 ) {
     let selected = selected_account_filter_groups(config, group_ids);
     if selected.is_empty() {
@@ -818,73 +847,168 @@ async fn write_effective_filter_files_async(
     let mut bans = BTreeMap::new();
     let mut ip_bans = BTreeMap::new();
     for group in selected {
-        for entry in &group.whitelist {
-            if !entry.name.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
-                whitelist.insert(entry.name.to_ascii_lowercase(), entry);
+        if flags.whitelist {
+            for entry in &group.whitelist {
+                if !entry.name.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
+                    whitelist.insert(entry.name.to_ascii_lowercase(), entry);
+                }
             }
         }
-        for entry in &group.ban_list {
-            if !entry.name.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
-                bans.insert(entry.name.to_ascii_lowercase(), entry);
+        if flags.ban_list {
+            for entry in &group.ban_list {
+                if !entry.name.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
+                    bans.insert(entry.name.to_ascii_lowercase(), entry);
+                }
             }
-        }
-        for entry in &group.banned_ips {
-            if !entry.ip.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
-                ip_bans.insert(entry.ip.clone(), entry);
+            for entry in &group.banned_ips {
+                if !entry.ip.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
+                    ip_bans.insert(entry.ip.clone(), entry);
+                }
             }
         }
     }
 
-    if let Err(error) = write_minecraft_filter_file_async(
-        working_dir,
-        "whitelist.json",
-        whitelist.values().map(|entry| {
-            json!({
-                "uuid": entry.uuid.clone().unwrap_or_default(),
-                "name": entry.name,
-            })
-        }),
-    )
-    .await
-    {
-        tracing::warn!("Failed to sync Minecraft whitelist: {}", error);
+    if flags.whitelist {
+        if let Err(error) = write_minecraft_filter_file(
+            working_dir,
+            "whitelist.json",
+            whitelist.values().map(|entry| {
+                json!({
+                    "uuid": entry.uuid.clone().unwrap_or_default(),
+                    "name": entry.name,
+                })
+            }),
+        ) {
+            tracing::warn!("Failed to sync Minecraft whitelist: {}", error);
+        }
     }
 
-    if let Err(error) = write_minecraft_filter_file_async(
-        working_dir,
-        "banned-players.json",
-        bans.values().map(|entry| {
-            json!({
-                "uuid": entry.uuid.clone().unwrap_or_default(),
-                "name": entry.name,
-                "created": minecraft_timestamp_or_default(entry.created.as_deref(), "1970-01-01 00:00:00 +0000"),
-                "source": entry.source.clone().unwrap_or_else(|| "RustServerController".to_string()),
-                "expires": minecraft_timestamp_or_default(entry.expires.as_deref(), "forever"),
-                "reason": entry.reason.clone().unwrap_or_else(|| "Banned by administrator".to_string()),
-            })
-        }),
-    )
-    .await
-    {
-        tracing::warn!("Failed to sync Minecraft ban list: {}", error);
+    if flags.ban_list {
+        if let Err(error) = write_minecraft_filter_file(
+            working_dir,
+            "banned-players.json",
+            bans.values().map(|entry| {
+                json!({
+                    "uuid": entry.uuid.clone().unwrap_or_default(),
+                    "name": entry.name,
+                    "created": minecraft_timestamp_or_default(entry.created.as_deref(), "1970-01-01 00:00:00 +0000"),
+                    "source": entry.source.clone().unwrap_or_else(|| "RustServerController".to_string()),
+                    "expires": minecraft_timestamp_or_default(entry.expires.as_deref(), "forever"),
+                    "reason": entry.reason.clone().unwrap_or_else(|| "Banned by administrator".to_string()),
+                })
+            }),
+        ) {
+            tracing::warn!("Failed to sync Minecraft ban list: {}", error);
+        }
+
+        if let Err(error) = write_minecraft_filter_file(
+            working_dir,
+            "banned-ips.json",
+            ip_bans.values().map(|entry| {
+                json!({
+                    "ip": entry.ip,
+                    "created": minecraft_timestamp_or_default(entry.created.as_deref(), "1970-01-01 00:00:00 +0000"),
+                    "source": entry.source.clone().unwrap_or_else(|| "RustServerController".to_string()),
+                    "expires": minecraft_timestamp_or_default(entry.expires.as_deref(), "forever"),
+                    "reason": entry.reason.clone().unwrap_or_else(|| "Banned by administrator".to_string()),
+                })
+            }),
+        ) {
+            tracing::warn!("Failed to sync Minecraft IP ban list: {}", error);
+        }
+    }
+}
+
+async fn write_effective_filter_files_async(
+    config: &Config,
+    working_dir: &str,
+    group_ids: &[String],
+    flags: AccountFilterFlags,
+) {
+    let selected = selected_account_filter_groups(config, group_ids);
+    if selected.is_empty() {
+        return;
     }
 
-    if let Err(error) = write_minecraft_filter_file_async(
-        working_dir,
-        "banned-ips.json",
-        ip_bans.values().map(|entry| {
-            json!({
-                "ip": entry.ip,
-                "created": minecraft_timestamp_or_default(entry.created.as_deref(), "1970-01-01 00:00:00 +0000"),
-                "source": entry.source.clone().unwrap_or_else(|| "RustServerController".to_string()),
-                "expires": minecraft_timestamp_or_default(entry.expires.as_deref(), "forever"),
-                "reason": entry.reason.clone().unwrap_or_else(|| "Banned by administrator".to_string()),
-            })
-        }),
-    )
-    .await
-    {
-        tracing::warn!("Failed to sync Minecraft IP ban list: {}", error);
+    let mut whitelist = BTreeMap::new();
+    let mut bans = BTreeMap::new();
+    let mut ip_bans = BTreeMap::new();
+    for group in selected {
+        if flags.whitelist {
+            for entry in &group.whitelist {
+                if !entry.name.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
+                    whitelist.insert(entry.name.to_ascii_lowercase(), entry);
+                }
+            }
+        }
+        if flags.ban_list {
+            for entry in &group.ban_list {
+                if !entry.name.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
+                    bans.insert(entry.name.to_ascii_lowercase(), entry);
+                }
+            }
+            for entry in &group.banned_ips {
+                if !entry.ip.trim().is_empty() && account_entry_is_active(entry.expires.as_deref()) {
+                    ip_bans.insert(entry.ip.clone(), entry);
+                }
+            }
+        }
+    }
+
+    if flags.whitelist {
+        if let Err(error) = write_minecraft_filter_file_async(
+            working_dir,
+            "whitelist.json",
+            whitelist.values().map(|entry| {
+                json!({
+                    "uuid": entry.uuid.clone().unwrap_or_default(),
+                    "name": entry.name,
+                })
+            }),
+        )
+        .await
+        {
+            tracing::warn!("Failed to sync Minecraft whitelist: {}", error);
+        }
+    }
+
+    if flags.ban_list {
+        if let Err(error) = write_minecraft_filter_file_async(
+            working_dir,
+            "banned-players.json",
+            bans.values().map(|entry| {
+                json!({
+                    "uuid": entry.uuid.clone().unwrap_or_default(),
+                    "name": entry.name,
+                    "created": minecraft_timestamp_or_default(entry.created.as_deref(), "1970-01-01 00:00:00 +0000"),
+                    "source": entry.source.clone().unwrap_or_else(|| "RustServerController".to_string()),
+                    "expires": minecraft_timestamp_or_default(entry.expires.as_deref(), "forever"),
+                    "reason": entry.reason.clone().unwrap_or_else(|| "Banned by administrator".to_string()),
+                })
+            }),
+        )
+        .await
+        {
+            tracing::warn!("Failed to sync Minecraft ban list: {}", error);
+        }
+
+        if let Err(error) = write_minecraft_filter_file_async(
+            working_dir,
+            "banned-ips.json",
+            ip_bans.values().map(|entry| {
+                json!({
+                    "ip": entry.ip,
+                    "created": minecraft_timestamp_or_default(entry.created.as_deref(), "1970-01-01 00:00:00 +0000"),
+                    "source": entry.source.clone().unwrap_or_else(|| "RustServerController".to_string()),
+                    "expires": minecraft_timestamp_or_default(entry.expires.as_deref(), "forever"),
+                    "reason": entry.reason.clone().unwrap_or_else(|| "Banned by administrator".to_string()),
+                })
+            }),
+        )
+        .await
+        {
+            tracing::warn!("Failed to sync Minecraft IP ban list: {}", error);
+        }
     }
 }
 
@@ -1019,11 +1143,174 @@ async fn read_minecraft_filter_file_async<T: serde::de::DeserializeOwned>(
         .unwrap_or_default()
 }
 
-fn account_filter_whitelist_enabled(options: Option<&Value>) -> bool {
+/// Whether the controller is allowed to manage a server's whitelist and/or
+/// ban list. When a flag is false the controller leaves that file entirely
+/// alone, even if the server belongs to a group with matching entries.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct AccountFilterFlags {
+    whitelist: bool,
+    ban_list: bool,
+}
+
+fn account_filter_flags(options: Option<&Value>) -> AccountFilterFlags {
+    AccountFilterFlags {
+        whitelist: bool_specialization_option(options, "controller_controlled_whitelist"),
+        ban_list: bool_specialization_option(options, "controller_controlled_ban_list"),
+    }
+}
+
+fn bool_specialization_option(options: Option<&Value>, key: &str) -> bool {
     options
-        .and_then(|options| options.get("whitelist_enabled"))
+        .and_then(|options| options.get(key))
         .and_then(Value::as_bool)
         .unwrap_or(false)
+}
+
+fn needs_uuid_resolution(entry: &MinecraftAccountFilterDetail) -> bool {
+    !entry.name.trim().is_empty()
+        && entry
+            .uuid
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+}
+
+/// Resolves and persists real Minecraft UUIDs for any whitelist/ban entries in
+/// the given groups that don't have one yet (e.g. an admin typed a name into
+/// the web UI). Without this, entries get written to whitelist.json/
+/// banned-players.json with an empty uuid field, which Minecraft may not
+/// match correctly against connecting/offline players.
+async fn resolve_missing_account_filter_uuids(state: &AppState, group_ids: &[String]) {
+    if group_ids.is_empty() {
+        return;
+    }
+
+    let pending: Vec<(String, bool, usize, String)> = {
+        let config = state.config.lock().await;
+        let mut pending = Vec::new();
+        for group in &config.minecraft_account_filter_detail_groups {
+            let Some(group_uuid) = group.uuid.as_deref() else {
+                continue;
+            };
+            if !group_ids.iter().any(|id| id == group_uuid) {
+                continue;
+            }
+            for (index, entry) in group.whitelist.iter().enumerate() {
+                if needs_uuid_resolution(entry) {
+                    pending.push((group_uuid.to_string(), true, index, entry.name.clone()));
+                }
+            }
+            for (index, entry) in group.ban_list.iter().enumerate() {
+                if needs_uuid_resolution(entry) {
+                    pending.push((group_uuid.to_string(), false, index, entry.name.clone()));
+                }
+            }
+        }
+        pending
+    };
+    if pending.is_empty() {
+        return;
+    }
+
+    let mut resolved = Vec::with_capacity(pending.len());
+    for (group_uuid, is_whitelist, index, name) in pending {
+        let uuid = resolve_minecraft_uuid(&name).await;
+        resolved.push((group_uuid, is_whitelist, index, uuid));
+    }
+
+    let config_snapshot = {
+        let mut config = state.config.lock().await;
+        let mut changed = false;
+        for (group_uuid, is_whitelist, index, uuid) in resolved {
+            let Some(group) = config
+                .minecraft_account_filter_detail_groups
+                .iter_mut()
+                .find(|group| group.uuid.as_deref() == Some(group_uuid.as_str()))
+            else {
+                continue;
+            };
+            let entries = if is_whitelist {
+                &mut group.whitelist
+            } else {
+                &mut group.ban_list
+            };
+            if let Some(entry) = entries.get_mut(index) {
+                if needs_uuid_resolution(entry) {
+                    entry.uuid = Some(uuid);
+                    changed = true;
+                }
+            }
+        }
+        changed.then(|| config.clone())
+    };
+
+    if let Some(config_snapshot) = config_snapshot {
+        if let Err(error) = config_snapshot
+            .update_config_file_async("config.json")
+            .await
+        {
+            tracing::warn!("Failed to persist resolved Minecraft UUIDs: {}", error);
+        }
+        let message = ConfigInfo {
+            r#type: "ConfigInfo".to_string(),
+            config: config_snapshot,
+        };
+        broadcast_json(state, &message);
+    }
+}
+
+/// Resolves a Minecraft username to a UUID via the Mojang API, falling back
+/// to Minecraft's offline-mode UUID algorithm if the lookup fails (no
+/// internet, rate limited, or the name has no real Mojang account).
+async fn resolve_minecraft_uuid(name: &str) -> String {
+    if let Some(uuid) = fetch_mojang_uuid(name).await {
+        return uuid;
+    }
+    offline_uuid(name)
+}
+
+async fn fetch_mojang_uuid(name: &str) -> Option<String> {
+    let safe_name: String = name
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .collect();
+    if safe_name.is_empty() {
+        return None;
+    }
+    let url = format!("https://api.mojang.com/users/profiles/minecraft/{safe_name}");
+    let response = reqwest::get(&url).await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body: Value = response.json().await.ok()?;
+    format_uuid_with_dashes(body.get("id")?.as_str()?)
+}
+
+fn format_uuid_with_dashes(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.len() != 32 || !raw.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &raw[0..8],
+        &raw[8..12],
+        &raw[12..16],
+        &raw[16..20],
+        &raw[20..32]
+    ))
+}
+
+/// Minecraft's offline-mode UUID algorithm (`UUID.nameUUIDFromBytes` in Java):
+/// an MD5 digest of `"OfflinePlayer:<name>"` with the version/variant bits
+/// patched to mark it as a valid (v3-style) UUID.
+fn offline_uuid(name: &str) -> String {
+    let digest = md5::compute(format!("OfflinePlayer:{name}"));
+    let mut bytes = digest.0;
+    bytes[6] = (bytes[6] & 0x0f) | 0x30;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    uuid::Uuid::from_bytes(bytes).to_string()
 }
 
 fn set_server_properties_whitelist(working_dir: &str, enabled: bool) {
@@ -1200,6 +1487,7 @@ mod tests {
             &config,
             working_dir.to_str().unwrap_or_default(),
             &["group-one".to_string()],
+            AccountFilterFlags { whitelist: true, ban_list: true },
         );
         let written_bans = std::fs::read_to_string(working_dir.join("banned-players.json"))?;
         assert!(written_bans.contains(r#""source": "SturdyFool10""#));
@@ -1257,6 +1545,7 @@ mod tests {
             &config,
             working_dir.to_str().unwrap_or_default(),
             &["group-one".to_string()],
+            AccountFilterFlags { whitelist: true, ban_list: true },
         );
 
         let whitelist = std::fs::read_to_string(working_dir.join("whitelist.json"))?;

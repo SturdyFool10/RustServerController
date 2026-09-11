@@ -648,7 +648,8 @@ mod tests {
             Some(json!({
                 "auto_accept_eula": true,
                 "account_filter_groups": [],
-                "whitelist_enabled": false,
+                "controller_controlled_whitelist": false,
+                "controller_controlled_ban_list": false,
             }))
         );
     }
@@ -672,7 +673,8 @@ mod tests {
             Some(json!({
                 "auto_accept_eula": false,
                 "account_filter_groups": [],
-                "whitelist_enabled": false,
+                "controller_controlled_whitelist": false,
+                "controller_controlled_ban_list": false,
             }))
         );
     }

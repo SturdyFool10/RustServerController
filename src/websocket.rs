@@ -676,8 +676,7 @@ async fn apply_config_change(
     {
         error!("Failed to write config.json: {}", error);
     }
-    crate::specializations::minecraft::sync_configured_account_filters_async(&config_snapshot)
-        .await;
+    crate::specializations::minecraft::sync_configured_account_filters_async(&state).await;
 
     broadcast_json(&state, &config_info);
 
@@ -740,8 +739,7 @@ async fn apply_scoped_config_change(
     {
         error!("Failed to write config.json: {}", error);
     }
-    crate::specializations::minecraft::sync_configured_account_filters_async(&config_snapshot)
-        .await;
+    crate::specializations::minecraft::sync_configured_account_filters_async(&state).await;
 
     broadcast_json(&state, &config_info);
 }
