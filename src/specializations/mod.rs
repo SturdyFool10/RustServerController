@@ -4,6 +4,7 @@
 //! server-specific logic (such as Minecraft or Terraria), and provides a
 //! thread-safe registry for managing available specializations.
 
+pub mod backup;
 pub mod minecraft;
 pub mod player_activity;
 pub mod terraria;
@@ -97,6 +98,32 @@ pub trait ServerSpecialization: Send + Sync {
     /// before the process starts. Configured values always win.
     fn default_options(&self) -> serde_json::Value {
         serde_json::Value::Null
+    }
+
+    /// Returns how often [`Self::on_schedule`] should be invoked for this
+    /// instance, or `None` to disable scheduled ticks entirely.
+    ///
+    /// This is a fixed poll cadence checked by the shared server loop, not a
+    /// user-configurable setting itself; specializations that expose their
+    /// own configurable interval (e.g. a backup interval) should track due
+    /// times internally and treat this value as an upper bound on how
+    /// promptly they notice that interval has elapsed.
+    fn schedule_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+
+    /// Called on a fixed interval (as returned by [`Self::schedule_interval`])
+    /// while the server instance is active, independent of log output.
+    ///
+    /// Intended for specialization-owned background work (e.g. backups).
+    /// Runs on the shared server poll loop, so long-running work should hand
+    /// off to `tokio::spawn`/`spawn_blocking` rather than blocking here.
+    fn on_schedule(
+        &mut self,
+        _instance: &mut ControlledProgramInstance,
+        _state: &crate::app_state::AppState,
+    ) {
+        // Default: do nothing
     }
 }
 

@@ -5,7 +5,36 @@ use crate::{
 ///
 /// Provides helpers for formatting exit messages, sending termination notifications,
 /// and starting and monitoring server processes.
+use tokio::io::AsyncWriteExt;
 use tracing::*;
+
+/// Writes a single line (with a trailing `\r\n`) to a running server's
+/// stdin, if one exists for a server by that name. Returns `true` if the
+/// write succeeded, `false` if the server isn't found or has no stdin.
+///
+/// Generic across every specialization; callers are responsible for
+/// validating/sanitizing `line` before calling this, since it's written
+/// verbatim as raw console input.
+pub async fn write_line_to_server_stdin(state: &AppState, server_name: &str, line: &str) -> bool {
+    let mut servers = state.servers.lock().await;
+    let Some(index) = servers.iter().position(|server| server.name == server_name) else {
+        return false;
+    };
+    let mut server = servers.remove(index);
+    drop(servers);
+
+    let wrote = match server.process.stdin.as_mut() {
+        Some(stdin) => stdin
+            .write_all(format!("{}\r\n", line).as_bytes())
+            .await
+            .is_ok(),
+        None => false,
+    };
+
+    let mut servers = state.servers.lock().await;
+    servers.push(server);
+    wrote
+}
 
 pub fn format_controller_message(message: impl std::fmt::Display) -> String {
     format!(
@@ -300,6 +329,17 @@ pub async fn process_stdout(state: AppState) {
                 }
             }
             for server in retained_servers.iter_mut() {
+                if let Some(mut handler) = server.specialization_handler.take() {
+                    if let Some(interval) = handler.schedule_interval() {
+                        let now = tokio::time::Instant::now();
+                        let due = server.next_schedule_at.is_none_or(|at| now >= at);
+                        if due {
+                            handler.on_schedule(server, &state);
+                            server.next_schedule_at = Some(now + interval);
+                        }
+                    }
+                    server.specialization_handler = Some(handler);
+                }
                 let str = tokio::time::timeout(
                     tokio::time::Duration::from_secs_f64(1. / 10.),
                     server.read_output(),

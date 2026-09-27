@@ -13,6 +13,8 @@ use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::watch;
@@ -41,6 +43,10 @@ pub struct MinecraftSpecialization {
     account_filter_watcher_stop: Option<watch::Sender<bool>>,
 
     account_filter_watcher: Option<JoinHandle<()>>,
+
+    /// Guards against a scheduled backup check overlapping a still-running
+    /// backup (e.g. a large world taking longer than the poll cadence).
+    backup_in_progress: Arc<AtomicBool>,
 }
 
 impl ServerSpecialization for MinecraftSpecialization {
@@ -65,6 +71,7 @@ impl ServerSpecialization for MinecraftSpecialization {
             "account_filter_groups": [],
             "controller_controlled_whitelist": false,
             "controller_controlled_ban_list": false,
+            "backup": super::backup::default_backup_options_json(),
         })
     }
 
@@ -324,6 +331,35 @@ impl ServerSpecialization for MinecraftSpecialization {
             "Recent Sessions": self.player_activity.recent_sessions(25),
             "Timeframe Stats": self.player_activity.timeframe_stats(),
         })
+    }
+
+    /// Fixed poll cadence for checking whether a scheduled backup is due.
+    /// The user-configured backup interval itself is tracked in
+    /// `run_scheduled_backup` by inspecting the newest backup already on
+    /// disk, so this only needs to be frequent enough that backups start
+    /// promptly after they become due.
+    fn schedule_interval(&self) -> Option<Duration> {
+        Some(Duration::from_secs(30))
+    }
+
+    fn on_schedule(&mut self, instance: &mut ControlledProgramInstance, state: &AppState) {
+        let config = super::backup::backup_config(instance.specialization_options.as_ref());
+        if !config.enabled {
+            return;
+        }
+        if self.backup_in_progress.swap(true, Ordering::SeqCst) {
+            // A previous check/backup is still running; try again next tick.
+            return;
+        }
+
+        let server_name = instance.name.clone();
+        let working_dir = instance.working_dir.clone();
+        let state = state.clone();
+        let in_progress = self.backup_in_progress.clone();
+        tokio::spawn(async move {
+            super::backup::run_scheduled_backup(server_name, working_dir, config, state).await;
+            in_progress.store(false, Ordering::SeqCst);
+        });
     }
 }
 
@@ -1416,6 +1452,7 @@ mod tests {
             specialization_options: None,
             specialization_handler: None,
             specialization_info_sent: false,
+            next_schedule_at: None,
         })
     }
 

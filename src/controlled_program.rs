@@ -217,6 +217,9 @@ pub struct ControlledProgramInstance {
     pub specialization_handler: Option<Box<dyn crate::specializations::ServerSpecialization>>,
     /// Tracks if the first specialization info update has been sent after spawn.
     pub specialization_info_sent: bool,
+    /// Next time the specialization's `on_schedule` hook is due to run, if
+    /// the attached specialization has requested a schedule interval.
+    pub next_schedule_at: Option<Instant>,
 }
 
 impl Drop for ControlledProgramInstance {
@@ -276,6 +279,7 @@ impl ControlledProgramInstance {
             specialization_options: None,
             specialization_handler: None,
             specialization_info_sent: false,
+            next_schedule_at: None,
         })
     }
 

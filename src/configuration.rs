@@ -650,6 +650,7 @@ mod tests {
                 "account_filter_groups": [],
                 "controller_controlled_whitelist": false,
                 "controller_controlled_ban_list": false,
+                "backup": crate::specializations::backup::default_backup_options_json(),
             }))
         );
     }
@@ -675,6 +676,7 @@ mod tests {
                 "account_filter_groups": [],
                 "controller_controlled_whitelist": false,
                 "controller_controlled_ban_list": false,
+                "backup": crate::specializations::backup::default_backup_options_json(),
             }))
         );
     }
