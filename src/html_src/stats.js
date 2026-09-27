@@ -79,6 +79,16 @@ window.RSCApp = window.RSCApp || {};
     return Math.round((value / total) * 100);
   }
 
+  // All `.statsMeter` fill spans read a single `--fill` custom property (see
+  // style.css) instead of a literal width, so the fixed OK/Warn/Danger track
+  // gradient stays anchored to the bar's outer edges as it fills - callers
+  // just hand this a 0-100 number.
+  function setMeterFill(fill, percentValue) {
+    if (!fill) return;
+    const clamped = Math.max(0, Math.min(100, Number(percentValue) || 0));
+    fill.style.setProperty("--fill", clamped);
+  }
+
   function setText(parent, selector, value) {
     const element = parent.querySelector(selector);
     if (element) element.textContent = value;
@@ -142,7 +152,7 @@ window.RSCApp = window.RSCApp || {};
       label.textContent = name;
       value.textContent = `${count} (${percent(count, stats.total)}%)`;
       meter.className = "statsMeter";
-      fill.style.width = `${percent(count, stats.total)}%`;
+      setMeterFill(fill, percent(count, stats.total));
       meter.appendChild(fill);
       row.append(label, value);
       item.append(row, meter);
@@ -332,7 +342,7 @@ window.RSCApp = window.RSCApp || {};
       const value = document.createElement("strong");
 
       label.textContent = player.name;
-      fill.style.width = `${Math.max(2, (player.hours / max) * 100)}%`;
+      setMeterFill(fill, Math.max(2, (player.hours / max) * 100));
       value.textContent = formatHours(player.hours);
       meter.className = "statsMeter";
       meter.appendChild(fill);
@@ -566,6 +576,11 @@ window.RSCApp = window.RSCApp || {};
       `;
 
       card.append(heading, metrics);
+
+      const playersLabel = document.createElement("p");
+      playersLabel.className = "statsLineChartLabel";
+      playersLabel.textContent = "Players Online";
+      card.appendChild(playersLabel);
       card.appendChild(
         renderLineChart(
           playerSamples,
@@ -575,6 +590,11 @@ window.RSCApp = window.RSCApp || {};
           "primary",
         ),
       );
+
+      const busyLabel = document.createElement("p");
+      busyLabel.className = "statsLineChartLabel";
+      busyLabel.textContent = "Average Busy Times";
+      card.appendChild(busyLabel);
       card.appendChild(
         renderLineChart(
           busyByHour,
@@ -872,8 +892,8 @@ window.RSCApp = window.RSCApp || {};
 
     const activeMeter = root.querySelector('[data-meter="active"]');
     const playerMeter = root.querySelector('[data-meter="players"]');
-    if (activeMeter) activeMeter.style.width = `${activePercent}%`;
-    if (playerMeter) playerMeter.style.width = `${playerPercent}%`;
+    setMeterFill(activeMeter, activePercent);
+    setMeterFill(playerMeter, playerPercent);
 
     renderSpecializations(root, stats);
     renderSpecializationDistribution(root, stats);

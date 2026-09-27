@@ -579,20 +579,43 @@ h1 {
     color: var(--primary);
     font-size: 1rem;
 }
+/*
+ * All `.statsMeter` bars share one fixed OK -> Warn -> Danger gradient
+ * (interpolated in OKLab, not sRGB, so the middle of the transition doesn't
+ * dip through a muddy grey) painted across the *track* itself, anchored to
+ * its outer edges. The `span` inside doesn't paint a color of its own - it
+ * covers the unfilled remainder with the track's background, anchored to the
+ * right edge. Filling the meter (raising `--fill`) only ever shrinks that
+ * cover from the right, which reveals more of the one fixed gradient from
+ * its green start - so a half-filled bar shows exactly the first half of the
+ * full gradient, not the full gradient squeezed into a sliver.
+ *
+ * `[data-direction="reverse"]` flips which end is good/bad for a meter where
+ * "more filled" means safer rather than riskier, without needing separate
+ * markup or JS - it's purely a data attribute toggle.
+ */
 .statsMeter {
+    --meter-good: var(--success);
+    --meter-warn: var(--warning);
+    --meter-bad: var(--danger);
+    position: relative;
     width: 100%;
     height: 10px;
-    background: var(--bg);
+    background: linear-gradient(to right in oklab, var(--meter-good), var(--meter-warn), var(--meter-bad));
     border: 1px solid var(--border-muted);
     border-radius: 999px;
     overflow: hidden;
     box-sizing: border-box;
 }
+.statsMeter[data-direction="reverse"] {
+    background: linear-gradient(to right in oklab, var(--meter-bad), var(--meter-warn), var(--meter-good));
+}
 .statsMeter span {
     display: block;
-    height: 100%;
-    width: 0%;
-    background: linear-gradient(90deg, var(--primary), var(--secondary));
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: calc(100% - (var(--fill, 0) * 1%));
+    background: var(--bg);
     transition: width 220ms ease;
 }
 .statsColumns {
@@ -910,6 +933,14 @@ h1 {
     margin: 0;
     color: var(--text);
     font-size: 0.86rem;
+}
+.statsLineChartLabel {
+    margin: 8px 0 0;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+.statsLineChartLabel + .statsLineChart {
+    margin-top: 2px;
 }
 .statsLineChart {
     height: 56px;
