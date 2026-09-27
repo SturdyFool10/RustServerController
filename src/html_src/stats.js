@@ -287,37 +287,6 @@ window.RSCApp = window.RSCApp || {};
     }
   }
 
-  function renderPlayerActivity(description, players) {
-    const playerList = document.createElement("ul");
-    playerList.className = "statsPlayerActivity";
-
-    if (!Array.isArray(players) || players.length === 0) {
-      const empty = document.createElement("li");
-      empty.textContent = "No observed names yet";
-      playerList.appendChild(empty);
-      description.appendChild(playerList);
-      return;
-    }
-
-    players.forEach((player) => {
-      const item = document.createElement("li");
-      const name = document.createElement("strong");
-      const details = document.createElement("span");
-      name.textContent = player.name || "Unknown player";
-      details.textContent = [
-        player.online ? "online" : "offline",
-        `${player.sessions || 0} sessions`,
-        `${formatHours(player.total_hours)} total`,
-        `joined ${formatTimestamp(player.last_joined_at)}`,
-        `left ${formatTimestamp(player.last_left_at)}`,
-      ].join(" | ");
-      item.append(name, details);
-      playerList.appendChild(item);
-    });
-
-    description.appendChild(playerList);
-  }
-
   function renderPlayerHoursChart(description, players) {
     if (!Array.isArray(players) || players.length === 0) return;
     const values = players
@@ -613,8 +582,11 @@ window.RSCApp = window.RSCApp || {};
 
   function renderStatDescription(description, label, value) {
     if (label === "User Activity") {
+      // renderPlayerActivity used to render a second, plain-text copy of this
+      // same list right below the bar chart - same names, same numbers, just
+      // in a less readable "offline | N sessions | X.XXh total | joined ... |
+      // left ..." line. The chart alone covers it.
       renderPlayerHoursChart(description, value);
-      renderPlayerActivity(description, value);
       return;
     }
     if (label === "Recent Sessions") {

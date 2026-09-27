@@ -340,15 +340,22 @@ impl PlayerActivityStore {
     fn load_players(&self) -> rusqlite::Result<BTreeMap<String, PlayerActivity>> {
         self.close_stale_sessions()?;
         self.with_connection(|connection| {
+            // Sourced from `player_activity_sessions`, not the `player_activity`
+            // aggregate table, for the same reason as `global_player_activity`:
+            // sessions are append-only ground truth, while the aggregate table
+            // is mutated in place by upserts/rename migrations that have been
+            // able to silently leave a player's row missing or stale. This is
+            // what seeds the in-memory tracker, so it's what every per-server
+            // "known players" view (online count, summaries, etc.) is built on.
             let mut statement = connection.prepare(
                 "SELECT player_name,
-                        SUM(total_seconds) AS total_seconds,
-                        MAX(current_session_started_at) AS current_session_started_at,
-                        MAX(last_joined_at) AS last_joined_at,
-                        MAX(last_left_at) AS last_left_at,
-                        SUM(session_count) AS session_count,
-                        MAX(active_session_id) AS active_session_id
-                   FROM player_activity
+                        SUM(COALESCE(duration_seconds, 0)) AS total_seconds,
+                        MAX(CASE WHEN left_at IS NULL THEN joined_at END) AS current_session_started_at,
+                        MAX(joined_at) AS last_joined_at,
+                        MAX(left_at) AS last_left_at,
+                        COUNT(*) AS session_count,
+                        MAX(CASE WHEN left_at IS NULL THEN id END) AS active_session_id
+                   FROM player_activity_sessions
                   WHERE server_name = ?1
                   GROUP BY player_name
                   ORDER BY player_name",
@@ -554,30 +561,47 @@ impl PlayerActivityStore {
 
     fn close_stale_sessions(&self) -> rusqlite::Result<()> {
         self.with_connection(|connection| {
+            // Keyed off `player_activity_sessions` by row id, not by joining
+            // through `player_activity`, so a session left dangling open for a
+            // player whose aggregate row is missing or stale still gets closed
+            // instead of being invisible to this cleanup.
             let mut statement = connection.prepare(
-                "SELECT player_name, current_session_started_at
-                   FROM player_activity
+                "SELECT id, player_name, joined_at
+                   FROM player_activity_sessions
                   WHERE server_name = ?1
-                    AND current_session_started_at IS NOT NULL",
+                    AND left_at IS NULL",
             )?;
             let rows = statement.query_map(params![self.server_uuid], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
             })?;
 
             let now = Utc::now();
             let mut stale_sessions = Vec::new();
             for row in rows {
-                let (player_name, started_at) = row?;
-                let Some(started_at) = parse_timestamp(started_at) else {
+                let (id, player_name, joined_at) = row?;
+                let Some(joined_at) = parse_timestamp(joined_at) else {
                     continue;
                 };
-                stale_sessions.push((player_name, started_at));
+                stale_sessions.push((id, player_name, joined_at));
             }
             drop(statement);
 
             let tx = connection.transaction()?;
-            for (player_name, started_at) in stale_sessions {
-                let duration_seconds = elapsed_seconds(started_at, now);
+            for (id, player_name, joined_at) in stale_sessions {
+                let duration_seconds = elapsed_seconds(joined_at, now);
+                tx.execute(
+                    "UPDATE player_activity_sessions
+                        SET left_at = ?1, duration_seconds = ?2
+                      WHERE id = ?3",
+                    params![format_timestamp(Some(now)), duration_seconds, id],
+                )?;
+                // Best-effort: keep the aggregate table's copy of this player in
+                // sync too, for anything still reading it. A missing row here
+                // is fine (this UPDATE simply matches zero rows).
                 tx.execute(
                     "UPDATE player_activity
                         SET total_seconds = total_seconds + ?1,
@@ -588,19 +612,6 @@ impl PlayerActivityStore {
                     params![
                         duration_seconds,
                         format_timestamp(Some(now)),
-                        self.server_uuid,
-                        player_name
-                    ],
-                )?;
-                tx.execute(
-                    "UPDATE player_activity_sessions
-                        SET left_at = ?1, duration_seconds = ?2
-                      WHERE server_name = ?3
-                        AND player_name = ?4
-                        AND left_at IS NULL",
-                    params![
-                        format_timestamp(Some(now)),
-                        duration_seconds,
                         self.server_uuid,
                         player_name
                     ],
@@ -1674,6 +1685,52 @@ mod tests {
             .filter_map(|player| player.get("name").and_then(Value::as_str))
             .collect();
         assert_eq!(names, vec!["SessionOnlyName"]);
+
+        let _ = std::fs::remove_file(db_path);
+        Ok(())
+    }
+
+    #[test]
+    fn load_players_includes_players_missing_from_aggregate_table() -> rusqlite::Result<()> {
+        // Same regression as `global_player_activity_includes_players_missing_
+        // from_aggregate_table`, but for the in-memory tracker's own view of a
+        // single server (`load_players`, which seeds `summaries()` for the
+        // per-server "Specialization Stats > User Activity" list). This used to
+        // read from the `player_activity` aggregate table too, so it could
+        // undercount relative to the top-level, sessions-backed "User Activity"
+        // card even for the exact same server.
+        let db_path = std::env::temp_dir().join(format!(
+            "rsc-player-activity-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        let store =
+            PlayerActivityStore::open_at(db_path.clone(), "uuid-one", "Server One", "Minecraft")?;
+        let joined_at = Utc::now() - ChronoDuration::days(1);
+        let left_at = joined_at + ChronoDuration::hours(1);
+
+        store.with_connection(|connection| {
+            connection.execute(
+                "INSERT INTO player_activity_sessions
+                    (server_name, specialization, player_name, joined_at, left_at, duration_seconds)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    "uuid-one",
+                    "Minecraft",
+                    "SessionOnlyName",
+                    format_timestamp(Some(joined_at)),
+                    format_timestamp(Some(left_at)),
+                    elapsed_seconds(joined_at, left_at)
+                ],
+            )?;
+            Ok(())
+        })?;
+
+        let players = store.load_players()?;
+        assert!(players.contains_key("SessionOnlyName"));
+        assert_eq!(
+            players["SessionOnlyName"].total_seconds,
+            elapsed_seconds(joined_at, left_at)
+        );
 
         let _ = std::fs::remove_file(db_path);
         Ok(())
