@@ -220,7 +220,7 @@ window.RSCApp = window.RSCApp || {};
         serverName.textContent = server.server_name || "Unknown server";
         const serverMeta = document.createElement("span");
         serverMeta.className = "statsUserActivityServerMeta";
-        serverMeta.textContent = `${formatHours(server.total_hours)} - last joined ${formatTimestamp(server.last_joined_at)}`;
+        serverMeta.textContent = `${formatHours(server.total_hours)} - last joined ${formatLastSeen(server.last_joined_at)}`;
         serverItem.append(serverBadge, serverName, serverMeta);
         serverList.appendChild(serverItem);
       });
@@ -252,6 +252,21 @@ window.RSCApp = window.RSCApp || {};
     if (!value) return "never";
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString();
+  }
+
+  const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+
+  // Like formatTimestamp, but for players we know were seen at some point
+  // (they're in the remembered-users list at all) whose exact last-seen time
+  // is either missing or old enough to no longer matter precisely. Rather
+  // than reporting "never" - which reads as though they were dropped - this
+  // keeps them visibly remembered with an approximate age.
+  function formatLastSeen(value) {
+    if (!value) return "more than a year ago";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "more than a year ago";
+    if (Date.now() - date.getTime() > ONE_YEAR_MS) return "more than a year ago";
     return date.toLocaleString();
   }
 
@@ -365,26 +380,149 @@ window.RSCApp = window.RSCApp || {};
       week: "Rolling Week",
       month: "Rolling Month",
       year: "Rolling Year",
+      all_time: "All Time",
     };
     return labels[name] || name.charAt(0).toUpperCase() + name.slice(1);
   }
 
-  function maxValue(values, selector) {
-    return values.reduce((max, value) => Math.max(max, Number(selector(value) || 0)), 0);
+  const LINE_CHART_MARGIN = 6;
+
+  // Every ResizeObserver created by renderLineChart lands here so
+  // app.updateStats can tear them all down before rebuilding the DOM on the
+  // next refresh - otherwise every tick would pile up observers watching
+  // canvases that have already been discarded.
+  const chartResizeObservers = [];
+
+  function disconnectChartResizeObservers() {
+    chartResizeObservers.forEach((observer) => observer.disconnect());
+    chartResizeObservers.length = 0;
   }
 
-  function renderBars(values, selector, labeler) {
-    const chart = document.createElement("div");
-    chart.className = "statsBars";
-    const max = maxValue(values, selector) || 1;
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
 
-    values.forEach((value) => {
-      const bar = document.createElement("span");
-      const amount = Number(selector(value) || 0);
-      bar.style.height = `${Math.max(4, (amount / max) * 100)}%`;
-      bar.title = labeler(value, amount);
-      chart.appendChild(bar);
+  // Groups `amounts` into at most `bucketCount` buckets (one per pixel
+  // column) and averages each bucket down to a single value, so a series
+  // with far more samples than the chart is wide on-screen never turns into
+  // a canvas path with more points than there are pixels to show them on.
+  // Each bucket keeps one representative original sample (its midpoint) for
+  // labeling/tooltips.
+  function downsampleForWidth(values, amounts, bucketCount) {
+    if (amounts.length <= bucketCount) {
+      return amounts.map((amount, index) => ({ amount, sample: values[index] }));
+    }
+    const buckets = [];
+    for (let i = 0; i < bucketCount; i += 1) {
+      const start = Math.floor((i * amounts.length) / bucketCount);
+      const end = Math.max(start + 1, Math.floor(((i + 1) * amounts.length) / bucketCount));
+      let sum = 0;
+      for (let j = start; j < end; j += 1) sum += amounts[j];
+      buckets.push({
+        amount: sum / (end - start),
+        sample: values[start + Math.floor((end - start) / 2)],
+      });
+    }
+    return buckets;
+  }
+
+  // Renders a line graph onto a canvas using the path "shape" API
+  // (beginPath/moveTo/lineTo/.../stroke) rather than a bar per sample, so it
+  // can never overflow its container the way a flex row of minimum-width
+  // bars could once there were more samples than available pixels. The
+  // canvas is resized (backing bitmap thrown away and recreated, not
+  // stretched) whenever its container's size changes, so it always exactly
+  // fills the space it's given.
+  function renderLineChart(values, selector, labeler, variant) {
+    const chart = document.createElement("div");
+    chart.className = "statsLineChart";
+    const canvas = document.createElement("canvas");
+    chart.appendChild(canvas);
+
+    if (!values.length) return chart;
+
+    const amounts = values.map((value) => Number(selector(value) || 0));
+    const color = cssVar(variant === "secondary" ? "--secondary" : "--primary") || "currentColor";
+    let buckets = [];
+
+    function draw(width, height) {
+      const dpr = window.devicePixelRatio || 1;
+      const pixelWidth = Math.max(1, Math.round(width));
+      const pixelHeight = Math.max(1, Math.round(height));
+
+      // Recreate the backing bitmap at the new size (rather than letting the
+      // old one stretch) so the line stays crisp at any container size.
+      canvas.width = Math.round(pixelWidth * dpr);
+      canvas.height = Math.round(pixelHeight * dpr);
+      canvas.style.width = `${pixelWidth}px`;
+      canvas.style.height = `${pixelHeight}px`;
+
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, pixelWidth, pixelHeight);
+
+      const innerWidth = Math.max(1, pixelWidth - LINE_CHART_MARGIN * 2);
+      const innerHeight = Math.max(1, pixelHeight - LINE_CHART_MARGIN * 2);
+
+      const bucketCount = Math.max(1, Math.min(amounts.length, Math.round(innerWidth)));
+      buckets = downsampleForWidth(values, amounts, bucketCount);
+      const bucketAmounts = buckets.map((bucket) => bucket.amount);
+      const max = Math.max(...bucketAmounts, 1);
+      const min = Math.min(...bucketAmounts, 0);
+      const range = max - min || 1;
+      const stepX = buckets.length > 1 ? innerWidth / (buckets.length - 1) : 0;
+
+      const points = buckets.map((bucket, index) => ({
+        x: LINE_CHART_MARGIN + (buckets.length > 1 ? index * stepX : innerWidth / 2),
+        y: LINE_CHART_MARGIN + innerHeight - ((bucket.amount - min) / range) * innerHeight,
+      }));
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      points.forEach((point, index) => {
+        if (index === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      ctx.stroke();
+
+      // Marker dots every few points (plus the last one), so dense series
+      // don't turn into a solid row of dots.
+      const stride = Math.max(1, Math.ceil(points.length / 60));
+      ctx.fillStyle = color;
+      points.forEach((point, index) => {
+        if (index % stride !== 0 && index !== points.length - 1) return;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+
+    // Canvas has no per-point DOM nodes to hang a tooltip off of, so track
+    // the pointer and label whichever (possibly averaged) bucket is closest.
+    canvas.addEventListener("mousemove", (event) => {
+      if (!buckets.length) return;
+      const rect = canvas.getBoundingClientRect();
+      const fraction = (event.clientX - rect.left) / rect.width;
+      const index = Math.min(
+        buckets.length - 1,
+        Math.max(0, Math.round(fraction * (buckets.length - 1))),
+      );
+      const bucket = buckets[index];
+      canvas.title = labeler(bucket.sample, bucket.amount);
     });
+
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const box = entry.contentBoxSize?.[0];
+      const width = box ? box.inlineSize : entry.contentRect.width;
+      const height = box ? box.blockSize : entry.contentRect.height;
+      if (width > 0 && height > 0) draw(width, height);
+    });
+    observer.observe(chart);
+    chartResizeObservers.push(observer);
 
     return chart;
   }
@@ -392,8 +530,8 @@ window.RSCApp = window.RSCApp || {};
   function renderTimeframeStats(description, stats) {
     const wrapper = document.createElement("div");
     wrapper.className = "statsTimeframes";
-    // `stats` is an ordered array (day, week, month, year) from the backend -
-    // do not sort or use Object.entries, which would lose that order.
+    // `stats` is an ordered array (day, week, month, year, all_time) from the
+    // backend - do not sort or use Object.entries, which would lose that order.
     const entries = Array.isArray(stats) ? stats : [];
 
     if (!entries.length) {
@@ -421,19 +559,21 @@ window.RSCApp = window.RSCApp || {};
 
       card.append(heading, metrics);
       card.appendChild(
-        renderBars(
+        renderLineChart(
           playerSamples,
           (sample) => sample.players,
           (sample, amount) =>
             `${amount} online at ${formatTimestamp(sample.timestamp)}`,
+          "primary",
         ),
       );
       card.appendChild(
-        renderBars(
+        renderLineChart(
           busyByHour,
           (hour) => hour.average_online,
           (hour, amount) =>
             `${Number(amount).toFixed(2)} average online at ${String(hour.hour).padStart(2, "0")}:00`,
+          "secondary",
         ),
       );
 
@@ -700,6 +840,11 @@ window.RSCApp = window.RSCApp || {};
   app.updateStats = function () {
     const root = ensureStatsMarkup();
     if (!root) return;
+
+    // Every refresh rebuilds the timeframe/archive DOM from scratch, so any
+    // ResizeObservers watching last cycle's canvases are now watching
+    // detached elements - tear them down before creating this cycle's set.
+    disconnectChartResizeObservers();
 
     const stats = aggregateStats(serverList());
     const servers = serverList();

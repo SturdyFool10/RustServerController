@@ -911,23 +911,16 @@ h1 {
     color: var(--text);
     font-size: 0.86rem;
 }
-.statsBars {
+.statsLineChart {
     height: 56px;
-    display: flex;
-    align-items: end;
-    gap: 2px;
     margin-top: 8px;
     border-bottom: 1px solid var(--border-muted);
+    overflow: hidden;
 }
-.statsBars span {
-    flex: 1 1 2px;
-    min-width: 2px;
-    background: var(--primary);
-    opacity: 0.78;
-    border-radius: 2px 2px 0 0;
-}
-.statsBars + .statsBars span {
-    background: var(--secondary);
+.statsLineChart canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
 }
 .ConfigEditor {
     position: absolute;

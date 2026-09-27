@@ -661,9 +661,9 @@ impl PlayerActivityStore {
     }
 
     /// Returns rolling-window stats ordered smallest-to-largest window
-    /// (day, week, month, year). This is a `Vec`, not a `serde_json::Map`,
-    /// because `Map` is backed by a `BTreeMap` and would silently
-    /// re-sort the windows alphabetically (day, month, week, year).
+    /// (day, week, month, year, all_time). This is a `Vec`, not a
+    /// `serde_json::Map`, because `Map` is backed by a `BTreeMap` and would
+    /// silently re-sort the windows alphabetically (day, month, week, year).
     fn timeframe_stats(&self) -> rusqlite::Result<Vec<Value>> {
         let now = Utc::now();
         let timeframes = [
@@ -672,7 +672,7 @@ impl PlayerActivityStore {
             ("month", ChronoDuration::days(30)),
             ("year", ChronoDuration::days(365)),
         ];
-        let mut stats = Vec::with_capacity(timeframes.len());
+        let mut stats = Vec::with_capacity(timeframes.len() + 1);
 
         for (name, duration) in timeframes {
             let start = now - duration;
@@ -683,7 +683,31 @@ impl PlayerActivityStore {
             stats.push(summary);
         }
 
+        // Unlike the fixed rolling windows above, "all_time" never expires, so a
+        // player who was seen more than a year ago is still remembered here
+        // instead of quietly falling out of every bucket.
+        let earliest = self.earliest_activity_at()?.unwrap_or(now);
+        let mut all_time = self.timeframe_summary(earliest, now)?;
+        if let Some(object) = all_time.as_object_mut() {
+            object.insert("name".to_string(), Value::String("all_time".to_string()));
+        }
+        stats.push(all_time);
+
         Ok(stats)
+    }
+
+    /// Earliest recorded join across this server's session history, used as the
+    /// start of the "all_time" window so unique players are never dropped just
+    /// because they predate the rolling year window.
+    fn earliest_activity_at(&self) -> rusqlite::Result<Option<DateTime<Utc>>> {
+        self.with_connection(|connection| {
+            let earliest: Option<String> = connection.query_row(
+                "SELECT MIN(joined_at) FROM player_activity_sessions WHERE server_name = ?1",
+                params![self.server_uuid],
+                |row| row.get(0),
+            )?;
+            Ok(parse_timestamp(earliest))
+        })
     }
 
     fn timeframe_summary(
@@ -1353,7 +1377,10 @@ mod tests {
             .iter()
             .filter_map(|entry| entry.get("name").and_then(Value::as_str))
             .collect();
-        assert_eq!(timeframe_names, vec!["day", "week", "month", "year"]);
+        assert_eq!(
+            timeframe_names,
+            vec!["day", "week", "month", "year", "all_time"]
+        );
         let day = timeframe_stats
             .as_array()
             .and_then(|entries| entries.first())
