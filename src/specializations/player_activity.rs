@@ -922,14 +922,30 @@ impl PlayerActivityStore {
                 display_name: display_name.clone(),
                 specialization: specialization.clone(),
             };
+            let stats = scoped_store.timeframe_stats()?;
+            // `player_activity_servers` gets a row every time a specialization
+            // opens its store (see `open_at`), including for a server-uuid that
+            // ends up churning on restart before ever seeing a real join. Those
+            // rows never accumulate any session history, so once the uuid falls
+            // out of the active set they'd otherwise show up here forever as an
+            // empty, indistinguishable "Vanilla"/etc. card with nothing in it.
+            // Skip anything that never actually observed a player.
+            let observed_names = stats
+                .last()
+                .and_then(|entry| entry.get("distinct_names"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            if observed_names == 0 {
+                continue;
+            }
             archives.push(json!({
                 "server_uuid": server_uuid,
                 "name": display_name,
                 "specialization": specialization,
                 "last_seen_at": last_seen_at,
-                "stats": scoped_store.timeframe_stats()?,
+                "stats": stats,
                 "recent_sessions": scoped_store.recent_sessions(25)?,
-                "observed_names": scoped_store.load_players()?.len(),
+                "observed_names": observed_names,
             }));
         }
         Ok(archives)
@@ -944,19 +960,28 @@ impl PlayerActivityStore {
         };
         store.with_connection(|connection| {
             initialize_schema(connection)?;
+            // Sourced from `player_activity_sessions`, not the `player_activity`
+            // aggregate table, so this list can never drift out of sync with
+            // `distinct_names_since` (used by the rolling/all-time timeframe
+            // cards) - sessions are the append-only ground truth, while the
+            // aggregate table is mutated in place by upserts and rename
+            // migrations that have historically been able to silently leave a
+            // player's aggregate row missing or stale even though their
+            // session history is intact.
             let mut statement = connection.prepare(
-                "SELECT pa.player_name,
-                        pa.server_name,
-                        COALESCE(s.display_name, pa.server_name) AS server_display_name,
-                        pa.specialization,
-                        pa.total_seconds,
-                        pa.current_session_started_at,
-                        pa.last_joined_at,
-                        pa.last_left_at,
-                        pa.session_count
-                   FROM player_activity pa
-                   LEFT JOIN player_activity_servers s ON s.server_uuid = pa.server_name
-                  ORDER BY pa.player_name, server_display_name",
+                "SELECT ps.player_name,
+                        ps.server_name,
+                        COALESCE(s.display_name, ps.server_name) AS server_display_name,
+                        MAX(ps.specialization) AS specialization,
+                        SUM(COALESCE(ps.duration_seconds, 0)) AS total_seconds,
+                        MAX(CASE WHEN ps.left_at IS NULL THEN ps.joined_at END) AS current_session_started_at,
+                        MAX(ps.joined_at) AS last_joined_at,
+                        MAX(ps.left_at) AS last_left_at,
+                        COUNT(*) AS session_count
+                   FROM player_activity_sessions ps
+                   LEFT JOIN player_activity_servers s ON s.server_uuid = ps.server_name
+                  GROUP BY ps.player_name, ps.server_name, server_display_name
+                  ORDER BY ps.player_name, server_display_name",
             )?;
             let rows = statement.query_map([], |row| {
                 Ok((
@@ -1564,6 +1589,92 @@ mod tests {
         assert!(archives.is_empty());
 
         drop(active_store);
+        let _ = std::fs::remove_file(db_path);
+        Ok(())
+    }
+
+    #[test]
+    fn archived_stats_skips_servers_that_never_saw_a_player() -> rusqlite::Result<()> {
+        // Regression test: opening a store (e.g. a server-uuid that churned on
+        // restart before anyone ever joined) always registers a
+        // `player_activity_servers` row via `upsert_server_metadata`, even
+        // though it has no session history. Once such a uuid falls out of the
+        // active set it must not show up as a hollow "Retained Server Data"
+        // card with nothing in it.
+        let db_path = std::env::temp_dir().join(format!(
+            "rsc-player-activity-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        let empty_store =
+            PlayerActivityStore::open_at(db_path.clone(), "uuid-empty", "Vanilla", "Minecraft")?;
+        drop(empty_store);
+
+        let real_store =
+            PlayerActivityStore::open_at(db_path.clone(), "uuid-real", "Vanilla", "Minecraft")?;
+        let mut real_tracker = PlayerActivityTracker {
+            players: real_store.load_players()?,
+            store: Some(real_store),
+        last_periodic_sample_at: None,
+        };
+        assert!(real_tracker.player_joined("RealName"));
+        assert!(real_tracker.player_left("RealName"));
+
+        let archives = PlayerActivityStore::archived_server_stats(db_path.clone(), &[])?;
+        let archived_uuids: Vec<&str> = archives
+            .iter()
+            .filter_map(|archive| archive.get("server_uuid").and_then(Value::as_str))
+            .collect();
+        assert_eq!(archived_uuids, vec!["uuid-real"]);
+
+        let _ = std::fs::remove_file(db_path);
+        Ok(())
+    }
+
+    #[test]
+    fn global_player_activity_includes_players_missing_from_aggregate_table() -> rusqlite::Result<()>
+    {
+        // Regression test: the "User Activity" list used to be sourced from the
+        // mutable `player_activity` aggregate table, which could drift out of
+        // sync with (and undercount relative to) `player_activity_sessions` -
+        // the same append-only table `distinct_names_since` counts against for
+        // the timeframe cards. A player with real session history but no (or a
+        // stale) aggregate row would silently vanish from the remembered-users
+        // list while still counting toward "Distinct Names" elsewhere.
+        let db_path = std::env::temp_dir().join(format!(
+            "rsc-player-activity-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        let store =
+            PlayerActivityStore::open_at(db_path.clone(), "uuid-one", "Server One", "Minecraft")?;
+        let joined_at = Utc::now() - ChronoDuration::days(1);
+        let left_at = joined_at + ChronoDuration::hours(1);
+
+        store.with_connection(|connection| {
+            // Only a session row exists for this player - no matching row in
+            // the `player_activity` aggregate table at all.
+            connection.execute(
+                "INSERT INTO player_activity_sessions
+                    (server_name, specialization, player_name, joined_at, left_at, duration_seconds)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    "uuid-one",
+                    "Minecraft",
+                    "SessionOnlyName",
+                    format_timestamp(Some(joined_at)),
+                    format_timestamp(Some(left_at)),
+                    elapsed_seconds(joined_at, left_at)
+                ],
+            )?;
+            Ok(())
+        })?;
+
+        let players = PlayerActivityStore::global_player_activity(db_path.clone())?;
+        let names: Vec<&str> = players
+            .iter()
+            .filter_map(|player| player.get("name").and_then(Value::as_str))
+            .collect();
+        assert_eq!(names, vec!["SessionOnlyName"]);
+
         let _ = std::fs::remove_file(db_path);
         Ok(())
     }

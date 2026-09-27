@@ -489,15 +489,23 @@ window.RSCApp = window.RSCApp || {};
       ctx.stroke();
 
       // Marker dots every few points (plus the last one), so dense series
-      // don't turn into a solid row of dots.
+      // don't turn into a solid row of dots. If even the thinned-out markers
+      // would still be closer together than their own diameter (a narrow
+      // chart with a lot of buckets), skip drawing dots altogether rather
+      // than let them overlap into a blob - the line alone still reads fine.
+      const markerRadius = 2.5;
+      const minMarkerSpacing = markerRadius * 2 + 2;
       const stride = Math.max(1, Math.ceil(points.length / 60));
-      ctx.fillStyle = color;
-      points.forEach((point, index) => {
-        if (index % stride !== 0 && index !== points.length - 1) return;
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-      });
+      const markerSpacing = stride * stepX;
+      if (points.length <= 1 || markerSpacing >= minMarkerSpacing) {
+        ctx.fillStyle = color;
+        points.forEach((point, index) => {
+          if (index % stride !== 0 && index !== points.length - 1) return;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, markerRadius, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
     }
 
     // Canvas has no per-point DOM nodes to hang a tooltip off of, so track
