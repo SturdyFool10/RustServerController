@@ -27,6 +27,26 @@ window.RSCApp = window.RSCApp || {};
     }
   }
 
+  class HytaleSpecialization extends ServerSpecialization {
+    updateUI(dropdownElement, server) {
+      const serverNameElem = dropdownElement.querySelector(".serverName");
+      if (!serverNameElem) {
+        console.warn("Could not find .serverName element for", server.name);
+        return;
+      }
+
+      if (server.active) {
+        const playerCount = server.specialized_info?.player_count ?? 0;
+        const maxPlayers = server.specialized_info?.max_players ?? 0;
+        const isReady = server.specialized_info?.ready ?? false;
+        const statusText = isReady ? "ready to join" : "starting";
+        serverNameElem.textContent = `${server.name} (${playerCount} / ${maxPlayers}) Status: ${statusText}`;
+      } else {
+        serverNameElem.textContent = `${server.name} ${RSC.uiText.inactiveSuffix}`;
+      }
+    }
+  }
+
   class VintageStorySpecialization extends ServerSpecialization {
     updateUI(dropdownElement, server) {
       const serverNameElem = dropdownElement.querySelector(".serverName");
@@ -46,6 +66,7 @@ window.RSCApp = window.RSCApp || {};
 
   const specializationRegistry = {
     Minecraft: new MinecraftSpecialization(),
+    Hytale: new HytaleSpecialization(),
     VintageStory: new VintageStorySpecialization(),
   };
   const loadedPluginAssets = new Set();
@@ -97,6 +118,12 @@ window.RSCApp = window.RSCApp || {};
     }
   };
 
+  // Servers are identified by UUID (names are just labels and may repeat or
+  // change); the name is only the key for a server that has no UUID yet.
+  function serverKey(server) {
+    return server?.server_uuid || server?.name || "";
+  }
+
   function serverDomKey(serverName) {
     return encodeURIComponent(serverName).replace(/[^a-zA-Z0-9_-]/g, "_");
   }
@@ -121,15 +148,15 @@ window.RSCApp = window.RSCApp || {};
     return window.serverInfoObj;
   }
 
-  function findServerInfo(serverName) {
+  function findServerInfo(key) {
     return ensureServerInfoObj().servers.find(
-      (server) => server.name === serverName,
+      (server) => serverKey(server) === key,
     );
   }
 
   function upsertServerInfo(nextServer) {
     const serverInfo = ensureServerInfoObj();
-    const existing = findServerInfo(nextServer.name);
+    const existing = findServerInfo(serverKey(nextServer));
     if (existing) {
       Object.assign(existing, nextServer);
       return existing;
@@ -138,10 +165,11 @@ window.RSCApp = window.RSCApp || {};
     return nextServer;
   }
 
-  function createServerDropdown(serverName, inactive) {
+  function createServerDropdown(key, displayName, inactive) {
+    const serverName = key;
     const titleText = inactive
-      ? `${serverName} ${RSC.uiText.inactiveSuffix}`
-      : serverName;
+      ? `${displayName} ${RSC.uiText.inactiveSuffix}`
+      : displayName;
     const dropdown = $(
       '<div class="CentralMenuDropdown ' +
         serverClassName(serverName, "dropdown") +
@@ -175,12 +203,13 @@ window.RSCApp = window.RSCApp || {};
     return dropdown;
   }
 
-  function sendServerAction(type, serverName) {
-    const server = findServerInfo(serverName);
+  function sendServerAction(type, key) {
+    const server = findServerInfo(key);
     if (!app.hasServerPermission(server, "control")) return;
     app.sendSocketMessage({
       type,
-      server_name: serverName,
+      server_uuid: server?.server_uuid ?? null,
+      server_name: server?.name ?? key,
     });
   }
 
@@ -215,9 +244,11 @@ window.RSCApp = window.RSCApp || {};
       const isStartCommand =
         inputValue.trim().toLowerCase() === RSC.commands.start;
       if (!app.hasServerPermission(findServerInfo(serverName), "control")) return;
+      const target = findServerInfo(serverName);
       app.sendSocketMessage({
         type: RSC.messages.stdinInput,
-        server_name: serverName,
+        server_uuid: target?.server_uuid ?? null,
+        server_name: target?.name ?? serverName,
         value: isStartCommand ? RSC.commands.start : inputValue,
       });
 
@@ -262,9 +293,9 @@ window.RSCApp = window.RSCApp || {};
     });
   }
 
-  function addDropdownNoDupe(name, inactive) {
-    if ($("." + serverClassName(name, "dropdown")).toArray().length === 0) {
-      createServerDropdown(name, inactive);
+  function addDropdownNoDupe(key, displayName, inactive) {
+    if ($("." + serverClassName(key, "dropdown")).toArray().length === 0) {
+      createServerDropdown(key, displayName, inactive);
     }
   }
 
@@ -324,18 +355,20 @@ window.RSCApp = window.RSCApp || {};
   }
 
   app.mergeServerInfoSnapshot = function (snapshot) {
-    const visibleNames = new Set((snapshot.servers || []).map((server) => server.name));
+    const visibleKeys = new Set((snapshot.servers || []).map(serverKey));
     ensureServerInfoObj().servers.forEach((server) => {
-      if (!visibleNames.has(server.name)) {
-        $("." + serverClassName(server.name, "dropdown")).remove();
-        delete app.state.lastLogLineCount[server.name];
+      const key = serverKey(server);
+      if (!visibleKeys.has(key)) {
+        $("." + serverClassName(key, "dropdown")).remove();
+        delete app.state.lastLogLineCount[key];
       }
     });
     window.serverInfoObj = snapshot;
     ensureServerInfoObj().servers.forEach((server) => {
-      addDropdownNoDupe(server.name, !server.active);
+      const key = serverKey(server);
+      addDropdownNoDupe(key, server.name, !server.active);
       if (app.hasServerPermission(server, "console")) {
-        processServerLogLines(server.name, server.output || "", true);
+        processServerLogLines(key, server.output || "", true);
       }
     });
     app.updateStats?.();
@@ -359,9 +392,10 @@ window.RSCApp = window.RSCApp || {};
       const serverInfo = window.serverInfoObj;
       if (!serverInfo || !serverInfo.servers) return;
       serverInfo.servers.forEach((server) => {
-        addDropdownNoDupe(server.name, !server.active);
+        const key = serverKey(server);
+        addDropdownNoDupe(key, server.name, !server.active);
         const dropdownElement = document.querySelector(
-          `.${serverClassName(server.name, "dropdown")}`,
+          `.${serverClassName(key, "dropdown")}`,
         );
         if (!dropdownElement) return;
         syncDropdownState(dropdownElement, server);
@@ -376,4 +410,5 @@ window.RSCApp = window.RSCApp || {};
   };
 
   app.processServerLogLines = processServerLogLines;
+  app.serverKey = serverKey;
 })(window.RSCApp);

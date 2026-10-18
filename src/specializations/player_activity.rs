@@ -20,12 +20,118 @@ struct PlayerActivity {
 /// handful of join/leave-triggered samples.
 const PERIODIC_SAMPLE_INTERVAL_SECONDS: i64 = 5 * 60;
 
+/// Most players listed per game in the network-wide player list. The full set
+/// can be millions of players; the stats page only ever needs the busiest/most
+/// recent ones, and per-game/per-server totals are reported separately.
+const GLOBAL_PLAYERS_PER_GAME: usize = 200;
+
+/// Most players included in one server's own "User Activity" stat.
+const SERVER_SUMMARY_LIMIT: usize = 200;
+
+/// How long expensive aggregate queries are reused before a background refresh.
+const AGGREGATE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+const TIMEFRAME_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(120);
+
+#[derive(Default)]
+struct SwrState {
+    value: Option<Value>,
+    refreshed_at: Option<std::time::Instant>,
+    refreshing: bool,
+}
+
+/// Stale-while-revalidate cache for expensive aggregate queries: callers get
+/// the last computed value immediately, and a stale value triggers one
+/// background recomputation, so slow scans over huge session tables never run
+/// on (or block) the server loop or a websocket request.
+#[derive(Clone, Default)]
+struct SwrCache(std::sync::Arc<std::sync::Mutex<SwrState>>);
+
+impl std::fmt::Debug for SwrCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SwrCache")
+    }
+}
+
+impl SwrCache {
+    /// `block_if_cold`: compute inline when there's nothing cached yet
+    /// (otherwise the first caller would get an empty placeholder).
+    fn get(
+        &self,
+        ttl: std::time::Duration,
+        block_if_cold: bool,
+        empty: Value,
+        compute: impl FnOnce() -> Value + Send + 'static,
+    ) -> Value {
+        let spawn_refresh = {
+            let Ok(mut state) = self.0.lock() else {
+                return empty;
+            };
+            if let Some(value) = state.value.clone() {
+                let fresh = state.refreshed_at.is_some_and(|at| at.elapsed() < ttl);
+                if fresh || state.refreshing {
+                    return value;
+                }
+                state.refreshing = true;
+                Some(value)
+            } else if state.refreshing {
+                return empty;
+            } else {
+                state.refreshing = true;
+                None
+            }
+        };
+
+        let shared = self.0.clone();
+        let store = move |value: Value| {
+            if let Ok(mut state) = shared.lock() {
+                state.value = Some(value);
+                state.refreshed_at = Some(std::time::Instant::now());
+                state.refreshing = false;
+            }
+        };
+        match spawn_refresh {
+            Some(stale) => {
+                std::thread::spawn(move || store(compute()));
+                stale
+            }
+            None if block_if_cold => {
+                let value = compute();
+                store(value.clone());
+                value
+            }
+            None => {
+                std::thread::spawn(move || store(compute()));
+                empty
+            }
+        }
+    }
+
+    /// Forget the cached value so the next `get` recomputes it.
+    fn clear(&self) {
+        if let Ok(mut state) = self.0.lock() {
+            state.value = None;
+            state.refreshed_at = None;
+        }
+    }
+}
+
+fn global_cache() -> &'static SwrCache {
+    static CACHE: std::sync::OnceLock<SwrCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(SwrCache::default)
+}
+
+fn archived_cache() -> &'static SwrCache {
+    static CACHE: std::sync::OnceLock<SwrCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(SwrCache::default)
+}
+
 /// Tracks in-memory name sessions for a single running server instance.
 #[derive(Clone, Debug, Default)]
 pub struct PlayerActivityTracker {
     players: BTreeMap<String, PlayerActivity>,
     store: Option<PlayerActivityStore>,
     last_periodic_sample_at: Option<DateTime<Utc>>,
+    timeframe_cache: SwrCache,
 }
 
 impl PlayerActivityTracker {
@@ -47,7 +153,10 @@ impl PlayerActivityTracker {
                     players,
                     store: Some(store),
                     last_periodic_sample_at: None,
+                    timeframe_cache: SwrCache::default(),
                 };
+                // Warm the (slow) timeframe stats off-thread.
+                let _ = tracker.timeframe_stats();
                 tracker.record_player_count();
                 tracker
             }
@@ -89,6 +198,49 @@ impl PlayerActivityTracker {
         }
         self.record_player_count();
         true
+    }
+
+    /// Like [`Self::player_joined`], but for games that report a stable
+    /// player UUID alongside the (changeable) name.
+    ///
+    /// If this UUID was previously seen on this server under a different
+    /// name, everything recorded under the old name (sessions, totals, the
+    /// in-memory entry) is migrated to the new name first, so the player keeps
+    /// one continuous history. Returns the previous name when a rename was
+    /// migrated, alongside whether a new session was started.
+    pub fn player_joined_with_uuid(&mut self, uuid: &str, name: &str) -> (bool, Option<String>) {
+        let renamed_from = self.sync_identity(uuid, name);
+        (self.player_joined(name), renamed_from)
+    }
+
+    fn sync_identity(&mut self, uuid: &str, name: &str) -> Option<String> {
+        let (uuid, name) = (uuid.trim(), name.trim());
+        if uuid.is_empty() || name.is_empty() {
+            return None;
+        }
+        let store = self.store.as_ref()?;
+        let previous = match store.sync_server_identity(uuid, name) {
+            Ok(previous) => previous?,
+            Err(error) => {
+                tracing::warn!("Failed to sync player identity for '{}': {}", name, error);
+                return None;
+            }
+        };
+
+        if let Some(old) = self.players.remove(&previous) {
+            match self.players.get_mut(name) {
+                Some(existing) => {
+                    existing.total_seconds += old.total_seconds;
+                    existing.session_count += old.session_count;
+                    existing.last_joined_at = existing.last_joined_at.max(old.last_joined_at);
+                    existing.last_left_at = existing.last_left_at.max(old.last_left_at);
+                }
+                None => {
+                    self.players.insert(name.to_string(), old);
+                }
+            }
+        }
+        Some(previous)
     }
 
     pub fn player_left(&mut self, name: &str) -> bool {
@@ -168,10 +320,28 @@ impl PlayerActivityTracker {
         seconds_to_hours(self.total_seconds())
     }
 
+    /// Summaries for the busiest slice of players (online first, then most
+    /// recently seen), capped so a server with millions of known players
+    /// doesn't serialize all of them on every stats update.
     pub fn summaries(&self) -> Value {
+        let mut entries: Vec<(&String, &PlayerActivity)> = self.players.iter().collect();
+        let rank = |player: &PlayerActivity| {
+            (
+                player.current_session_started_at.is_some(),
+                player.last_joined_at,
+            )
+        };
+        let by_rank = |left: &(&String, &PlayerActivity), right: &(&String, &PlayerActivity)| {
+            rank(right.1).cmp(&rank(left.1))
+        };
+        if entries.len() > SERVER_SUMMARY_LIMIT {
+            entries.select_nth_unstable_by(SERVER_SUMMARY_LIMIT, by_rank);
+            entries.truncate(SERVER_SUMMARY_LIMIT);
+        }
+        entries.sort_by(|left, right| by_rank(left, right).then_with(|| left.0.cmp(right.0)));
         Value::Array(
-            self.players
-                .iter()
+            entries
+                .into_iter()
                 .map(|(name, player)| player_summary(name, player))
                 .collect(),
         )
@@ -191,18 +361,24 @@ impl PlayerActivityTracker {
         }
     }
 
+    /// Never blocks: returns the last computed stats (empty until the first
+    /// background computation finishes) and refreshes them off-thread.
     pub fn timeframe_stats(&self) -> Value {
-        let Some(store) = &self.store else {
+        let Some(store) = self.store.clone() else {
             return Value::Array(Vec::new());
         };
-
-        match store.timeframe_stats() {
-            Ok(stats) => Value::Array(stats),
-            Err(error) => {
-                tracing::warn!("Failed to load player timeframe stats: {}", error);
-                Value::Array(Vec::new())
-            }
-        }
+        self.timeframe_cache.get(
+            TIMEFRAME_CACHE_TTL,
+            false,
+            Value::Array(Vec::new()),
+            move || match store.timeframe_stats() {
+                Ok(stats) => Value::Array(stats),
+                Err(error) => {
+                    tracing::warn!("Failed to load player timeframe stats: {}", error);
+                    Value::Array(Vec::new())
+                }
+            },
+        )
     }
 
     fn record_player_count(&self) {
@@ -255,18 +431,18 @@ pub fn migrate_server_name_to_uuid(server_name: &str, server_uuid: &str) {
     }
 }
 
-/// Records the current name for a known player UUID (e.g. observed from a
-/// Minecraft server's `usercache.json`), migrating all recorded activity from
+/// Records the current name for a known player UUID of the given
+/// `specialization` (e.g. observed from a Minecraft server's `usercache.json`), migrating all recorded activity from
 /// any previously-known name for that UUID. Returns the previous name if a
 /// rename was detected and migrated, so callers can also update any other
 /// name-keyed records (e.g. whitelist/ban list entries) that reference it.
-pub fn sync_player_identity(uuid: &str, name: &str) -> Option<String> {
+pub fn sync_player_identity(specialization: &str, uuid: &str, name: &str) -> Option<String> {
     let uuid = uuid.trim();
     let name = name.trim();
     if uuid.is_empty() || name.is_empty() {
         return None;
     }
-    match PlayerActivityStore::sync_player_identity(database_path(), uuid, name) {
+    match PlayerActivityStore::sync_player_identity(database_path(), specialization, uuid, name) {
         Ok(renamed_from) => renamed_from,
         Err(error) => {
             tracing::warn!("Failed to sync player identity for '{}': {}", name, error);
@@ -275,31 +451,75 @@ pub fn sync_player_identity(uuid: &str, name: &str) -> Option<String> {
     }
 }
 
+/// Stats for servers that no longer exist, minus any in `active_server_uuids`.
+/// Computed for every known server and cached, so a changing active set never
+/// forces a recompute.
 pub fn archived_server_stats(active_server_uuids: &[String]) -> Value {
-    match PlayerActivityStore::archived_server_stats(database_path(), active_server_uuids) {
-        Ok(stats) => Value::Array(stats),
-        Err(error) => {
-            tracing::warn!("Failed to load archived player activity stats: {}", error);
-            Value::Array(Vec::new())
-        }
+    let all = archived_cache().get(
+        AGGREGATE_CACHE_TTL,
+        true,
+        Value::Array(Vec::new()),
+        || match PlayerActivityStore::archived_server_stats(database_path(), &[]) {
+            Ok(stats) => Value::Array(stats),
+            Err(error) => {
+                tracing::warn!("Failed to load archived player activity stats: {}", error);
+                Value::Array(Vec::new())
+            }
+        },
+    );
+    match all {
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .filter(|item| {
+                    !item
+                        .get("server_uuid")
+                        .and_then(Value::as_str)
+                        .is_some_and(|uuid| active_server_uuids.iter().any(|active| active == uuid))
+                })
+                .collect(),
+        ),
+        other => other,
     }
 }
 
-/// Aggregates player activity across every server sharing this controller's
-/// activity database, one entry per distinct player name, listing which
-/// server(s) they're associated with (and currently online on).
+/// Network-wide player activity, kept separate per game (the same name in two
+/// different games is two different players):
+///
+/// * `players` - the busiest [`GLOBAL_PLAYERS_PER_GAME`] players of each game,
+///   each with a per-server breakdown;
+/// * `server_totals` - one row per server (player count, online count, total
+///   seconds), from which any total can be summed without listing every
+///   player, and which permission filtering can apply per server.
+///
+/// Cached and refreshed in the background; safe to call from a request path.
 pub fn global_player_activity() -> Value {
-    match PlayerActivityStore::global_player_activity(database_path()) {
-        Ok(players) => Value::Array(players),
-        Err(error) => {
-            tracing::warn!("Failed to load global player activity: {}", error);
-            Value::Array(Vec::new())
-        }
-    }
+    global_cache().get(
+        AGGREGATE_CACHE_TTL,
+        true,
+        json!({ "players": [], "server_totals": [] }),
+        || {
+            let db_path = database_path();
+            let players = PlayerActivityStore::global_player_activity(db_path.clone())
+                .unwrap_or_else(|error| {
+                    tracing::warn!("Failed to load global player activity: {}", error);
+                    Vec::new()
+                });
+            let server_totals = PlayerActivityStore::global_server_totals(db_path)
+                .unwrap_or_else(|error| {
+                    tracing::warn!("Failed to load server player totals: {}", error);
+                    Vec::new()
+                });
+            json!({ "players": players, "server_totals": server_totals })
+        },
+    )
 }
 
 pub fn delete_server_stats(server_uuid: &str) -> rusqlite::Result<()> {
-    PlayerActivityStore::delete_server_stats(database_path(), server_uuid)
+    let result = PlayerActivityStore::delete_server_stats(database_path(), server_uuid);
+    global_cache().clear();
+    archived_cache().clear();
+    result
 }
 
 #[derive(Clone, Debug)]
@@ -332,7 +552,7 @@ impl PlayerActivityStore {
             display_name: display_name.to_string(),
             specialization: specialization.to_string(),
         };
-        store.with_connection(|connection| initialize_schema(connection))?;
+        store.with_connection(|_| Ok(()))?;
         store.upsert_server_metadata()?;
         Ok(store)
     }
@@ -406,8 +626,7 @@ impl PlayerActivityStore {
 
     fn migrate_legacy_server_name(&self, server_name: &str) -> rusqlite::Result<()> {
         self.with_connection(|connection| {
-            initialize_schema(connection)?;
-            let tx = connection.transaction()?;
+            let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             for table in [
                 "player_activity",
                 "player_activity_sessions",
@@ -441,6 +660,7 @@ impl PlayerActivityStore {
 
     fn sync_player_identity(
         db_path: PathBuf,
+        specialization: &str,
         uuid: &str,
         name: &str,
     ) -> rusqlite::Result<Option<String>> {
@@ -451,7 +671,6 @@ impl PlayerActivityStore {
             specialization: String::new(),
         };
         store.with_connection(|connection| {
-            initialize_schema(connection)?;
             let previous_name: Option<String> = connection
                 .query_row(
                     "SELECT name FROM player_identities WHERE uuid = ?1",
@@ -476,15 +695,103 @@ impl PlayerActivityStore {
                 return Ok(None);
             }
 
-            let tx = connection.transaction()?;
+            let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             for table in ["player_activity", "player_activity_sessions"] {
                 tx.execute(
-                    &format!("UPDATE {table} SET player_name = ?1 WHERE player_name = ?2"),
-                    params![name, previous_name],
+                    // Only this game's rows: the same name in another game is
+                    // a different player.
+                    &format!(
+                        "UPDATE {table} SET player_name = ?1
+                          WHERE player_name = ?2 AND specialization = ?3"
+                    ),
+                    params![name, previous_name, specialization],
                 )?;
             }
             tx.commit()?;
             Ok(Some(previous_name))
+        })
+    }
+
+    /// Records `name` as the current name of `uuid` on this server, and if the
+    /// UUID was previously recorded here under a different name, migrates that
+    /// name's sessions and aggregate row to the new name (merging into an
+    /// existing row for the new name if there is one). Returns the previous
+    /// name when a migration happened. Scoped to this server only, so another
+    /// server's (or another game's) same-named players are never touched.
+    fn sync_server_identity(&self, uuid: &str, name: &str) -> rusqlite::Result<Option<String>> {
+        self.with_connection(|connection| {
+            let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let previous: Option<String> = tx
+                .query_row(
+                    "SELECT name FROM player_server_identities WHERE server_name = ?1 AND uuid = ?2",
+                    params![self.server_uuid, uuid],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            tx.execute(
+                "INSERT INTO player_server_identities (server_name, uuid, name, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(server_name, uuid) DO UPDATE SET
+                    name = excluded.name,
+                    updated_at = excluded.updated_at",
+                params![
+                    self.server_uuid,
+                    uuid,
+                    name,
+                    format_timestamp(Some(Utc::now()))
+                ],
+            )?;
+            let Some(previous) = previous.filter(|previous| previous != name) else {
+                tx.commit()?;
+                return Ok(None);
+            };
+
+            tx.execute(
+                "UPDATE player_activity_sessions SET player_name = ?1
+                  WHERE server_name = ?2 AND player_name = ?3",
+                params![name, self.server_uuid, previous],
+            )?;
+
+            type AggregateRow = (i64, i64, Option<String>, Option<String>);
+            let read_row = |tx: &rusqlite::Transaction, player: &str| -> rusqlite::Result<Option<AggregateRow>> {
+                tx.query_row(
+                    "SELECT total_seconds, session_count, last_joined_at, last_left_at
+                       FROM player_activity WHERE server_name = ?1 AND player_name = ?2",
+                    params![self.server_uuid, player],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()
+            };
+            if let Some(old) = read_row(&tx, &previous)? {
+                if let Some(existing) = read_row(&tx, name)? {
+                    tx.execute(
+                        "UPDATE player_activity
+                            SET total_seconds = ?1, session_count = ?2,
+                                last_joined_at = ?3, last_left_at = ?4
+                          WHERE server_name = ?5 AND player_name = ?6",
+                        params![
+                            existing.0 + old.0,
+                            existing.1 + old.1,
+                            existing.2.clone().max(old.2.clone()),
+                            existing.3.clone().max(old.3.clone()),
+                            self.server_uuid,
+                            name
+                        ],
+                    )?;
+                    tx.execute(
+                        "DELETE FROM player_activity WHERE server_name = ?1 AND player_name = ?2",
+                        params![self.server_uuid, previous],
+                    )?;
+                } else {
+                    tx.execute(
+                        "UPDATE player_activity SET player_name = ?1
+                          WHERE server_name = ?2 AND player_name = ?3",
+                        params![name, self.server_uuid, previous],
+                    )?;
+                }
+            }
+            tx.commit()?;
+            Ok(Some(previous))
         })
     }
 
@@ -495,7 +802,7 @@ impl PlayerActivityStore {
         joined_at: DateTime<Utc>,
     ) -> rusqlite::Result<i64> {
         self.with_connection(|connection| {
-            let tx = connection.transaction()?;
+            let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute(
                 "INSERT INTO player_activity_sessions
                     (server_name, specialization, player_name, joined_at)
@@ -530,7 +837,7 @@ impl PlayerActivityStore {
     ) -> rusqlite::Result<()> {
         let duration_seconds = elapsed_seconds(joined_at, left_at);
         self.with_connection(|connection| {
-            let tx = connection.transaction()?;
+            let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             if let Some(session_id) = player.active_session_id {
                 tx.execute(
                     "UPDATE player_activity_sessions
@@ -590,7 +897,7 @@ impl PlayerActivityStore {
             }
             drop(statement);
 
-            let tx = connection.transaction()?;
+            let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             for (id, player_name, joined_at) in stale_sessions {
                 let duration_seconds = elapsed_seconds(joined_at, now);
                 tx.execute(
@@ -900,7 +1207,6 @@ impl PlayerActivityStore {
             specialization: String::new(),
         };
         let metadata = store.with_connection(|connection| {
-            initialize_schema(connection)?;
             let mut statement = connection.prepare(
                 "SELECT server_uuid, display_name, specialization, last_seen_at
                    FROM player_activity_servers
@@ -962,6 +1268,10 @@ impl PlayerActivityStore {
         Ok(archives)
     }
 
+    /// The busiest [`GLOBAL_PLAYERS_PER_GAME`] players of each game, with a
+    /// per-server breakdown. Sourced from `player_activity_sessions` (the
+    /// append-only ground truth) rather than the aggregate table, which has
+    /// historically been able to drift. Players are keyed by (game, name).
     fn global_player_activity(db_path: PathBuf) -> rusqlite::Result<Vec<Value>> {
         let store = Self {
             db_path,
@@ -970,77 +1280,62 @@ impl PlayerActivityStore {
             specialization: String::new(),
         };
         store.with_connection(|connection| {
-            initialize_schema(connection)?;
-            // Sourced from `player_activity_sessions`, not the `player_activity`
-            // aggregate table, so this list can never drift out of sync with
-            // `distinct_names_since` (used by the rolling/all-time timeframe
-            // cards) - sessions are the append-only ground truth, while the
-            // aggregate table is mutated in place by upserts and rename
-            // migrations that have historically been able to silently leave a
-            // player's aggregate row missing or stale even though their
-            // session history is intact.
-            let mut statement = connection.prepare(
-                "SELECT ps.player_name,
-                        ps.server_name,
-                        COALESCE(s.display_name, ps.server_name) AS server_display_name,
-                        MAX(ps.specialization) AS specialization,
-                        SUM(COALESCE(ps.duration_seconds, 0)) AS total_seconds,
-                        MAX(CASE WHEN ps.left_at IS NULL THEN ps.joined_at END) AS current_session_started_at,
-                        MAX(ps.joined_at) AS last_joined_at,
-                        MAX(ps.left_at) AS last_left_at,
-                        COUNT(*) AS session_count
+            let games: Vec<String> = connection
+                .prepare("SELECT DISTINCT specialization FROM player_activity_sessions")?
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+
+            let mut top_statement = connection.prepare(
+                "SELECT player_name,
+                        MAX(CASE WHEN left_at IS NULL THEN 1 ELSE 0 END) AS online,
+                        MAX(joined_at) AS last_joined
+                   FROM player_activity_sessions
+                  WHERE specialization = ?1
+                  GROUP BY player_name
+                  ORDER BY online DESC, last_joined DESC
+                  LIMIT ?2",
+            )?;
+            let mut server_statement = connection.prepare(
+                "SELECT ps.server_name,
+                        COALESCE(s.display_name, ps.server_name),
+                        SUM(COALESCE(ps.duration_seconds, 0)),
+                        MAX(CASE WHEN ps.left_at IS NULL THEN ps.joined_at END),
+                        MAX(ps.joined_at),
+                        MAX(ps.left_at),
+                        COUNT(*)
                    FROM player_activity_sessions ps
                    LEFT JOIN player_activity_servers s ON s.server_uuid = ps.server_name
-                  GROUP BY ps.player_name, ps.server_name, server_display_name
-                  ORDER BY ps.player_name, server_display_name",
+                  WHERE ps.specialization = ?1 AND ps.player_name = ?2
+                  GROUP BY ps.server_name
+                  ORDER BY 2",
             )?;
-            let rows = statement.query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                    row.get::<_, Option<String>>(6)?,
-                    row.get::<_, Option<String>>(7)?,
-                    row.get::<_, i64>(8)?,
-                ))
-            })?;
 
-            let mut players: Vec<(String, Vec<Value>)> = Vec::new();
-            for row in rows {
-                let (
-                    player_name,
-                    server_uuid,
-                    server_display_name,
-                    specialization,
-                    total_seconds,
-                    current_session_started_at,
-                    last_joined_at,
-                    last_left_at,
-                    session_count,
-                ) = row?;
-                let entry = json!({
-                    "server_uuid": server_uuid,
-                    "server_name": server_display_name,
-                    "specialization": specialization,
-                    "online": current_session_started_at.is_some(),
-                    "total_seconds": total_seconds,
-                    "total_hours": seconds_to_hours(total_seconds),
-                    "last_joined_at": last_joined_at,
-                    "last_left_at": last_left_at,
-                    "session_count": session_count,
-                });
-                match players.last_mut() {
-                    Some((name, servers)) if *name == player_name => servers.push(entry),
-                    _ => players.push((player_name, vec![entry])),
-                }
-            }
+            let mut summaries: Vec<(bool, Option<DateTime<Utc>>, Value)> = Vec::new();
+            for game in &games {
+                let top: Vec<String> = top_statement
+                    .query_map(params![game, GLOBAL_PLAYERS_PER_GAME as i64], |row| {
+                        row.get(0)
+                    })?
+                    .collect::<rusqlite::Result<_>>()?;
+                for player_name in top {
+                    let servers: Vec<Value> = server_statement
+                        .query_map(params![game, player_name], |row| {
+                            let total_seconds: i64 = row.get(2)?;
+                            let current: Option<String> = row.get(3)?;
+                            Ok(json!({
+                                "server_uuid": row.get::<_, String>(0)?,
+                                "server_name": row.get::<_, String>(1)?,
+                                "specialization": game,
+                                "online": current.is_some(),
+                                "total_seconds": total_seconds,
+                                "total_hours": seconds_to_hours(total_seconds),
+                                "last_joined_at": row.get::<_, Option<String>>(4)?,
+                                "last_left_at": row.get::<_, Option<String>>(5)?,
+                                "session_count": row.get::<_, i64>(6)?,
+                            }))
+                        })?
+                        .collect::<rusqlite::Result<_>>()?;
 
-            let mut summaries: Vec<(bool, Option<DateTime<Utc>>, Value)> = players
-                .into_iter()
-                .map(|(player_name, servers)| {
                     let online = servers
                         .iter()
                         .any(|server| server.get("online").and_then(Value::as_bool) == Some(true));
@@ -1057,30 +1352,62 @@ impl PlayerActivityStore {
                                 .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
                         })
                         .max();
-                    let sort_key = last_joined_at.map(|value| value.with_timezone(&Utc));
-                    let summary = json!({
-                        "name": player_name,
-                        "online": online,
-                        "total_seconds": total_seconds,
-                        "total_hours": seconds_to_hours(total_seconds),
-                        "last_joined_at": last_joined_at.map(|value| value.to_rfc3339()),
-                        "servers": servers,
-                    });
-                    (online, sort_key, summary)
-                })
-                .collect();
+                    summaries.push((
+                        online,
+                        last_joined_at.map(|value| value.with_timezone(&Utc)),
+                        json!({
+                            "name": player_name,
+                            "specialization": game,
+                            "online": online,
+                            "total_seconds": total_seconds,
+                            "total_hours": seconds_to_hours(total_seconds),
+                            "last_joined_at": last_joined_at.map(|value| value.to_rfc3339()),
+                            "servers": servers,
+                        }),
+                    ));
+                }
+            }
 
-            summaries.sort_by(|left, right| {
-                right
-                    .0
-                    .cmp(&left.0)
-                    .then_with(|| right.1.cmp(&left.1))
-            });
+            summaries.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+            Ok(summaries.into_iter().map(|(_, _, summary)| summary).collect())
+        })
+    }
 
-            Ok(summaries
-                .into_iter()
-                .map(|(_, _, summary)| summary)
-                .collect())
+    /// One row per server: distinct players, how many are online, and total
+    /// logged seconds. Cheap to ship and safe to filter per server.
+    fn global_server_totals(db_path: PathBuf) -> rusqlite::Result<Vec<Value>> {
+        let store = Self {
+            db_path,
+            server_uuid: String::new(),
+            display_name: String::new(),
+            specialization: String::new(),
+        };
+        store.with_connection(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT ps.server_name,
+                        COALESCE(s.display_name, ps.server_name),
+                        MAX(ps.specialization),
+                        COUNT(DISTINCT ps.player_name),
+                        COUNT(DISTINCT CASE WHEN ps.left_at IS NULL THEN ps.player_name END),
+                        SUM(COALESCE(ps.duration_seconds, 0))
+                   FROM player_activity_sessions ps
+                   LEFT JOIN player_activity_servers s ON s.server_uuid = ps.server_name
+                  GROUP BY ps.server_name
+                  ORDER BY 2",
+            )?;
+            let rows = statement.query_map([], |row| {
+                let total_seconds: i64 = row.get(5)?;
+                Ok(json!({
+                    "server_uuid": row.get::<_, String>(0)?,
+                    "server_name": row.get::<_, String>(1)?,
+                    "specialization": row.get::<_, String>(2)?,
+                    "players": row.get::<_, i64>(3)?,
+                    "online": row.get::<_, i64>(4)?,
+                    "total_seconds": total_seconds,
+                    "total_hours": seconds_to_hours(total_seconds),
+                }))
+            })?;
+            rows.collect()
         })
     }
 
@@ -1092,7 +1419,7 @@ impl PlayerActivityStore {
             specialization: String::new(),
         };
         store.with_connection(|connection| {
-            let tx = connection.transaction()?;
+            let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute(
                 "DELETE FROM player_activity WHERE server_name = ?1",
                 params![server_uuid],
@@ -1118,12 +1445,81 @@ impl PlayerActivityStore {
         action: impl FnOnce(&mut Connection) -> rusqlite::Result<T>,
     ) -> rusqlite::Result<T> {
         let mut connection = Connection::open(&self.db_path)?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
+        // Many servers (and controllers' background refreshes) write to this
+        // one database; wait for the lock instead of failing the write.
+        connection.busy_timeout(std::time::Duration::from_secs(30))?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
+        if !schema_ready(&self.db_path) {
+            // Serialize first-time setup: several servers open their stores at
+            // once on startup, and concurrent DDL/migration would collide.
+            static SCHEMA_SETUP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let _setup = SCHEMA_SETUP.lock().unwrap_or_else(|e| e.into_inner());
+            if !schema_ready(&self.db_path) {
+                // Switching to WAL needs an exclusive lock (and ignores the
+                // busy timeout), so it happens once per database, here. The
+                // mode is stored in the file and applies to every connection.
+                connection.pragma_update(None, "journal_mode", "WAL")?;
+                initialize_schema(&connection)?;
+                mark_schema_ready(&self.db_path);
+            }
+        }
         action(&mut connection)
     }
 }
 
+/// Paths whose schema has already been initialized by this process, so the
+/// (potentially expensive) setup below runs once per database, not per query.
+fn schema_ready(db_path: &Path) -> bool {
+    static READY: std::sync::OnceLock<std::sync::Mutex<BTreeSet<PathBuf>>> =
+        std::sync::OnceLock::new();
+    READY
+        .get_or_init(Default::default)
+        .lock()
+        .map(|ready| ready.contains(db_path))
+        .unwrap_or(false)
+}
+
+fn mark_schema_ready(db_path: &Path) {
+    static READY: std::sync::OnceLock<std::sync::Mutex<BTreeSet<PathBuf>>> =
+        std::sync::OnceLock::new();
+    if let Ok(mut ready) = READY.get_or_init(Default::default).lock() {
+        ready.insert(db_path.to_path_buf());
+    }
+}
+
+fn sqlite_master_sql(connection: &Connection, kind: &str, name: &str) -> rusqlite::Result<Option<String>> {
+    connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = ?1 AND name = ?2",
+            params![kind, name],
+            |row| row.get(0),
+        )
+        .optional()
+}
+
+/// Creates `name` if missing, and rebuilds it only if an existing index of that
+/// name doesn't have the expected definition (never on every start).
+fn ensure_index(
+    connection: &Connection,
+    name: &str,
+    table_and_columns: &str,
+) -> rusqlite::Result<()> {
+    let expected = table_and_columns.replace(' ', "");
+    if let Some(existing) = sqlite_master_sql(connection, "index", name)? {
+        if existing.replace(' ', "").contains(&expected) {
+            return Ok(());
+        }
+        connection.execute(&format!("DROP INDEX {name}"), [])?;
+    }
+    connection.execute(&format!("CREATE INDEX {name} ON {table_and_columns}"), [])?;
+    Ok(())
+}
+
+/// Idempotent and cheap once the database is up to date: the one-off data
+/// migrations below only run when the old table layout / missing metadata is
+/// actually detected, so this never rewrites large tables on a healthy
+/// database.
 fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(
         r#"
@@ -1139,53 +1535,58 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             active_session_id INTEGER,
             PRIMARY KEY (server_name, player_name)
         );
+        "#,
+    )?;
 
-        CREATE TABLE IF NOT EXISTS player_activity_by_server (
-            server_name TEXT NOT NULL,
-            specialization TEXT NOT NULL,
-            player_name TEXT NOT NULL,
-            total_seconds INTEGER NOT NULL DEFAULT 0,
-            current_session_started_at TEXT,
-            last_joined_at TEXT,
-            last_left_at TEXT,
-            session_count INTEGER NOT NULL DEFAULT 0,
-            active_session_id INTEGER,
-            PRIMARY KEY (server_name, player_name)
-        );
+    // Legacy layout (pre per-server primary key): rebuild once.
+    let has_current_layout = sqlite_master_sql(connection, "table", "player_activity")?
+        .is_some_and(|sql| sql.contains("PRIMARY KEY (server_name, player_name)"));
+    if !has_current_layout {
+        connection.execute_batch(
+            r#"
+            DROP TABLE IF EXISTS player_activity_by_server;
+            CREATE TABLE player_activity_by_server (
+                server_name TEXT NOT NULL,
+                specialization TEXT NOT NULL,
+                player_name TEXT NOT NULL,
+                total_seconds INTEGER NOT NULL DEFAULT 0,
+                current_session_started_at TEXT,
+                last_joined_at TEXT,
+                last_left_at TEXT,
+                session_count INTEGER NOT NULL DEFAULT 0,
+                active_session_id INTEGER,
+                PRIMARY KEY (server_name, player_name)
+            );
+            INSERT OR REPLACE INTO player_activity_by_server
+                (server_name, specialization, player_name, total_seconds,
+                 current_session_started_at, last_joined_at, last_left_at, session_count, active_session_id)
+            SELECT server_name,
+                   MAX(specialization),
+                   player_name,
+                   SUM(total_seconds),
+                   MAX(current_session_started_at),
+                   MAX(last_joined_at),
+                   MAX(last_left_at),
+                   SUM(session_count),
+                   MAX(active_session_id)
+              FROM player_activity
+             GROUP BY server_name, player_name;
+            DROP TABLE player_activity;
+            ALTER TABLE player_activity_by_server RENAME TO player_activity;
+            "#,
+        )?;
+    }
 
-        INSERT OR REPLACE INTO player_activity_by_server
-            (server_name, specialization, player_name, total_seconds,
-             current_session_started_at, last_joined_at, last_left_at, session_count, active_session_id)
-        SELECT server_name,
-               MAX(specialization),
-               player_name,
-               SUM(total_seconds),
-               MAX(current_session_started_at),
-               MAX(last_joined_at),
-               MAX(last_left_at),
-               SUM(session_count),
-               MAX(active_session_id)
-          FROM player_activity
-         GROUP BY server_name, player_name;
-
-        DROP TABLE player_activity;
-        ALTER TABLE player_activity_by_server RENAME TO player_activity;
-
-        CREATE INDEX IF NOT EXISTS idx_player_activity_server_lookup
-            ON player_activity (server_name, player_name);
-
+    let servers_table_existed =
+        sqlite_master_sql(connection, "table", "player_activity_servers")?.is_some();
+    connection.execute_batch(
+        r#"
         CREATE TABLE IF NOT EXISTS player_activity_servers (
             server_uuid TEXT PRIMARY KEY,
             display_name TEXT NOT NULL,
             specialization TEXT NOT NULL,
             last_seen_at TEXT
         );
-
-        INSERT OR IGNORE INTO player_activity_servers
-            (server_uuid, display_name, specialization, last_seen_at)
-        SELECT server_name, server_name, MAX(specialization), MAX(last_joined_at)
-          FROM player_activity
-         GROUP BY server_name;
 
         CREATE TABLE IF NOT EXISTS player_activity_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1197,10 +1598,6 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             duration_seconds INTEGER
         );
 
-        DROP INDEX IF EXISTS idx_player_activity_sessions_lookup;
-        CREATE INDEX IF NOT EXISTS idx_player_activity_sessions_lookup
-            ON player_activity_sessions (server_name, player_name, joined_at);
-
         CREATE TABLE IF NOT EXISTS player_count_samples (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             server_name TEXT NOT NULL,
@@ -1209,17 +1606,60 @@ fn initialize_schema(connection: &Connection) -> rusqlite::Result<()> {
             online_count INTEGER NOT NULL
         );
 
-        DROP INDEX IF EXISTS idx_player_count_samples_lookup;
-        CREATE INDEX IF NOT EXISTS idx_player_count_samples_lookup
-            ON player_count_samples (server_name, sampled_at);
-
         CREATE TABLE IF NOT EXISTS player_identities (
             uuid TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             updated_at TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS player_server_identities (
+            server_name TEXT NOT NULL,
+            uuid TEXT NOT NULL,
+            name TEXT NOT NULL,
+            updated_at TEXT,
+            PRIMARY KEY (server_name, uuid)
+        );
         "#,
-    )
+    )?;
+    if !servers_table_existed {
+        connection.execute(
+            "INSERT OR IGNORE INTO player_activity_servers
+                (server_uuid, display_name, specialization, last_seen_at)
+             SELECT server_name, server_name, MAX(specialization), MAX(last_joined_at)
+               FROM player_activity
+              GROUP BY server_name",
+            [],
+        )?;
+    }
+
+    ensure_index(
+        connection,
+        "idx_player_activity_server_lookup",
+        "player_activity (server_name, player_name)",
+    )?;
+    ensure_index(
+        connection,
+        "idx_player_activity_sessions_lookup",
+        "player_activity_sessions (server_name, player_name, joined_at)",
+    )?;
+    // Per-server time-range scans (recent sessions, timeframe windows).
+    ensure_index(
+        connection,
+        "idx_player_activity_sessions_server_time",
+        "player_activity_sessions (server_name, joined_at)",
+    )?;
+    // Per-game, per-player lookups for the network-wide player list.
+    ensure_index(
+        connection,
+        "idx_player_activity_sessions_game_player",
+        "player_activity_sessions (specialization, player_name, server_name)",
+    )?;
+    ensure_index(
+        connection,
+        "idx_player_count_samples_lookup",
+        "player_count_samples (server_name, sampled_at)",
+    )?;
+    Ok(())
 }
 
 fn upsert_player(
@@ -1385,6 +1825,7 @@ mod tests {
             players: store.load_players()?,
             store: Some(store),
         last_periodic_sample_at: None,
+            timeframe_cache: SwrCache::default(),
         };
 
         assert!(tracker.player_joined("PlayerOne"));
@@ -1396,6 +1837,7 @@ mod tests {
             players: reloaded_store.load_players()?,
             store: Some(reloaded_store),
         last_periodic_sample_at: None,
+            timeframe_cache: SwrCache::default(),
         };
 
         assert_eq!(reloaded_tracker.known_player_count(), 1);
@@ -1406,7 +1848,16 @@ mod tests {
                 .map(Vec::len),
             Some(1)
         );
-        let timeframe_stats = reloaded_tracker.timeframe_stats();
+        // Timeframe stats are computed in the background and served from a
+        // cache, so the first calls may be empty.
+        let mut timeframe_stats = reloaded_tracker.timeframe_stats();
+        for _ in 0..100 {
+            if timeframe_stats.as_array().is_some_and(|stats| !stats.is_empty()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            timeframe_stats = reloaded_tracker.timeframe_stats();
+        }
         let timeframe_names: Vec<&str> = timeframe_stats
             .as_array()
             .expect("timeframe stats should be an array")
@@ -1426,6 +1877,217 @@ mod tests {
             .get("player_count_samples")
             .and_then(|samples| samples.as_array())
             .is_some_and(|samples| !samples.is_empty()));
+
+        let _ = std::fs::remove_file(db_path);
+        Ok(())
+    }
+
+    #[test]
+    fn uuid_rename_migrates_history_on_one_server_only() -> rusqlite::Result<()> {
+        let db_path = std::env::temp_dir().join(format!(
+            "rsc-player-activity-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        let open = |server: &str| -> rusqlite::Result<PlayerActivityTracker> {
+            let store = PlayerActivityStore::open_at(db_path.clone(), server, server, "Hytale")?;
+            Ok(PlayerActivityTracker {
+                players: store.load_players()?,
+                store: Some(store),
+                last_periodic_sample_at: None,
+                timeframe_cache: SwrCache::default(),
+            })
+        };
+
+        let mut one = open("server-one")?;
+        let mut two = open("server-two")?;
+        // Same display name on a different server, which must stay untouched.
+        two.player_joined("OldName");
+        two.player_left("OldName");
+
+        assert_eq!(one.player_joined_with_uuid("uuid-1", "OldName"), (true, None));
+        one.player_left("OldName");
+
+        let (started, renamed_from) = one.player_joined_with_uuid("uuid-1", "NewName");
+        assert!(started);
+        assert_eq!(renamed_from.as_deref(), Some("OldName"));
+        assert_eq!(one.known_player_count(), 1);
+        assert_eq!(one.online_names(), vec!["NewName".to_string()]);
+        one.player_left("NewName");
+
+        let reloaded = open("server-one")?;
+        assert_eq!(reloaded.known_player_count(), 1);
+        let summaries = reloaded.summaries().to_string();
+        assert!(summaries.contains("NewName") && !summaries.contains("OldName"));
+        assert_eq!(
+            reloaded.recent_sessions(10).as_array().map(Vec::len),
+            Some(2)
+        );
+
+        let other = open("server-two")?;
+        assert!(other.summaries().to_string().contains("OldName"));
+
+        let _ = std::fs::remove_file(db_path);
+        Ok(())
+    }
+
+    /// Manual scale check: `cargo test --release scale_smoke -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn scale_smoke() -> rusqlite::Result<()> {
+        use std::time::Instant;
+        let db_path = std::env::temp_dir().join(format!("rsc-scale-{}.sqlite3", uuid::Uuid::new_v4()));
+        let sessions: i64 = std::env::var("SCALE_SESSIONS").ok().and_then(|v| v.parse().ok()).unwrap_or(2_000_000);
+        let store = PlayerActivityStore::open_at(db_path.clone(), "srv-a", "A", "Minecraft")?;
+        store.with_connection(|c| {
+            c.execute(
+                "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i < ?1)
+                 INSERT INTO player_activity_sessions
+                    (server_name, specialization, player_name, joined_at, left_at, duration_seconds)
+                 SELECT 'srv-' || (i % 3), CASE WHEN i % 3 = 2 THEN 'Hytale' ELSE 'Minecraft' END,
+                        'player' || (i % 500000),
+                        strftime('%Y-%m-%dT%H:%M:%S+00:00', '2026-01-01', '+' || (i % 20000000) || ' seconds'),
+                        strftime('%Y-%m-%dT%H:%M:%S+00:00', '2026-01-01', '+' || ((i % 20000000) + 600) || ' seconds'),
+                        600
+                   FROM n",
+                params![sessions],
+            )?;
+            Ok(())
+        })?;
+        let t = Instant::now();
+        let reopened = PlayerActivityStore::open_at(db_path.clone(), "srv-0", "S0", "Minecraft")?;
+        println!("reopen/schema: {:?}", t.elapsed());
+        let t = Instant::now();
+        let players = reopened.load_players()?;
+        println!("load_players: {:?} ({} players)", t.elapsed(), players.len());
+        let t = Instant::now();
+        let global = PlayerActivityStore::global_player_activity(db_path.clone())?;
+        println!("global_player_activity: {:?} ({} listed)", t.elapsed(), global.len());
+        let t = Instant::now();
+        let totals = PlayerActivityStore::global_server_totals(db_path.clone())?;
+        println!("global_server_totals: {:?} ({} rows)", t.elapsed(), totals.len());
+        let t = Instant::now();
+        let stats = reopened.timeframe_stats()?;
+        println!("timeframe_stats: {:?} ({} windows)", t.elapsed(), stats.len());
+        let t = Instant::now();
+        let recent = reopened.recent_sessions(25)?;
+        println!("recent_sessions: {:?} ({})", t.elapsed(), recent.len());
+        let mut tracker = PlayerActivityTracker {
+            players,
+            store: Some(reopened),
+            last_periodic_sample_at: None,
+            timeframe_cache: SwrCache::default(),
+        };
+        let t = Instant::now();
+        let summaries = tracker.summaries();
+        println!("summaries: {:?} ({} entries)", t.elapsed(), summaries.as_array().map_or(0, Vec::len));
+        let t = Instant::now();
+        tracker.player_joined_with_uuid("uuid-x", "NewPlayer");
+        tracker.player_left("NewPlayer");
+        println!("join+leave persist: {:?}", t.elapsed());
+        let _ = std::fs::remove_file(db_path);
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_servers_never_hit_database_locked() -> rusqlite::Result<()> {
+        let db_path = std::env::temp_dir().join(format!(
+            "rsc-concurrent-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        const THREADS: usize = 16;
+        const ROUNDS: usize = 60;
+        let handles: Vec<_> = (0..THREADS)
+            .map(|thread| {
+                let db_path = db_path.clone();
+                std::thread::spawn(move || -> rusqlite::Result<()> {
+                    // Every thread opens its own store at once, like servers
+                    // starting together, then joins/leaves repeatedly.
+                    let store = PlayerActivityStore::open_at(
+                        db_path,
+                        &format!("server-{thread}"),
+                        "S",
+                        "Hytale",
+                    )?;
+                    for round in 0..ROUNDS {
+                        let name = format!("p{thread}-{round}");
+                        let joined_at = Utc::now();
+                        let mut player = PlayerActivity::default();
+                        player.session_count = 1;
+                        player.current_session_started_at = Some(joined_at);
+                        let session_id = store.persist_join(&name, &player, joined_at)?;
+                        player.active_session_id = Some(session_id);
+                        store.persist_leave(&name, &mut player, joined_at, Utc::now())?;
+                        store.sync_server_identity(&format!("uuid-{thread}-{round}"), &name)?;
+                    }
+                    Ok(())
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("thread panicked")?;
+        }
+
+        let store = PlayerActivityStore::open_at(db_path.clone(), "check", "C", "Hytale")?;
+        let sessions: i64 = store.with_connection(|connection| {
+            connection.query_row("SELECT COUNT(*) FROM player_activity_sessions", [], |row| {
+                row.get(0)
+            })
+        })?;
+        assert_eq!(sessions as usize, THREADS * ROUNDS);
+        let _ = std::fs::remove_file(db_path);
+        Ok(())
+    }
+
+    #[test]
+    fn same_name_in_different_games_stays_separate() -> rusqlite::Result<()> {
+        let db_path = std::env::temp_dir().join(format!(
+            "rsc-player-activity-{}.sqlite3",
+            uuid::Uuid::new_v4()
+        ));
+        let open = |server: &str, game: &str| -> rusqlite::Result<PlayerActivityTracker> {
+            let store = PlayerActivityStore::open_at(db_path.clone(), server, server, game)?;
+            Ok(PlayerActivityTracker {
+                players: store.load_players()?,
+                store: Some(store),
+                last_periodic_sample_at: None,
+                timeframe_cache: SwrCache::default(),
+            })
+        };
+        let mut minecraft = open("mc", "Minecraft")?;
+        let mut hytale = open("ht", "Hytale")?;
+        minecraft.player_joined("Sturdy");
+        minecraft.player_left("Sturdy");
+        hytale.player_joined("Sturdy");
+        hytale.player_left("Sturdy");
+
+        let global = PlayerActivityStore::global_player_activity(db_path.clone())?;
+        assert_eq!(global.len(), 2, "one entry per game, not merged by name");
+        let games: BTreeSet<&str> = global
+            .iter()
+            .filter_map(|player| player.get("specialization").and_then(Value::as_str))
+            .collect();
+        assert_eq!(games, BTreeSet::from(["Hytale", "Minecraft"]));
+
+        // A Minecraft UUID rename must not rewrite the Hytale player's rows.
+        PlayerActivityStore::sync_player_identity(db_path.clone(), "Minecraft", "mc-uuid", "Sturdy")?;
+        let renamed = PlayerActivityStore::sync_player_identity(
+            db_path.clone(),
+            "Minecraft",
+            "mc-uuid",
+            "SturdyNew",
+        )?;
+        assert_eq!(renamed.as_deref(), Some("Sturdy"));
+        let names: BTreeSet<(String, String)> = PlayerActivityStore::global_player_activity(db_path.clone())?
+            .iter()
+            .map(|player| {
+                (
+                    player["specialization"].as_str().unwrap_or_default().to_string(),
+                    player["name"].as_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        assert!(names.contains(&("Hytale".to_string(), "Sturdy".to_string())));
+        assert!(names.contains(&("Minecraft".to_string(), "SturdyNew".to_string())));
 
         let _ = std::fs::remove_file(db_path);
         Ok(())
@@ -1454,6 +2116,7 @@ mod tests {
                 players: store.load_players()?,
                 store: Some(store),
             last_periodic_sample_at: None,
+            timeframe_cache: SwrCache::default(),
             };
             assert!(tracker.player_joined("SharedName"));
             assert!(tracker.player_left("SharedName"));
@@ -1484,6 +2147,7 @@ mod tests {
             players: server_one_store.load_players()?,
             store: Some(server_one_store),
         last_periodic_sample_at: None,
+            timeframe_cache: SwrCache::default(),
         };
         assert_eq!(server_one_tracker.known_player_count(), 1);
         assert_eq!(
@@ -1582,6 +2246,7 @@ mod tests {
             players: archived_store.load_players()?,
             store: Some(archived_store),
         last_periodic_sample_at: None,
+            timeframe_cache: SwrCache::default(),
         };
         assert!(archived_tracker.player_joined("ArchivedName"));
         assert!(archived_tracker.player_left("ArchivedName"));
@@ -1626,6 +2291,7 @@ mod tests {
             players: real_store.load_players()?,
             store: Some(real_store),
         last_periodic_sample_at: None,
+            timeframe_cache: SwrCache::default(),
         };
         assert!(real_tracker.player_joined("RealName"));
         assert!(real_tracker.player_left("RealName"));

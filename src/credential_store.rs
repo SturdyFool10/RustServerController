@@ -58,7 +58,12 @@ impl CredentialStore {
             db_path,
             key: Arc::new(key),
         };
-        store.with_connection(initialize_schema)?;
+        // WAL is stored in the file; set it once here, not on every connection
+        // (switching modes takes an exclusive lock that ignores the busy timeout).
+        store.with_connection(|connection| {
+            connection.pragma_update(None, "journal_mode", "WAL")?;
+            initialize_schema(connection)
+        })?;
         Ok(store)
     }
 
@@ -227,6 +232,8 @@ impl CredentialStore {
         action: impl FnOnce(&Connection) -> rusqlite::Result<T>,
     ) -> rusqlite::Result<T> {
         let connection = Connection::open(&self.db_path)?;
+        // Wait for other writers instead of failing with "database is locked".
+        connection.busy_timeout(std::time::Duration::from_secs(30))?;
         action(&connection)
     }
 }

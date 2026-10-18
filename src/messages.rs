@@ -35,8 +35,11 @@ pub struct ConsoleOutput {
     pub r#type: String,
     /// The output text (HTML).
     pub output: String,
-    /// The name of the server this output is for.
+    /// The name of the server this output is for (display only).
     pub server_name: String,
+    /// UUID of the server this output is for; the identity clients should key on.
+    #[serde(default)]
+    pub server_uuid: Option<String>,
     /// The specialized server type, if any.
     pub server_type: Option<String>,
 }
@@ -93,7 +96,11 @@ pub struct SInfoRequestMessage {
 pub struct StdinInput {
     /// The type of message (should be "stdinInput").
     pub r#type: String,
-    /// The name of the server to send input to.
+    /// UUID of the server to send input to (preferred).
+    #[serde(default)]
+    pub server_uuid: Option<String>,
+    /// The name of the server, used only when no UUID is given.
+    #[serde(default)]
     pub server_name: String,
     /// The input value to send.
     pub value: String,

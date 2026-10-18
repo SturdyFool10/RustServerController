@@ -1,5 +1,5 @@
 use crate::{
-    master::create_slave_connections,
+    master::start_nodes,
     servers::start_servers,
     slave::start_slave,
     theme::{oklch, Theme},
@@ -67,7 +67,7 @@ async fn main() -> Result<(), String> {
 
     // Ensure themes directory exists with default themes
     ensure_themes_directory(&config);
-    let (tx, _rx) = broadcast::channel(100);
+    let (tx, _rx) = broadcast::channel(4096);
     let plugin_catalog =
         controller_plugins::load_plugin_catalog(config.plugins_folder.as_deref()).await;
     let specialization_registry = specializations::init_builtin_registry();
@@ -105,7 +105,7 @@ async fn main() -> Result<(), String> {
             app_state.clone(),
             start_web_server,
             start_servers,
-            create_slave_connections
+            start_nodes
         )
     };
     {

@@ -34,6 +34,10 @@ pub struct ControlledProgramDescriptor {
     pub specialized_server_info: Option<serde_json::Value>,
     /// Optional specialization options for specializations to use (serialized).
     pub specialization_options: Option<serde_json::Value>,
+    /// Name of the node (an entry in `slave_connections`) that runs this
+    /// server. `None` runs it on this controller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
 }
 impl ControlledProgramDescriptor {
     /// Creates a new descriptor with all fields specified.
@@ -63,6 +67,7 @@ impl ControlledProgramDescriptor {
             specialized_server_type: None,
             specialized_server_info: None,
             specialization_options: None,
+            node: None,
         }
     }
 
@@ -85,6 +90,7 @@ impl ControlledProgramDescriptor {
             specialized_server_type: None,
             specialized_server_info: None,
             specialization_options: None,
+            node: None,
         }
     }
 
@@ -180,6 +186,7 @@ impl Default for ControlledProgramDescriptor {
             specialized_server_type: None,
             specialized_server_info: None,
             specialization_options: None,
+            node: None,
         }
     }
 }
@@ -220,6 +227,14 @@ pub struct ControlledProgramInstance {
     /// Next time the specialization's `on_schedule` hook is due to run, if
     /// the attached specialization has requested a schedule interval.
     pub next_schedule_at: Option<Instant>,
+    /// Raw stdout chunks forwarded by a dedicated reader task. Reading in its
+    /// own task means the shared server loop never has to `await` on (or
+    /// cancel) a pipe read, so no output is ever lost to a timeout.
+    pub output_rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    /// The process's stdin, shared so callers can clone the handle out from
+    /// under the server-list lock and write without removing the server from
+    /// the list (which would make it look offline to everything else).
+    pub stdin: Option<std::sync::Arc<tokio::sync::Mutex<ChildStdin>>>,
 }
 
 impl Drop for ControlledProgramInstance {
@@ -262,7 +277,35 @@ impl ControlledProgramInstance {
         for arg in arguments.iter() {
             process = process.arg(arg.replace("\\\\", "\\").replace('\"', ""));
         }
-        let child = process.spawn()?;
+        let mut child = process.spawn()?;
+        let (output_tx, output_rx) = tokio::sync::mpsc::unbounded_channel();
+        let stdin = child
+            .stdin
+            .take()
+            .map(|stdin| std::sync::Arc::new(tokio::sync::Mutex::new(stdin)));
+        if let Some(mut stdout) = child.stdout.take() {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                loop {
+                    match stdout.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            if output_tx.send(buf[..read].to_vec()).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        if let Some(mut stderr) = child.stderr.take() {
+            // stderr isn't surfaced, but it must keep draining or the child
+            // can block once the pipe buffer fills.
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                while matches!(stderr.read(&mut buf).await, Ok(read) if read > 0) {}
+            });
+        }
         Ok(Self {
             name: name.to_owned(),
             server_uuid: uuid::Uuid::new_v4().to_string(),
@@ -280,30 +323,44 @@ impl ControlledProgramInstance {
             specialization_handler: None,
             specialization_info_sent: false,
             next_schedule_at: None,
+            output_rx,
+            stdin,
         })
     }
 
-    /// Reads and processes output from the server process.
+    /// Processes any stdout the reader task has forwarded since the last call.
     ///
-    /// Uses the specialization handler if available, otherwise applies ANSI to HTML conversion.
-    /// Maintains a buffer of recent output lines.
-    pub async fn read_output(&mut self) -> Option<String> {
+    /// Never awaits, so it is safe to call while holding the shared server
+    /// list lock. Uses the specialization handler if available, otherwise
+    /// applies ANSI to HTML conversion, and maintains a buffer of recent
+    /// output lines.
+    pub fn read_output(&mut self) -> Option<String> {
+        let mut chunks = Vec::new();
+        while let Ok(chunk) = self.output_rx.try_recv() {
+            chunks.push(chunk);
+        }
+        self.process_chunks(chunks)
+    }
+
+    /// Waits (up to `max_wait`) for the reader task to reach EOF, then
+    /// processes everything left. Used after the process has exited so its
+    /// final lines aren't lost.
+    pub async fn drain_remaining_output(&mut self, max_wait: Duration) -> Option<String> {
+        let mut chunks = Vec::new();
+        let _ = timeout(max_wait, async {
+            while let Some(chunk) = self.output_rx.recv().await {
+                chunks.push(chunk);
+            }
+        })
+        .await;
+        self.process_chunks(chunks)
+    }
+
+    fn process_chunks(&mut self, chunks: Vec<Vec<u8>>) -> Option<String> {
         let mut out = String::new();
 
-        loop {
-            let Some(stdout) = self.process.stdout.as_mut() else {
-                break;
-            };
-            let mut buf = [0u8; 4096];
-            let read = match timeout(Duration::from_millis(10), stdout.read(&mut buf)).await {
-                Ok(Ok(read)) => read,
-                _ => 0,
-            };
-            if read == 0 {
-                break;
-            }
-
-            let new_str = String::from_utf8_lossy(&buf[0..read]);
+        for chunk in chunks {
+            let new_str = String::from_utf8_lossy(&chunk);
             // Always split into lines and process one at a time
             for log_line in new_str.lines() {
                 let single_line = log_line.replace(['\r', '\n'], "");
@@ -325,20 +382,6 @@ impl ControlledProgramInstance {
                     out.push_str(ansi_to_html(&single_line).as_str());
                     out.push('\n');
                 }
-            }
-        }
-
-        loop {
-            let Some(stderr) = self.process.stderr.as_mut() else {
-                break;
-            };
-            let mut buf = [0u8; 4096];
-            let read = match timeout(Duration::from_millis(10), stderr.read(&mut buf)).await {
-                Ok(Ok(read)) => read,
-                _ => 0,
-            };
-            if read == 0 {
-                break;
             }
         }
 

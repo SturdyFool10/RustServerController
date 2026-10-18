@@ -184,6 +184,7 @@ pub fn backup_config(options: Option<&Value>) -> BackupConfig {
 /// isn't running (or has no stdin) simply doesn't get an announcement.
 pub async fn run_scheduled_backup(
     server_name: String,
+    server_uuid: String,
     working_dir: String,
     config: BackupConfig,
     state: crate::app_state::AppState,
@@ -229,7 +230,7 @@ pub async fn run_scheduled_backup(
     if let Some(message) = render_announce_message(&config.announce_message, &server_name, &world_dirs)
     {
         let command = format!("say {message}");
-        if !crate::servers::write_line_to_server_stdin(&state, &server_name, &command).await {
+        if !crate::servers::write_line_to_server_stdin(&state, &server_uuid, &command).await {
             tracing::debug!(
                 "Minecraft backup: couldn't announce backup for '{}' (server not running or stdin unavailable)",
                 server_name

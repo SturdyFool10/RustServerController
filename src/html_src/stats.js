@@ -17,10 +17,16 @@ window.RSCApp = window.RSCApp || {};
       : [];
   }
 
+  // `{ players, server_totals }`: the busiest players per game (capped) plus
+  // one total row per server, so totals stay correct without listing everyone.
+  // Older/slave payloads may be a bare player array.
   function globalPlayerActivity() {
-    return Array.isArray(window.serverInfoObj?.global_player_activity)
-      ? window.serverInfoObj.global_player_activity
-      : [];
+    const raw = window.serverInfoObj?.global_player_activity;
+    if (Array.isArray(raw)) return { players: raw, serverTotals: [] };
+    return {
+      players: Array.isArray(raw?.players) ? raw.players : [],
+      serverTotals: Array.isArray(raw?.server_totals) ? raw.server_totals : [],
+    };
   }
 
   function aggregateStats(servers) {
@@ -186,9 +192,7 @@ window.RSCApp = window.RSCApp || {};
       });
   }
 
-  function renderGlobalUserActivity(root, players) {
-    const list = root.querySelector(".statsUserActivity");
-    if (!list) return;
+  function renderUserActivityList(list, players) {
     list.replaceChildren();
 
     if (!players.length) {
@@ -600,9 +604,7 @@ window.RSCApp = window.RSCApp || {};
     description.textContent = formatStatValue(value);
   }
 
-  function renderSpecializationStats(root, servers) {
-    const list = root.querySelector(".statsSpecializationDetails");
-    if (!list) return;
+  function renderSpecializationStats(list, servers) {
     list.replaceChildren();
 
     const statServers = servers.filter(
@@ -612,7 +614,7 @@ window.RSCApp = window.RSCApp || {};
         Object.keys(server.specialization_stats).length > 0,
     );
 
-    const values = statServers.length ? statServers : [{ name: "No specialization stats yet" }];
+    const values = statServers.length ? statServers : [{ name: "No stats yet" }];
     values.forEach((server) => {
       const item = document.createElement("li");
       const title = document.createElement("strong");
@@ -638,6 +640,83 @@ window.RSCApp = window.RSCApp || {};
 
       list.appendChild(item);
     });
+  }
+
+  // One section per specialization: its own players (never merged with another
+  // game's same-named players) and its own servers' specific stats. Only the
+  // headline play-time total is merged across all of them.
+  function renderSpecializationSections(root, servers, activity) {
+    const { players, serverTotals } = activity;
+    const container = root.querySelector(".statsSpecializationSections");
+    if (!container) return;
+    container.replaceChildren();
+
+    const groups = new Map();
+    const group = (name) => {
+      if (!groups.has(name)) groups.set(name, { name, players: [], servers: [], totals: [] });
+      return groups.get(name);
+    };
+    players.forEach((player) => group(player.specialization || "Unknown").players.push(player));
+    servers.forEach((server) => {
+      if (server.specialization) group(server.specialization).servers.push(server);
+    });
+
+    serverTotals.forEach((total) => group(total.specialization || "Unknown").totals.push(total));
+    const hoursOf = (list) => list.reduce((sum, row) => sum + Number(row.total_hours || 0), 0);
+    const totalPlayers = players.length;
+    const overall = document.createElement("section");
+    overall.className = "statsDetails";
+    const overallTitle = document.createElement("h2");
+    overallTitle.textContent = "Player Activity";
+    const overallMeta = document.createElement("p");
+    overallMeta.className = "accountMeta";
+    overallMeta.textContent = groups.size
+      ? `${formatHours(hoursOf(serverTotals.length ? serverTotals : players))} played in total across all games and servers. Players are tracked separately per game - the same name in two games is two different players.`
+      : "No observed players yet";
+    overall.append(overallTitle, overallMeta);
+    container.appendChild(overall);
+    if (!totalPlayers && !groups.size) return;
+
+    Array.from(groups.values())
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .forEach((entry) => {
+        const section = document.createElement("section");
+        section.className = "statsDetails";
+        const title = document.createElement("h2");
+        title.textContent = entry.name;
+        const meta = document.createElement("p");
+        meta.className = "accountMeta";
+        const hasTotals = entry.totals.length > 0;
+        const online = hasTotals
+          ? entry.totals.reduce((sum, row) => sum + Number(row.online || 0), 0)
+          : entry.players.filter((player) => player.online).length;
+        const totalHours = hasTotals ? hoursOf(entry.totals) : hoursOf(entry.players);
+        const serverCount = hasTotals ? entry.totals.length : entry.servers.length;
+        meta.textContent = `${online} online - ${formatHours(totalHours)} total across ${serverCount} server${serverCount === 1 ? "" : "s"} - showing the ${entry.players.length} most active/recent players`;
+
+        const playersTitle = document.createElement("h3");
+        playersTitle.textContent = "Players";
+        const playerList = document.createElement("ul");
+        playerList.className = "statsUserActivity";
+        renderUserActivityList(playerList, entry.players);
+        section.append(title, meta, playersTitle, playerList);
+
+        const statServers = entry.servers.filter(
+          (server) =>
+            server.specialization_stats &&
+            typeof server.specialization_stats === "object" &&
+            Object.keys(server.specialization_stats).length > 0,
+        );
+        if (statServers.length) {
+          const statsTitle = document.createElement("h3");
+          statsTitle.textContent = `${entry.name} Stats`;
+          const statsList = document.createElement("ul");
+          statsList.className = "statsSpecializationDetails";
+          renderSpecializationStats(statsList, statServers);
+          section.append(statsTitle, statsList);
+        }
+        container.appendChild(section);
+      });
   }
 
   function renderSpecializationSettings(root, servers) {
@@ -798,11 +877,7 @@ window.RSCApp = window.RSCApp || {};
         <h2>Online Players</h2>
         <ul class="statsOnlinePlayers"></ul>
       </section>
-      <section class="statsDetails">
-        <h2>User Activity</h2>
-        <p class="accountMeta">Every known player across all Minecraft servers this controller manages, and which server(s) they're on.</p>
-        <ul class="statsUserActivity"></ul>
-      </section>
+      <div class="statsSpecializationSections"></div>
       <section class="statsColumns">
         <div>
           <h2>Specializations</h2>
@@ -816,10 +891,6 @@ window.RSCApp = window.RSCApp || {};
           <h2>Inactive Servers</h2>
           <ul class="statsInactiveServers"></ul>
         </div>
-      </section>
-      <section class="statsDetails">
-        <h2>Specialization Stats</h2>
-        <ul class="statsSpecializationDetails"></ul>
       </section>
       <section class="statsDetails">
         <h2>Server Data</h2>
@@ -870,8 +941,7 @@ window.RSCApp = window.RSCApp || {};
     renderSpecializations(root, stats);
     renderSpecializationDistribution(root, stats);
     renderOnlinePlayers(root, stats.onlinePlayers);
-    renderGlobalUserActivity(root, globalPlayerActivity());
-    renderSpecializationStats(root, servers);
+    renderSpecializationSections(root, servers, globalPlayerActivity());
     renderServerData(root, servers);
     renderArchivedServerStats(root, archivedServerStats());
     renderSpecializationSettings(root, servers);

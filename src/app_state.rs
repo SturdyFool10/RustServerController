@@ -3,7 +3,7 @@ use tokio::sync::{broadcast, Mutex};
 
 use crate::{
     auth::AuthState, configuration::Config, controlled_program::ControlledProgramInstance,
-    credential_store::CredentialStore, master::SlaveConnection, messages::ServerInfo,
+    credential_store::CredentialStore, master::NodeRegistry,
     specializations::SpecializationRegistry,
 };
 
@@ -21,10 +21,8 @@ pub struct AppState {
     running: Arc<AtomicBool>,
     /// Shared configuration.
     pub config: Arc<Mutex<Config>>,
-    /// List of servers running on slave nodes.
-    pub slave_servers: Arc<Mutex<Vec<ServerInfo>>>,
-    /// List of slave node connections.
-    pub slave_connections: Arc<Mutex<Vec<SlaveConnection>>>,
+    /// Remote nodes (master mode): connection state plus mirrored servers.
+    pub nodes: NodeRegistry,
     /// Global crash prevention flag.
     #[allow(dead_code)]
     pub global_crash_prevention: Arc<AtomicBool>,
@@ -53,8 +51,7 @@ impl AppState {
             tx,
             running: Arc::new(AtomicBool::new(true)),
             config: Arc::new(Mutex::new(config)),
-            slave_servers: Arc::new(Mutex::new(vec![])),
-            slave_connections: Arc::new(Mutex::new(vec![])),
+            nodes: Arc::new(Mutex::new(Default::default())),
             global_crash_prevention: Arc::new(AtomicBool::new(true)),
             specialization_registry,
             auth: AuthState::default(),

@@ -12,7 +12,8 @@ use crate::{
 
 /// Builds the Axum router for the slave node web server.
 ///
-/// Registers the websocket route for communication with the master node.
+/// Registers the websocket route and the OAuth token endpoint the master uses
+/// to authenticate.
 ///
 /// # Arguments
 /// * `_state` - The shared application state.
@@ -20,7 +21,9 @@ use crate::{
 /// # Returns
 /// * `Router<AppState>` with the websocket route registered.
 async fn get_router(_state: AppState) -> Router<AppState> {
-    let router: Router<AppState> = Router::new().route("/ws", get(handle_ws_upgrade));
+    let router: Router<AppState> = Router::new()
+        .route("/oauth/token", axum::routing::post(crate::auth::oauth_token))
+        .route("/ws", get(handle_ws_upgrade));
     router
 }
 

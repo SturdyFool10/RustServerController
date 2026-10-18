@@ -623,7 +623,9 @@ window.RSCApp = window.RSCApp || {};
 
   function minecraftServers(cfg) {
     return Array.isArray(cfg.servers)
-      ? cfg.servers.filter((server) => server.specialized_server_type === "Minecraft")
+      ? cfg.servers.filter((server) =>
+          ["Minecraft", "Hytale"].includes(server.specialized_server_type),
+        )
       : [];
   }
 
@@ -635,8 +637,15 @@ window.RSCApp = window.RSCApp || {};
     return server.specialization_options.account_filter_groups;
   }
 
-  function setServerMembership(cfg, serverName, groupId, enabled) {
-    const server = minecraftServers(cfg).find((candidate) => candidate.name === serverName);
+  // Servers are matched by UUID (names can repeat or change).
+  function sameServer(left, right) {
+    return left.server_uuid && right.server_uuid
+      ? left.server_uuid === right.server_uuid
+      : left.name === right.name;
+  }
+
+  function setServerMembership(cfg, serverRef, groupId, enabled) {
+    const server = minecraftServers(cfg).find((candidate) => sameServer(candidate, serverRef));
     if (!server) return;
     const groups = ensureGroupMembership(server);
     const index = groups.indexOf(groupId);
@@ -1014,7 +1023,7 @@ window.RSCApp = window.RSCApp || {};
       checkbox.checked = ensureGroupMembership(server).includes(group.uuid);
       checkbox.addEventListener("change", () => {
         const next = cloneConfig();
-        setServerMembership(next, server.name, group.uuid, checkbox.checked);
+        setServerMembership(next, server, group.uuid, checkbox.checked);
         sendConfig(next);
       });
       label.append(checkbox, document.createTextNode(server.name));
@@ -1022,9 +1031,9 @@ window.RSCApp = window.RSCApp || {};
     });
 
     whitelist.innerHTML = "<h3>Whitelist</h3>";
-    renderEntryList(whitelist, group, "whitelist", { name: "Minecraft name" });
+    renderEntryList(whitelist, group, "whitelist", { name: "Player name" });
     bans.innerHTML = "<h3>Ban List</h3>";
-    renderEntryList(bans, group, "ban_list", { name: "Minecraft name" });
+    renderEntryList(bans, group, "ban_list", { name: "Player name" });
     ipBans.innerHTML = "<h3>IP Ban List</h3>";
     renderEntryList(ipBans, group, "banned_ips", { name: "IP address" });
 
@@ -1039,7 +1048,7 @@ window.RSCApp = window.RSCApp || {};
     if (!servers.length) {
       const empty = document.createElement("p");
       empty.className = "accountPanelStatus";
-      empty.textContent = "No Minecraft servers configured";
+      empty.textContent = "No Minecraft or Hytale servers configured";
       container.appendChild(empty);
       return;
     }
@@ -1054,10 +1063,10 @@ window.RSCApp = window.RSCApp || {};
       const whitelistToggle = document.createElement("input");
       whitelistToggle.type = "checkbox";
       whitelistToggle.checked = !!server.specialization_options?.controller_controlled_whitelist;
-      whitelistToggle.title = "Reject any Minecraft player not on this server's whitelist";
+      whitelistToggle.title = "Reject any player not on this server's whitelist";
       whitelistToggle.addEventListener("change", () => {
         const next = cloneConfig();
-        const target = minecraftServers(next).find((item) => item.name === server.name);
+        const target = minecraftServers(next).find((item) => sameServer(item, server));
         if (target) {
           target.specialization_options = target.specialization_options || {};
           target.specialization_options.controller_controlled_whitelist = whitelistToggle.checked;
@@ -1073,7 +1082,7 @@ window.RSCApp = window.RSCApp || {};
       banToggle.title = "Let the controller push this server's ban list and IP ban list to the server";
       banToggle.addEventListener("change", () => {
         const next = cloneConfig();
-        const target = minecraftServers(next).find((item) => item.name === server.name);
+        const target = minecraftServers(next).find((item) => sameServer(item, server));
         if (target) {
           target.specialization_options = target.specialization_options || {};
           target.specialization_options.controller_controlled_ban_list = banToggle.checked;
@@ -1094,8 +1103,8 @@ window.RSCApp = window.RSCApp || {};
       <section class="accountAdminPanel"></section>
       <section class="accountAdminPanel networkTlsPanel"></section>
       <section class="accountAdminPanel minecraftWhitelistPanel">
-        <h2>Minecraft Whitelist</h2>
-        <p class="accountMeta">Groups here grant Minecraft game accounts (player usernames) whitelist and ban access to specific servers - separate from the web UI user Roles above.</p>
+        <h2>Game Account Whitelist</h2>
+        <p class="accountMeta">Groups here grant Minecraft and Hytale game accounts (player usernames) whitelist and ban access to specific servers - separate from the web UI user Roles above.</p>
         <div class="minecraftWhitelistToggles"></div>
       </section>
       <section class="adminToolbar">

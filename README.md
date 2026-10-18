@@ -31,28 +31,66 @@ You can start building in two ways:
 - Pre-compiled executables are regularly updated and posted in the repository's releases tab.
 - These executables are less secure for those familiar with Rust, as source code may not always be provided, but they are easier to use and require less technical knowledge.
 
-# Master-Slave Architecture
-The recent addition of a new feature enables a clustered setup with master and slave configurations.
+# Multi-Node (Master and Nodes)
 
-## Configuring a Slave Node:
-- A server is designated as a slave by setting the 'slave' line to true in its configuration.
-- Being a slave means the node will neither have slaves nor attempt to connect to configured slaves, and it will not host a web UI.
+One controller (the **master**) runs the web UI and owns the configuration for the whole network. Other machines run a controller in **node** mode and just execute the servers the master assigns to them. In the web UI a server on a node looks and behaves exactly like a local one: console, stdin, start/stop/restart, status, per-game stats and player activity (merged across nodes) all work the same, and you edit everything in the master's config.
 
-## Configuring a Master to Connect to a Slave:
-- On Windows, use the `ipconfig` command to obtain the IPv4 address of the slave node's host PC.
-- On Linux, use the `ifconfig -a` command
-- On Mac, use the `ipconfig getifaddr en0` or `ipconfig getifaddr en1`(which one depends on the specific system)
-- Edit the configuration using the following template, inserting the slave's IPv4 address and port:
-  ```json
-  {
-    "address": "<your address here>",
-    "port": "<slave's port here>"
+## Setting up a node
+Set `"slave": true` in the node's `config.json` and give it an OAuth client for the master to log in with. The `client_secret_hash` is the SHA-256 of the secret:
+
+```sh
+printf %s 'a-long-random-secret' | sha256sum
+```
+
+```json
+{
+  "slave": true,
+  "interface": "0.0.0.0",
+  "port": "8081",
+  "auth": {
+    "oauth_clients": [
+      {
+        "client_id": "master",
+        "client_secret_hash": "<sha256 from above>",
+        "scopes": ["admin"]
+      }
+    ]
   }
-  ```
+}
+```
 
-### Additional Information:
-- To edit a slave's configuration, use an external text editor (Notepad++ recommended).
-- While chaining master nodes is possible, it is not recommended due to potential latency issues. Support is not provided for setups with more than one layer of indirection. Assistance requests for multi-indirection setups will be the user's responsibility.
+A node hosts no web UI, and the servers in its own `servers` list are replaced by whatever the master assigns, so don't configure servers on it by hand.
+
+## Pointing the master at a node
+Add an entry to the master's `slave_connections`, then give each server that should run there a `node`:
+
+```json
+{
+  "slave_connections": [
+    {
+      "name": "east",
+      "address": "10.0.0.5",
+      "port": "8081",
+      "use_https": true,
+      "pinned_certificate_sha256": "<optional, SHA-256 fingerprint of the node's certificate>",
+      "client_id": "master",
+      "client_secret": "a-long-random-secret"
+    }
+  ],
+  "servers": [
+    { "name": "survival", "specialized_server_type": "Minecraft", "node": "east", "...": "..." },
+    { "name": "lobby", "...": "no node: runs on the master itself" }
+  ]
+}
+```
+
+- `name` is what servers reference in `node` (default: `address:port`).
+- Servers are identified by their `server_uuid` (generated automatically; a duplicated UUID in the config is replaced). Server names are only display labels, so they may repeat or change without breaking anything: console, stats, permissions, backups of player history and node assignment all follow the UUID. Clients and API users should send `server_uuid` in `stdinInput`, `startServer`, `killServer` and `restartServer` messages (`server_name` is only used when no UUID is given).
+- Add, remove, or move servers between nodes by editing the master's config; the master pushes each node its servers (and the account filter groups) whenever the config changes or the node reconnects. Moving a server to a different node starts a fresh process there, so move the world files too.
+- The master keeps reconnecting if a node is down. Its servers show as offline until it's back; nothing runs on the master in the meantime.
+- Changes to the `slave_connections` list itself need a master restart.
+- `client_secret` is stored in plain text in the master's config (only admins can see it in the UI), so protect that file and prefer `use_https` with a pinned certificate.
+- Chaining masters is not supported.
 ---
 
 # Server Process JSON Structure
@@ -80,7 +118,7 @@ A server process in RustServerController is described in the configuration file 
 - **working_dir**: The working directory from which the process will be launched. in the case of a minecraft server for example, this will be the folder where the server instance stores all of its files.
 - **auto_start**: If `true`, the server will start automatically when the controller launches.
 - **crash_prevention**: If `true`, the controller will attempt to restart the server if it crashes.
-- **specialized_server_type(Optional, Default: null)**: allows the user to specify what type of server they are running for extra features, Currently Supported Values: "Minecraft", "Terraria"(does nothing yet), "VintageStory", null
+- **specialized_server_type(Optional, Default: null)**: allows the user to specify what type of server they are running for extra features, Currently Supported Values: "Minecraft", "Hytale", "Terraria"(does nothing yet), "VintageStory", null
 - **specialization_options(Optional, Default: null)**: a JSON object holding settings specific to whatever `specialized_server_type` is chosen. You only need to set the keys you want to change — anything you leave out is filled in automatically with that specialization's defaults (and the file gets rewritten with the full merged object the first time the controller loads it). See [Specialization Options](#specialization-options) below for what each specialization type supports.
 > **Note:**
 > Advanced fields like `specialized_server_info` are managed internally by RustServerController and should not be set or modified manually in your configuration. Most users will never need to use or change this field.
@@ -92,6 +130,24 @@ You can add multiple server process objects to the `servers` array in your confi
 # Specialization Options
 
 Setting `specialized_server_type` unlocks a `specialization_options` object with extra, type-specific settings. Every field is optional; anything you don't set uses the default shown below.
+
+## Hytale
+
+```json
+{
+  "specialized_server_type": "Hytale",
+  "specialization_options": {
+    "controller_controlled_whitelist": false,
+    "controller_controlled_ban_list": false,
+    "account_filter_groups": []
+  }
+}
+```
+
+The Hytale specialization keeps the server's ANSI console colors, tracks players joining/leaving (including the per-player activity stats, which follow a player's UUID: if a UUID joins under a new name, its history on that server is migrated to the new name), reads `MaxPlayers` from the server's `config.json`, and shows whether the server has finished booting.
+
+- **controller_controlled_whitelist** / **controller_controlled_ban_list** / **account_filter_groups**: work like the Minecraft options below, using the same account filter groups. Once the server has booted (or 90 seconds have passed), the controller sends `/whitelist enable`, `/whitelist add <name>` and `/ban <name>` through the console, then sends only the changes (`/whitelist remove`, `/unban`) as you edit the groups. Hytale has no IP bans, so IP ban entries are ignored. Entries are sent by player name, nothing is imported back from the server's `whitelist.json`/`bans.json`, and an entry you remove while the server is offline stays on the server until you remove it in-game.
+- Backups aren't offered because Hytale has its own built-in backup system.
 
 ## Minecraft
 

@@ -5,6 +5,7 @@
 //! thread-safe registry for managing available specializations.
 
 pub mod backup;
+pub mod hytale;
 pub mod minecraft;
 pub mod player_activity;
 pub mod terraria;
@@ -222,11 +223,12 @@ fn merge_json_defaults(configured: &mut Value, defaults: &Value) {
 
 /// Helper to initialize the registry with built-in specializations.
 ///
-/// Registers "Minecraft" and "Terraria" specializations by default.
+/// Registers "Minecraft", "Terraria", "Hytale" and "VintageStory" by default.
 pub fn init_builtin_registry() -> Arc<SpecializationRegistry> {
     let registry = Arc::new(SpecializationRegistry::new());
     registry.register_fn("Minecraft", minecraft::factory);
     registry.register_fn("Terraria", terraria::factory);
+    registry.register_fn("Hytale", hytale::factory);
     registry.register_fn("VintageStory", vintage_story::vintage_story_factory);
     registry
 }

@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::io::AsyncWriteExt;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -283,6 +282,7 @@ impl ServerSpecialization for MinecraftSpecialization {
                     r#type: "ServerOutput".to_owned(),
                     output: msg.to_string(),
                     server_name: name.clone(),
+                    server_uuid: Some(server_uuid.clone()),
                     server_type: specialized_server_type.clone(),
                 };
                 crate::servers::broadcast_json(&state, &eula_console_msg);
@@ -353,11 +353,13 @@ impl ServerSpecialization for MinecraftSpecialization {
         }
 
         let server_name = instance.name.clone();
+        let server_uuid = instance.server_uuid.clone();
         let working_dir = instance.working_dir.clone();
         let state = state.clone();
         let in_progress = self.backup_in_progress.clone();
         tokio::spawn(async move {
-            super::backup::run_scheduled_backup(server_name, working_dir, config, state).await;
+            super::backup::run_scheduled_backup(server_name, server_uuid, working_dir, config, state)
+                .await;
             in_progress.store(false, Ordering::SeqCst);
         });
     }
@@ -378,11 +380,11 @@ impl MinecraftSpecialization {
         }
 
         let working_dir = instance.working_dir.clone();
-        let server_name = instance.name.clone();
+        let server_uuid = instance.server_uuid.clone();
         let (stop_tx, stop_rx) = watch::channel(false);
         self.account_filter_watcher_stop = Some(stop_tx);
         self.account_filter_watcher = Some(tokio::spawn(watch_account_filter_files(
-            server_name,
+            server_uuid,
             working_dir,
             state,
             stop_rx,
@@ -432,7 +434,7 @@ pub async fn sync_configured_account_filters_async(state: &AppState) {
 }
 
 async fn watch_account_filter_files(
-    server_name: String,
+    server_uuid: String,
     working_dir: String,
     state: AppState,
     mut stop: watch::Receiver<bool>,
@@ -440,7 +442,7 @@ async fn watch_account_filter_files(
     let mut snapshot = filter_file_snapshot_async(&working_dir).await;
     let mut interval = tokio::time::interval(Duration::from_millis(500));
     let mut expiry_interval = tokio::time::interval(Duration::from_secs(30));
-    let (mut group_ids, mut flags) = current_server_filter_config(&state, &server_name).await;
+    let (mut group_ids, mut flags) = current_server_filter_config(&state, &server_uuid).await;
     resolve_missing_account_filter_uuids(&state, &group_ids).await;
     let mut live_snapshot = fan_out_account_filters_for_state(&state, &group_ids, flags).await;
     // Only assert the "on" state at startup; never assert "off" here, since we
@@ -448,31 +450,31 @@ async fn watch_account_filter_files(
     // outside the controller entirely. A live toggle-off (below) still applies,
     // since that's an explicit admin action while the controller is watching.
     if flags.whitelist {
-        apply_whitelist_enabled_command(&state, &server_name, true).await;
+        apply_whitelist_enabled_command(&state, &server_uuid, true).await;
     }
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
                 let next_snapshot = filter_file_snapshot_async(&working_dir).await;
-                let (next_group_ids, next_flags) = current_server_filter_config(&state, &server_name).await;
+                let (next_group_ids, next_flags) = current_server_filter_config(&state, &server_uuid).await;
                 if next_snapshot != snapshot || next_group_ids != group_ids || next_flags != flags {
-                    tracing::debug!("Minecraft account filter state changed for '{}'; syncing", server_name);
+                    tracing::debug!("Minecraft account filter state changed for '{}'; syncing", server_uuid);
                     resolve_missing_account_filter_uuids(&state, &next_group_ids).await;
                     let next_live_snapshot = sync_account_filters_for_state(&state, &working_dir, &next_group_ids, next_flags).await;
-                    apply_live_account_filter_commands(&state, &server_name, &live_snapshot, &next_live_snapshot).await;
+                    apply_live_account_filter_commands(&state, &server_uuid, &live_snapshot, &next_live_snapshot).await;
                     live_snapshot = next_live_snapshot;
                     snapshot = filter_file_snapshot_async(&working_dir).await;
                 }
                 if next_flags.whitelist != flags.whitelist {
-                    apply_whitelist_enabled_command(&state, &server_name, next_flags.whitelist).await;
+                    apply_whitelist_enabled_command(&state, &server_uuid, next_flags.whitelist).await;
                 }
                 group_ids = next_group_ids;
                 flags = next_flags;
             }
             _ = expiry_interval.tick() => {
                 let next_live_snapshot = fan_out_account_filters_for_state(&state, &group_ids, flags).await;
-                apply_live_account_filter_commands(&state, &server_name, &live_snapshot, &next_live_snapshot).await;
+                apply_live_account_filter_commands(&state, &server_uuid, &live_snapshot, &next_live_snapshot).await;
                 live_snapshot = next_live_snapshot;
                 snapshot = filter_file_snapshot_async(&working_dir).await;
                 sync_usercache_identities(&state, &working_dir).await;
@@ -509,7 +511,7 @@ async fn sync_usercache_identities(state: &AppState, working_dir: &str) {
     let mut renames = Vec::new();
     for entry in entries {
         if let Some(previous_name) =
-            super::player_activity::sync_player_identity(&entry.uuid, &entry.name)
+            super::player_activity::sync_player_identity("Minecraft", &entry.uuid, &entry.name)
         {
             renames.push((entry.uuid, previous_name, entry.name));
         }
@@ -562,10 +564,10 @@ async fn sync_usercache_identities(state: &AppState, working_dir: &str) {
 
 async fn current_server_filter_config(
     state: &AppState,
-    server_name: &str,
+    server_uuid: &str,
 ) -> (Vec<String>, AccountFilterFlags) {
     let config = state.config.lock().await;
-    let Some(server) = config.servers.iter().find(|server| server.name == server_name) else {
+    let Some(server) = config.servers.iter().find(|server| server.server_uuid.as_deref() == Some(server_uuid)) else {
         return (Vec::new(), AccountFilterFlags::default());
     };
     let group_ids =
@@ -574,9 +576,9 @@ async fn current_server_filter_config(
     (group_ids, flags)
 }
 
-async fn apply_whitelist_enabled_command(state: &AppState, server_name: &str, enabled: bool) {
+async fn apply_whitelist_enabled_command(state: &AppState, server_uuid: &str, enabled: bool) {
     let command = if enabled { "whitelist on" } else { "whitelist off" };
-    send_minecraft_console_command(state, server_name, command.to_string()).await;
+    send_minecraft_console_command(state, server_uuid, command.to_string()).await;
 }
 
 async fn sync_account_filters_for_state(
@@ -636,67 +638,47 @@ async fn fan_out_account_filters_for_state(
 
 async fn apply_live_account_filter_commands(
     state: &AppState,
-    server_name: &str,
+    server_uuid: &str,
     previous: &AccountFilterSnapshot,
     next: &AccountFilterSnapshot,
 ) {
     for name in previous.whitelist.difference(&next.whitelist) {
-        send_minecraft_console_command(state, server_name, format!("whitelist remove {}", name))
+        send_minecraft_console_command(state, server_uuid, format!("whitelist remove {}", name))
             .await;
     }
     for name in next.whitelist.difference(&previous.whitelist) {
-        send_minecraft_console_command(state, server_name, format!("whitelist add {}", name)).await;
+        send_minecraft_console_command(state, server_uuid, format!("whitelist add {}", name)).await;
     }
     for name in previous.bans.difference(&next.bans) {
-        send_minecraft_console_command(state, server_name, format!("pardon {}", name)).await;
+        send_minecraft_console_command(state, server_uuid, format!("pardon {}", name)).await;
     }
     for name in next.bans.difference(&previous.bans) {
-        send_minecraft_console_command(state, server_name, format!("ban {}", name)).await;
+        send_minecraft_console_command(state, server_uuid, format!("ban {}", name)).await;
     }
     for ip in previous.ip_bans.difference(&next.ip_bans) {
-        send_minecraft_console_command(state, server_name, format!("pardon-ip {}", ip)).await;
+        send_minecraft_console_command(state, server_uuid, format!("pardon-ip {}", ip)).await;
     }
     for ip in next.ip_bans.difference(&previous.ip_bans) {
-        send_minecraft_console_command(state, server_name, format!("ban-ip {}", ip)).await;
+        send_minecraft_console_command(state, server_uuid, format!("ban-ip {}", ip)).await;
     }
 }
 
-async fn send_minecraft_console_command(state: &AppState, server_name: &str, command: String) {
+async fn send_minecraft_console_command(state: &AppState, server_uuid: &str, command: String) {
     if !minecraft_command_is_safe(&command) {
         tracing::warn!(
             "Skipping unsafe Minecraft account filter command for '{}': {}",
-            server_name,
+            server_uuid,
             command
         );
         return;
     }
 
-    let mut servers = state.servers.lock().await;
-    let Some(index) = servers.iter().position(|server| server.name == server_name) else {
-        return;
-    };
-    let mut server = servers.remove(index);
-    drop(servers);
-
-    let Some(stdin) = server.process.stdin.as_mut() else {
+    if !crate::servers::write_line_to_server_stdin(state, server_uuid, &command).await {
         tracing::warn!(
-            "Cannot apply Minecraft account filter command for '{}'; stdin is unavailable",
-            server_name
-        );
-        let mut servers = state.servers.lock().await;
-        servers.push(server);
-        return;
-    };
-    if let Err(error) = stdin.write_all(format!("{}\r\n", command).as_bytes()).await {
-        tracing::warn!(
-            "Failed to apply Minecraft account filter command for '{}': {}",
-            server_name,
-            error
+            "Failed to apply Minecraft account filter command for '{}'; server not running or stdin unavailable",
+            server_uuid
         );
     }
-
-    let mut servers = state.servers.lock().await;
-    servers.push(server);
 }
 
 fn minecraft_command_is_safe(command: &str) -> bool {
@@ -818,7 +800,7 @@ async fn merge_instance_filter_files_into_groups_async(
     changed
 }
 
-fn selected_account_filter_groups<'a>(
+pub(super) fn selected_account_filter_groups<'a>(
     config: &'a Config,
     group_ids: &[String],
 ) -> Vec<&'a MinecraftAccountFilterDetailGroup> {
@@ -1048,7 +1030,7 @@ async fn write_effective_filter_files_async(
     }
 }
 
-fn account_entry_is_active(expires: Option<&str>) -> bool {
+pub(super) fn account_entry_is_active(expires: Option<&str>) -> bool {
     let Some(expires) = expires.map(str::trim).filter(|value| !value.is_empty()) else {
         return true;
     };
@@ -1183,12 +1165,12 @@ async fn read_minecraft_filter_file_async<T: serde::de::DeserializeOwned>(
 /// ban list. When a flag is false the controller leaves that file entirely
 /// alone, even if the server belongs to a group with matching entries.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct AccountFilterFlags {
-    whitelist: bool,
-    ban_list: bool,
+pub(super) struct AccountFilterFlags {
+    pub(super) whitelist: bool,
+    pub(super) ban_list: bool,
 }
 
-fn account_filter_flags(options: Option<&Value>) -> AccountFilterFlags {
+pub(super) fn account_filter_flags(options: Option<&Value>) -> AccountFilterFlags {
     AccountFilterFlags {
         whitelist: bool_specialization_option(options, "controller_controlled_whitelist"),
         ban_list: bool_specialization_option(options, "controller_controlled_ban_list"),
@@ -1378,7 +1360,7 @@ fn set_server_properties_whitelist(working_dir: &str, enabled: bool) {
     }
 }
 
-fn account_filter_group_ids(options: Option<&Value>) -> Option<Vec<String>> {
+pub(super) fn account_filter_group_ids(options: Option<&Value>) -> Option<Vec<String>> {
     options
         .and_then(|options| options.get("account_filter_groups"))
         .and_then(Value::as_array)
@@ -1453,6 +1435,8 @@ mod tests {
             specialization_handler: None,
             specialization_info_sent: false,
             next_schedule_at: None,
+            output_rx: tokio::sync::mpsc::unbounded_channel().1,
+            stdin: None,
         })
     }
 

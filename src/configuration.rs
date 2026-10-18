@@ -444,20 +444,29 @@ pub fn apply_specialization_option_defaults(
     }
 }
 
-/// Ensures every server descriptor has a stable UUID for persisted server data.
+/// Ensures every server descriptor has a stable, unique UUID for persisted
+/// server data. Servers are identified by UUID everywhere (names are display
+/// labels and may repeat), so a missing UUID is generated, and when two
+/// entries share one (e.g. a copy-pasted server) the later ones get a new one.
 pub fn ensure_server_uuids(config: &mut Config) -> bool {
     let mut changed = false;
+    let mut seen = std::collections::HashSet::new();
     for server in &mut config.servers {
-        if server
+        let existing = server
             .server_uuid
             .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-        {
-            continue;
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        match existing {
+            Some(uuid) if seen.insert(uuid.clone()) => {}
+            _ => {
+                let uuid = uuid::Uuid::new_v4().to_string();
+                seen.insert(uuid.clone());
+                server.server_uuid = Some(uuid);
+                changed = true;
+            }
         }
-
-        server.server_uuid = Some(uuid::Uuid::new_v4().to_string());
-        changed = true;
     }
     changed
 }
@@ -711,6 +720,24 @@ mod tests {
             config.servers[1].server_uuid.as_deref(),
             Some("existing-uuid")
         );
+        assert!(!ensure_server_uuids(&mut config));
+    }
+
+    #[test]
+    fn ensure_server_uuids_gives_duplicates_a_new_uuid() {
+        let mut first = descriptor("Same Name", "Minecraft");
+        first.server_uuid = Some("shared".to_string());
+        let mut copy = first.clone();
+        copy.working_dir = "other".to_string();
+        let mut config = Config {
+            servers: vec![first, copy],
+            ..Config::default()
+        };
+
+        assert!(ensure_server_uuids(&mut config));
+        assert_eq!(config.servers[0].server_uuid.as_deref(), Some("shared"));
+        assert_ne!(config.servers[1].server_uuid.as_deref(), Some("shared"));
+        assert!(config.servers[1].server_uuid.is_some());
         assert!(!ensure_server_uuids(&mut config));
     }
 

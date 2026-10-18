@@ -344,7 +344,7 @@ $(document).ready(async function () {
         app.updateServerInfoSpecializations();
         break;
       case "ServerOutput":
-        app.processServerLogLines(obj.server_name, obj.output, false);
+        app.processServerLogLines(obj.server_uuid || obj.server_name, obj.output, false);
         break;
       case "themesList":
         app.handleThemesList(obj.themes);

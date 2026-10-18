@@ -20,7 +20,6 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::*;
 
@@ -47,7 +46,6 @@ fn utf8bytes_to_string(bytes: Utf8Bytes) -> String {
 }
 
 #[allow(unused_imports)]
-use crate::master::SlaveConnection;
 use crate::{app_state::AppState, configuration::Config, messages::*};
 /// Handles websocket upgrade requests from the web client.
 ///
@@ -86,7 +84,38 @@ async fn handle_socket(socket: WebSocket, state: AppState, session: crate::auth:
         let state = state.clone();
         let session = session.clone();
         async move {
-            while let Ok(val) = rx.recv().await {
+            loop {
+                let val = match rx.recv().await {
+                    Ok(val) => val,
+                    // A slow client missed some broadcasts. Dropping the whole
+                    // connection (or silently stopping) would leave the UI
+                    // permanently stale, so ask the client to resync instead.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        warn!("WebSocket client lagged; skipped {} messages", skipped);
+                        let resync = crate::websocket_protocol::build_server_info_message(
+                            &state, true,
+                        )
+                        .await;
+                        if let Ok(json) = serde_json::to_string(&resync) {
+                            if let Some(val) =
+                                filter_broadcast_message(&json, &state, Some(&session)).await
+                            {
+                                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&val)
+                                {
+                                    if let Ok(bin) = rmp_serde::to_vec_named(&json_val) {
+                                        let _ = sender
+                                            .lock()
+                                            .await
+                                            .send(Message::Binary(bin.into()))
+                                            .await;
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
                 let Some(val) = filter_broadcast_message(&val, &state, Some(&session)).await else {
                     continue;
                 };
@@ -232,9 +261,10 @@ async fn filter_broadcast_message(
         }
         "ServerOutput" => {
             let output = serde_json::from_value::<ConsoleOutput>(value).ok()?;
-            if crate::websocket_protocol::can_view_console_by_name(
+            if crate::websocket_protocol::can_view_console(
                 state,
                 session,
+                output.server_uuid.as_deref(),
                 &output.server_name,
             )
             .await
@@ -254,31 +284,14 @@ async fn filter_broadcast_message(
     }
 }
 
-/// Passes stdin input to a running server process.
-///
-/// # Arguments
-/// * `message` - The stdin input message.
-/// * `server_name` - The name of the server to send input to.
-/// * `state` - The shared application state.
-async fn pass_stdin(message: StdinInput, server_name: String, state: AppState) {
-    let value = message.value + "\r\n";
-    let mut servers = state.servers.lock().await;
-    let Some(index) = servers.iter().position(|server| server.name == server_name) else {
-        return;
-    };
-    let mut server = servers.remove(index);
-    drop(servers);
-
-    if let Some(stdi) = server.process.stdin.as_mut() {
-        if let Err(error) = stdi.write_all(value.as_bytes()).await {
-            error!("Error passing command to server: {}", error);
-        }
-    } else {
-        error!("Server '{}' has no stdin pipe", server_name);
+/// Passes stdin input to the running server with this UUID.
+async fn pass_stdin(value: String, server_uuid: String, state: AppState) {
+    if !crate::servers::write_line_to_server_stdin(&state, &server_uuid, &value).await {
+        error!(
+            "Error passing command to server '{}': no running process with stdin",
+            server_uuid
+        );
     }
-
-    let mut servers = state.servers.lock().await;
-    servers.push(server);
 }
 
 #[derive(Deserialize)]
@@ -289,6 +302,11 @@ struct ConfigChangeMessage {
 
 #[derive(Deserialize)]
 struct ServerActionMessage {
+    /// The server to act on. Clients should send this; the name is only a
+    /// fallback for clients that don't know UUIDs.
+    #[serde(default)]
+    server_uuid: Option<String>,
+    #[serde(default)]
     server_name: String,
 }
 
@@ -297,16 +315,23 @@ struct DeleteServerStatsMessage {
     server_uuid: String,
 }
 
-async fn start_inactive_server(server_name: &str, state: &AppState) {
+async fn start_inactive_server(server: &crate::servers::ServerRef, state: &AppState) {
     let config = state.config.lock().await;
     let desc = config
         .servers
         .iter()
-        .find(|server_desc| server_desc.name == server_name)
+        .find(|server_desc| match &server.uuid {
+            Some(uuid) => server_desc.server_uuid.as_deref() == Some(uuid.as_str()),
+            None => server_desc.name == server.name,
+        })
         .cloned();
     drop(config);
 
     if let Some(desc) = desc {
+        if desc.node.is_some() {
+            // Runs on a remote node; never start it here.
+            return;
+        }
         let Some(instance) = create_instance_async(state, desc).await else {
             return;
         };
@@ -336,9 +361,12 @@ async fn start_inactive_server(server_name: &str, state: &AppState) {
     }
 }
 
-async fn stop_active_server(server_name: &str, state: &AppState) -> bool {
+async fn stop_active_server(target: &crate::servers::ServerRef, state: &AppState) -> bool {
     let mut servers = state.servers.lock().await;
-    let Some(index) = servers.iter().position(|server| server.name == server_name) else {
+    let Some(index) = servers.iter().position(|server| match &target.uuid {
+        Some(uuid) => server.server_uuid == *uuid,
+        None => server.name == target.name,
+    }) else {
         return false;
     };
 
@@ -350,6 +378,7 @@ async fn stop_active_server(server_name: &str, state: &AppState) -> bool {
     send_termination_message(
         state,
         server.name.clone(),
+        Some(server.server_uuid.clone()),
         exit_code
             .map(|code| code.to_string())
             .unwrap_or_else(|| "unknown".to_string()),
@@ -381,29 +410,50 @@ fn parse_server_action(text: &str, state: &AppState) -> Option<ServerActionMessa
     }
 }
 
+/// Parses a start/stop/restart message, resolves its target server (by UUID,
+/// falling back to name), checks the session may control it, and forwards the
+/// message to the owning node when the server is remote. Returns the target
+/// only if the action should be carried out locally.
+async fn authorize_server_action(
+    text: &str,
+    verb: &str,
+    state: &AppState,
+    session: Option<&crate::auth::AuthSession>,
+) -> Option<crate::servers::ServerRef> {
+    let message = parse_server_action(text, state)?;
+    let Some(target) =
+        crate::servers::resolve_server(state, message.server_uuid.as_deref(), &message.server_name)
+            .await
+    else {
+        warn!("Ignoring {} for unknown server '{}'", verb, message.server_name);
+        return None;
+    };
+    if !crate::websocket_protocol::can_access_server(
+        state,
+        session,
+        target.uuid.as_deref(),
+        &target.name,
+        crate::auth::PERMISSION_CONTROL,
+    )
+    .await
+    {
+        warn!("Rejected unauthorized {} for server '{}'", verb, target.name);
+        return None;
+    }
+    if crate::master::forward_to_server_node(state, &target, text).await {
+        return None;
+    }
+    Some(target)
+}
+
 async fn start_server_action(
     text: &str,
     state: AppState,
     session: Option<&crate::auth::AuthSession>,
 ) {
-    let Some(message) = parse_server_action(text, &state) else {
-        return;
-    };
-    if !crate::websocket_protocol::can_access_server_by_name(
-        &state,
-        session,
-        &message.server_name,
-        crate::auth::PERMISSION_CONTROL,
-    )
-    .await
-    {
-        warn!(
-            "Rejected unauthorized start for server '{}'",
-            message.server_name
-        );
-        return;
+    if let Some(target) = authorize_server_action(text, "start", &state, session).await {
+        start_inactive_server(&target, &state).await;
     }
-    start_inactive_server(&message.server_name, &state).await;
 }
 
 async fn kill_server_action(
@@ -411,24 +461,9 @@ async fn kill_server_action(
     state: AppState,
     session: Option<&crate::auth::AuthSession>,
 ) {
-    let Some(message) = parse_server_action(text, &state) else {
-        return;
-    };
-    if !crate::websocket_protocol::can_access_server_by_name(
-        &state,
-        session,
-        &message.server_name,
-        crate::auth::PERMISSION_CONTROL,
-    )
-    .await
-    {
-        warn!(
-            "Rejected unauthorized stop for server '{}'",
-            message.server_name
-        );
-        return;
+    if let Some(target) = authorize_server_action(text, "stop", &state, session).await {
+        stop_active_server(&target, &state).await;
     }
-    stop_active_server(&message.server_name, &state).await;
 }
 
 async fn restart_server_action(
@@ -436,25 +471,10 @@ async fn restart_server_action(
     state: AppState,
     session: Option<&crate::auth::AuthSession>,
 ) {
-    let Some(message) = parse_server_action(text, &state) else {
-        return;
-    };
-    if !crate::websocket_protocol::can_access_server_by_name(
-        &state,
-        session,
-        &message.server_name,
-        crate::auth::PERMISSION_CONTROL,
-    )
-    .await
-    {
-        warn!(
-            "Rejected unauthorized restart for server '{}'",
-            message.server_name
-        );
-        return;
+    if let Some(target) = authorize_server_action(text, "restart", &state, session).await {
+        stop_active_server(&target, &state).await;
+        start_inactive_server(&target, &state).await;
     }
-    stop_active_server(&message.server_name, &state).await;
-    start_inactive_server(&message.server_name, &state).await;
 }
 
 async fn delete_archived_server_stats(text: &str, state: AppState) {
@@ -490,6 +510,7 @@ async fn delete_archived_server_stats(text: &str, state: AppState) {
         return;
     }
 
+    crate::master::forward_to_all_nodes(&state, text).await;
     let info = crate::websocket_protocol::build_server_info_message(&state, false).await;
     broadcast_json(&state, &info);
 }
@@ -507,26 +528,42 @@ async fn handle_stdin_input(
         }
     };
 
-    let server_name = value.server_name.clone();
-    if !crate::websocket_protocol::can_access_server_by_name(
+    let Some(target) =
+        crate::servers::resolve_server(&state, value.server_uuid.as_deref(), &value.server_name)
+            .await
+    else {
+        warn!("Ignoring stdin for unknown server '{}'", value.server_name);
+        return;
+    };
+    if !crate::websocket_protocol::can_access_server(
         &state,
         session,
-        &server_name,
+        target.uuid.as_deref(),
+        &target.name,
         crate::auth::PERMISSION_CONTROL,
     )
     .await
     {
-        warn!("Rejected unauthorized stdin for server '{}'", server_name);
+        warn!("Rejected unauthorized stdin for server '{}'", target.name);
         return;
     }
-    let servers = state.servers.lock().await;
-    let is_active_server = servers.iter().any(|server| server.name == server_name);
-    drop(servers);
+    if crate::master::forward_to_server_node(&state, &target, text).await {
+        return;
+    }
+    let Some(server_uuid) = target.uuid.clone() else {
+        return;
+    };
+    let is_active_server = state
+        .servers
+        .lock()
+        .await
+        .iter()
+        .any(|server| server.server_uuid == server_uuid);
 
     if is_active_server {
-        tokio::spawn(pass_stdin(value, server_name, state));
+        tokio::spawn(pass_stdin(value.value, server_uuid, state));
     } else if value.value == "start" {
-        start_inactive_server(&value.server_name, &state).await;
+        start_inactive_server(&target, &state).await;
     }
 }
 
@@ -544,6 +581,49 @@ async fn apply_config_change(
             return;
         }
     };
+    apply_config(message.updated_config, state, session).await;
+}
+
+/// On a node: the master's authoritative server list and account filter
+/// groups. Applied like an ordinary config change to everything else the
+/// node already has, so only those two things change.
+#[derive(Deserialize)]
+struct NodeConfigSyncMessage {
+    servers: Vec<crate::controlled_program::ControlledProgramDescriptor>,
+    #[serde(default)]
+    minecraft_account_filter_detail_groups:
+        Vec<crate::configuration::MinecraftAccountFilterDetailGroup>,
+}
+
+async fn apply_node_config_sync(
+    text: &str,
+    state: AppState,
+    session: Option<&crate::auth::AuthSession>,
+) {
+    if !has_permission(session, crate::auth::PERMISSION_ADMIN) {
+        warn!("Rejected unauthorized nodeConfigSync message");
+        return;
+    }
+    let message: NodeConfigSyncMessage = match serde_json::from_str(text) {
+        Ok(message) => message,
+        Err(error) => {
+            error!("Error parsing nodeConfigSync message: {}", error);
+            return;
+        }
+    };
+    let mut updated_config = state.config.lock().await.clone();
+    updated_config.servers = message.servers;
+    updated_config.minecraft_account_filter_detail_groups =
+        message.minecraft_account_filter_detail_groups;
+    apply_config(updated_config, state, session).await;
+}
+
+async fn apply_config(
+    updated_config: Config,
+    state: AppState,
+    session: Option<&crate::auth::AuthSession>,
+) {
+    let message = ConfigChangeMessage { updated_config };
     let global_config = has_permission(session, crate::auth::PERMISSION_CONFIG);
     let admin = has_permission(session, crate::auth::PERMISSION_ADMIN);
     if !global_config
@@ -601,6 +681,8 @@ async fn apply_config_change(
             let old_desc = find_descriptor_for_instance(&instance, &old_servers);
             let needs_restart = match (old_desc, new_desc) {
                 (_, None) => true,
+                // Reassigned to a remote node: stop the local copy.
+                (_, Some(new)) if new.node.is_some() => true,
                 (Some(old), Some(new)) => descriptor_requires_restart(old, new),
                 (None, Some(_)) => false,
             };
@@ -618,7 +700,7 @@ async fn apply_config_change(
         let auto_start_servers = config
             .servers
             .iter()
-            .filter(|desc| desc.auto_start)
+            .filter(|desc| desc.auto_start && desc.node.is_none())
             .filter(|desc| {
                 !desc
                     .server_uuid
@@ -652,6 +734,7 @@ async fn apply_config_change(
         send_termination_message(
             &state,
             server.name.clone(),
+            Some(server.server_uuid.clone()),
             exit_code
                 .map(|code| code.to_string())
                 .unwrap_or_else(|| "unknown".to_string()),
@@ -679,6 +762,7 @@ async fn apply_config_change(
     crate::specializations::minecraft::sync_configured_account_filters_async(&state).await;
 
     broadcast_json(&state, &config_info);
+    crate::master::sync_nodes(&state).await;
 
     for desc in auto_start_servers {
         if let Some(instance) = create_instance_async(&state, desc).await {
@@ -742,6 +826,7 @@ async fn apply_scoped_config_change(
     crate::specializations::minecraft::sync_configured_account_filters_async(&state).await;
 
     broadcast_json(&state, &config_info);
+    crate::master::sync_nodes(&state).await;
 }
 
 fn apply_server_scoped_config_change(
@@ -811,6 +896,7 @@ async fn terminate_servers(state: AppState) {
         send_termination_message(
             &state,
             server.name.clone(),
+            Some(server.server_uuid.clone()),
             exit_code
                 .map(|code| code.to_string())
                 .unwrap_or_else(|| "unknown".to_string()),
@@ -862,6 +948,7 @@ async fn process_message(text: String, state: AppState, session: Option<crate::a
         "killServer" => kill_server_action(&text, state, session.as_ref()).await,
         "restartServer" => restart_server_action(&text, state, session.as_ref()).await,
         "configChange" => apply_config_change(&text, state, session.as_ref()).await,
+        "nodeConfigSync" => apply_node_config_sync(&text, state, session.as_ref()).await,
         "deleteArchivedServerStats"
             if has_permission(session.as_ref(), crate::auth::PERMISSION_ADMIN) =>
         {
@@ -869,6 +956,7 @@ async fn process_message(text: String, state: AppState, session: Option<crate::a
         }
         "getConfig" => {}
         "terminateServers" if has_permission(session.as_ref(), crate::auth::PERMISSION_CONTROL) => {
+            crate::master::forward_to_all_nodes(&state, &text).await;
             terminate_servers(state).await
         }
         "deleteArchivedServerStats" | "terminateServers" => {

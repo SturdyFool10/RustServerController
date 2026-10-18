@@ -57,6 +57,18 @@ pub(crate) async fn build_server_info_message(
 
     let config = state.config.lock().await.clone();
     for server_config in config.servers.iter() {
+        // Servers assigned to a remote node are reported from the node's
+        // mirrored state, so they look exactly like local ones.
+        if server_config.node.is_some() {
+            if let Some(mut remote) = crate::master::remote_server_info(state, server_config).await {
+                if !include_output {
+                    remote.output.clear();
+                }
+                used_names.push(remote.name.clone());
+                server_infos.push(remote);
+                continue;
+            }
+        }
         if !used_names.contains(&server_config.name) {
             server_infos.push(ServerInfo {
                 name: server_config.name.clone(),
@@ -78,13 +90,27 @@ pub(crate) async fn build_server_info_message(
         .filter_map(|server| server.server_uuid.clone())
         .collect();
 
+    // These read cached aggregates, but the very first call computes them
+    // inline over the whole activity database.
+    let mut archived_server_stats = tokio::task::block_in_place(|| {
+        crate::specializations::player_activity::archived_server_stats(&active_server_uuids)
+    });
+    let mut global_player_activity = tokio::task::block_in_place(
+        crate::specializations::player_activity::global_player_activity,
+    );
+    // Fold in every connected node's stats so the network reads as one.
+    crate::master::merge_remote_aggregates(
+        state,
+        &mut archived_server_stats,
+        &mut global_player_activity,
+    )
+    .await;
+
     ServerInfoMessage {
         r#type: "ServerInfo".to_owned(),
         servers: server_infos,
-        archived_server_stats: crate::specializations::player_activity::archived_server_stats(
-            &active_server_uuids,
-        ),
-        global_player_activity: crate::specializations::player_activity::global_player_activity(),
+        archived_server_stats,
+        global_player_activity,
         config,
     }
 }
@@ -256,43 +282,44 @@ pub(crate) fn filter_config_info_for_session(
     info
 }
 
-pub(crate) async fn can_access_server_by_name(
+/// Canonical (uuid, name) for a server reference. The UUID wins when given
+/// and known; otherwise the name is looked up.
+async fn canonical_server_identity(
+    state: &AppState,
+    server_uuid: Option<&str>,
+    server_name: &str,
+) -> (Option<String>, String) {
+    match crate::servers::resolve_server(state, server_uuid, server_name).await {
+        Some(server) => (server.uuid, server.name),
+        None => (server_uuid.map(str::to_string), server_name.to_string()),
+    }
+}
+
+pub(crate) async fn can_access_server(
     state: &AppState,
     session: Option<&crate::auth::AuthSession>,
+    server_uuid: Option<&str>,
     server_name: &str,
     permission: &str,
 ) -> bool {
     if has_permission(session, crate::auth::PERMISSION_ADMIN) {
         return true;
     }
-    let server_uuid = {
-        let config = state.config.lock().await;
-        config
-            .servers
-            .iter()
-            .find(|server| server.name == server_name)
-            .and_then(|server| server.server_uuid.clone())
-    };
-    has_server_permission(session, server_uuid.as_deref(), server_name, permission)
+    let (uuid, name) = canonical_server_identity(state, server_uuid, server_name).await;
+    has_server_permission(session, uuid.as_deref(), &name, permission)
 }
 
-pub(crate) async fn can_view_console_by_name(
+pub(crate) async fn can_view_console(
     state: &AppState,
     session: Option<&crate::auth::AuthSession>,
+    server_uuid: Option<&str>,
     server_name: &str,
 ) -> bool {
     if has_permission(session, crate::auth::PERMISSION_ADMIN) {
         return true;
     }
-    let server_uuid = {
-        let config = state.config.lock().await;
-        config
-            .servers
-            .iter()
-            .find(|server| server.name == server_name)
-            .and_then(|server| server.server_uuid.clone())
-    };
-    can_view_console_for_server(session, server_uuid.as_deref(), server_name)
+    let (uuid, name) = canonical_server_identity(state, server_uuid, server_name).await;
+    can_view_console_for_server(session, uuid.as_deref(), &name)
 }
 
 fn filter_archived_server_stats(
@@ -330,8 +357,29 @@ fn filter_global_player_activity(
     value: serde_json::Value,
     visible_uuids: &[String],
 ) -> serde_json::Value {
-    let serde_json::Value::Array(players) = value else {
-        return value;
+    let visible = |item: &serde_json::Value| {
+        item.get("server_uuid")
+            .and_then(|value| value.as_str())
+            .is_some_and(|uuid| visible_uuids.iter().any(|visible| visible == uuid))
+    };
+    let players = match value {
+        serde_json::Value::Array(players) => players,
+        serde_json::Value::Object(mut map) => {
+            let players = map.remove("players").unwrap_or_default();
+            let totals = match map.remove("server_totals") {
+                Some(serde_json::Value::Array(totals)) => {
+                    serde_json::Value::Array(totals.into_iter().filter(|t| visible(t)).collect())
+                }
+                _ => serde_json::Value::Array(Vec::new()),
+            };
+            map.insert(
+                "players".to_string(),
+                filter_global_player_activity(players, visible_uuids),
+            );
+            map.insert("server_totals".to_string(), totals);
+            return serde_json::Value::Object(map);
+        }
+        other => return other,
     };
     serde_json::Value::Array(
         players
